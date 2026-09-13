@@ -9,7 +9,7 @@ CI.run do
   step "Security: Brakeman code analysis", "bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error"
   step "Tests: Rails", "bin/rails test"
   step "TypeScript", "npm run typecheck"
-  step "Tests: Music", "npm test"
+  step "Tests: Music coverage", "npm run test:coverage"
   step "Build: Frontend", "npm run build"
   step "Tests: Seeds", "env RAILS_ENV=test bin/rails db:seed:replant"
 

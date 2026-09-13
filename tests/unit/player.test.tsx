@@ -1,0 +1,206 @@
+// @vitest-environment jsdom
+import React from 'react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { demo } from '../../app/frontend/music/score';
+
+const alphaTab = vi.hoisted(() => {
+  class EventBus<T = unknown> {
+    listeners: ((event: T) => void)[] = [];
+    on(listener: (event: T) => void) { this.listeners.push(listener); }
+    emit(event: T = {} as T) { this.listeners.forEach(listener => listener(event)); }
+  }
+  class FakeAlphaTabApi {
+    static latest: FakeAlphaTabApi;
+    playerReady = new EventBus<void>();
+    playerStateChanged = new EventBus<{ state: number }>();
+    playerPositionChanged = new EventBus<{ currentTime: number; endTime: number }>();
+    renderFinished = new EventBus<void>();
+    error = new EventBus<{ message?: string }>();
+    playbackSpeed = 1;
+    isLooping = false;
+    metronomeVolume = 0;
+    renderScore = vi.fn();
+    destroy = vi.fn();
+    stop = vi.fn();
+    playPause = vi.fn();
+    downloadMidi = vi.fn();
+    print = vi.fn();
+    constructor() { FakeAlphaTabApi.latest = this; }
+  }
+  return { FakeAlphaTabApi, toAlphaTab: vi.fn(() => ({ tracks: [] })) };
+});
+
+vi.mock('@coderline/alphatab', () => ({
+  AlphaTabApi: alphaTab.FakeAlphaTabApi,
+  PlayerOutputMode: { WebAudioScriptProcessor: 2 },
+}));
+vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlphaTab }));
+
+import { Player } from '../../app/frontend/Player';
+
+Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+const preview = {
+  id: 'preview-1', source: '<score-partwise/>', filename: 'tune.musicxml', sourceFormat: 'musicxml',
+  score: { title: 'Imported tune', masterBars: [], tempo: 100 }, tuningLabel: 'g C G C D', lyricsSection: 'VERSE\nThere once was a ship',
+} as any;
+
+function readyPlayer(nextPreview: any = null) {
+  render(<Player score={demo} preview={nextPreview} />);
+  const api = alphaTab.FakeAlphaTabApi.latest;
+  act(() => {
+    api.playerReady.emit();
+    api.renderFinished.emit();
+  });
+  return api;
+}
+
+describe('notation player', () => {
+  it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {
+    const api = readyPlayer();
+    expect(alphaTab.toAlphaTab).toHaveBeenCalledWith(demo);
+    expect(api.renderScore).toHaveBeenCalled();
+    expect(screen.getAllByText('Ready when you are')).toHaveLength(2);
+
+    act(() => {
+      api.playerStateChanged.emit({ state: 1 });
+      api.playerPositionChanged.emit({ currentTime: 61_000, endTime: 125_000 });
+    });
+    expect(screen.getAllByText('Playing')).toHaveLength(2);
+    expect(screen.getAllByText('1:01 / 2:05')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(api.stop).toHaveBeenCalledOnce();
+    expect(api.playPause).toHaveBeenCalledOnce();
+
+    fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '1.25' } });
+    fireEvent.click(screen.getByRole('button', { name: /Loop/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Click/ }));
+    expect(api.playbackSpeed).toBe(1.25);
+    expect(api.isLooping).toBe(true);
+    expect(api.metronomeVolume).toBe(0.6);
+
+    act(() => api.error.emit({ message: '' }));
+    expect(screen.getByRole('alert').textContent).toContain('Notation or audio could not load.');
+  });
+
+  it('exports native files and prints a native score', () => {
+    const api = readyPlayer();
+    vi.useFakeTimers();
+    const createObjectURL = vi.fn(() => 'blob:test');
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    const select = screen.getByLabelText('Export score');
+    fireEvent.change(select, { target: { value: 'txt' } });
+    fireEvent.change(select, { target: { value: 'json' } });
+    fireEvent.change(select, { target: { value: 'midi' } });
+    fireEvent.change(select, { target: { value: 'pdf' } });
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(api.downloadMidi).toHaveBeenCalledOnce();
+    expect(api.print).toHaveBeenCalledOnce();
+    vi.runAllTimers();
+  });
+
+  it('exports imported MusicXML, configures lyrics, and reports blocked print windows', () => {
+    let api = readyPlayer(preview);
+    const createObjectURL = vi.fn(() => 'blob:musicxml');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '0.75' } });
+    expect(api.playbackSpeed).toBe(0.75);
+    fireEvent.change(screen.getByLabelText('Measures per line'), { target: { value: '4' } });
+    api = alphaTab.FakeAlphaTabApi.latest;
+    act(() => {
+      api.playerReady.emit();
+      api.renderFinished.emit();
+    });
+    fireEvent.change(screen.getByLabelText('Lyrics columns'), { target: { value: '3' } });
+    expect((screen.getByLabelText('Lyrics columns') as HTMLSelectElement).value).toBe('3');
+
+    const select = screen.getByLabelText('Export score');
+    fireEvent.change(select, { target: { value: 'musicxml' } });
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    vi.spyOn(window, 'open').mockReturnValue(null);
+    fireEvent.change(select, { target: { value: 'pdf' } });
+    expect(screen.getByRole('alert').textContent).toContain('print preview window was blocked');
+  });
+
+  it('prints a lyrics preview after fitting wide notation to the popup page', async () => {
+    const api = readyPlayer(preview);
+    const cursor = document.createElement('div');
+    cursor.className = 'at-cursors';
+    document.querySelector('.score-paper')?.appendChild(cursor);
+    const style = document.createElement('style');
+    style.textContent = '.score-paper {}';
+    document.head.appendChild(style);
+    const surface = { style: {} as Record<string, string>, dataset: {} as Record<string, string>, parentNode: { replaceChild: vi.fn() } };
+    Object.assign(surface, { querySelectorAll: () => [], getBoundingClientRect: () => ({ width: 200, height: 100 }) });
+    const paper = { querySelector: () => surface, getBoundingClientRect: () => ({ width: 100 }) };
+    const popup = {
+      closed: false,
+      document: {
+        write: vi.fn(), close: vi.fn(), title: '',
+        fonts: { ready: Promise.resolve() },
+        querySelector: () => paper,
+        createElement: () => ({ style: {}, appendChild: vi.fn() }),
+      },
+      getComputedStyle: () => ({ paddingLeft: '0', paddingRight: '0', borderLeftWidth: '0', borderRightWidth: '0' }),
+      focus: vi.fn(), print: vi.fn(),
+    };
+    vi.spyOn(window, 'open').mockReturnValue(popup as any);
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText('Export score'), { target: { value: 'pdf' } });
+    await Promise.resolve();
+    vi.runAllTimers();
+    expect(popup.document.write).toHaveBeenCalled();
+    expect(popup.focus).toHaveBeenCalled();
+    expect(popup.print).toHaveBeenCalled();
+    expect(api.print).not.toHaveBeenCalled();
+  });
+
+  it('leaves notation at its original size when it already fits the page', async () => {
+    readyPlayer(preview);
+    const surface = { style: { width: '100px', height: '50px' } as Record<string, string>, dataset: {} as Record<string, string>, parentNode: { replaceChild: vi.fn() } };
+    const paper = { querySelector: () => surface, getBoundingClientRect: () => ({ width: 200 }) };
+    const popup = {
+      closed: false,
+      document: {
+        write: vi.fn(), close: vi.fn(), title: '', fonts: { ready: Promise.resolve() },
+        querySelector: () => paper, createElement: vi.fn(),
+      },
+      getComputedStyle: () => ({ paddingLeft: '0', paddingRight: '0', borderLeftWidth: '0', borderRightWidth: '0' }),
+      focus: vi.fn(), print: vi.fn(),
+    };
+    vi.spyOn(window, 'open').mockReturnValue(popup as any);
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText('Export score'), { target: { value: 'pdf' } });
+    await Promise.resolve();
+    vi.runAllTimers();
+    expect(surface.dataset.printFit).toBe('true');
+    expect(surface.parentNode.replaceChild).not.toHaveBeenCalled();
+  });
+
+  it('prints when the popup has no notation surface to fit', async () => {
+    readyPlayer(preview);
+    const popup = {
+      closed: false,
+      document: { write: vi.fn(), close: vi.fn(), title: '', fonts: { ready: Promise.resolve() }, querySelector: () => ({ querySelector: () => null }) },
+      focus: vi.fn(), print: vi.fn(),
+    };
+    vi.spyOn(window, 'open').mockReturnValue(popup as any);
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByLabelText('Export score'), { target: { value: 'pdf' } });
+    await Promise.resolve();
+    vi.runAllTimers();
+    expect(popup.print).toHaveBeenCalled();
+  });
+});

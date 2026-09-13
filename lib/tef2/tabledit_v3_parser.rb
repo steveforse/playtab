@@ -259,7 +259,7 @@ module Tef2
           }
         elsif marker == 0x33
           # Gaps are emitted as MusicXML rests by the builder.
-          next
+          nil
         end
 
         offset = reader.u32
@@ -296,8 +296,9 @@ module Tef2
         duration = group.map { |note| note[:tef2_duration] }.max
         primary = group.find { |note| note[:tef2_duration] == duration } || group.first
         group.each do |note|
+          is_primary = note.equal?(primary)
           note[:tef2_duration] = duration
-          note[:is_chord] = note != primary
+          note[:is_chord] = !is_primary
         end
       end
       notes.each { |note| note[:is_chord] = false unless note.key?(:is_chord) }

@@ -35,4 +35,14 @@ class SongsTest < ActionDispatch::IntegrationTest
     get api_song_url(id), as: :json
     assert_equal JSON.parse(document.to_json), response.parsed_body["score"]
   end
+
+  test "rejects non-object and oversized score requests" do
+    post api_songs_url, params: { score: "not an object" }, as: :json
+    assert_response :unprocessable_entity
+    assert_equal "Score must be an object.", response.parsed_body["error"]
+
+    post api_songs_url, params: { score: { version: 1, title: "x" * 3_000_001 } }, as: :json
+    assert_response :content_too_large
+    assert_match(/3 MB/, response.parsed_body["error"])
+  end
 end

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { readMusicXml } from '../../app/frontend/music/musicxml';
+import { readMusicXml, toImportedScoreDocument } from '../../app/frontend/music/musicxml';
+import { applyTechniques, extractTechniques } from '../../app/frontend/music/musicxml-techniques';
+import { importer } from '@coderline/alphatab';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { vi } from 'vitest';
 import fs from 'node:fs';
@@ -150,6 +152,44 @@ describe('MusicXML preview', () => {
     expect(() => readMusicXml(techniques.replace('<pull-off type="stop"/>', ''), 'bad.xml')).toThrow('Unpaired');
     expect(() => readMusicXml(techniques.replaceAll('pull-off', 'hammer-on'), 'bad.xml')).toThrow('direction');
     expect(() => readMusicXml(techniques.replace('<hammer-on type="start">H</hammer-on>', ''), 'bad.xml')).toThrow('Unpaired');
+    expect(() => readMusicXml(techniques.replace('<hammer-on type="stop"/>', '<hammer-on type="start"/>'), 'bad.xml')).toThrow('Overlapping');
+    const delayedStop = techniques
+      .replace('<hammer-on type="stop"/>', '')
+      .replace('<pull-off type="stop"/>', '<hammer-on type="stop"/><pull-off type="stop"/>');
+    expect(() => readMusicXml(delayedStop, 'bad.xml')).toThrow('next note');
+  });
+
+  it('checks technique connections and labels internal slur segments', () => {
+    const marker = { bar: 0, tick: 0, staff: 0, voice: '1', string: 4, fret: 0, kind: 'hammer-on', type: 'start', number: '1' };
+    const stop = { ...marker, tick: 960, fret: 3, type: 'stop' };
+    const makeModel = (connect: boolean, skipIntermediate: boolean = false) => {
+      const firstBeat: any = { playbackStart: 0, notes: [], nextBeat: null, noteStringLookup: new Map() };
+      const secondBeat: any = { playbackStart: 960, notes: [], nextBeat: null, noteStringLookup: new Map() };
+      const middleBeat: any = { playbackStart: 480, notes: [{ string: 3, fret: 0, isStringed: false, beat: null }], nextBeat: secondBeat, noteStringLookup: new Map() };
+      const from: any = { string: 2, fret: 0, isStringed: true, beat: firstBeat };
+      const to: any = { string: 2, fret: 3, isStringed: true, beat: secondBeat };
+      firstBeat.notes = [from]; firstBeat.nextBeat = skipIntermediate ? middleBeat : secondBeat; secondBeat.notes = [to];
+      const tab: any = { bars: [{ voices: [{ beats: skipIntermediate ? [firstBeat, middleBeat, secondBeat] : [firstBeat, secondBeat] }] }] };
+      const score: any = { finish: () => {
+        if (connect) {
+          from.hammerPullDestination = to;
+          from.effectSlur = { segments: [{ fromNote: from, toNote: to, text: null }] };
+        }
+      } };
+      return { score, tab, from };
+    };
+    const disconnected = makeModel(false);
+    expect(() => applyTechniques(disconnected.score, disconnected.tab, 0, [marker, stop] as any)).toThrow('connection could not');
+    const connected = makeModel(true, true);
+    applyTechniques(connected.score, connected.tab, 0, [marker, stop] as any);
+    expect(connected.from.effectSlur.segments[0].text).toBe('H');
+    const missing = makeModel(false);
+    expect(() => applyTechniques(missing.score, missing.tab, 0, [{ ...marker, fret: 9 }] as any)).toThrow('uniquely');
+    const invalidFinger = makeModel(false);
+    expect(() => applyTechniques(invalidFinger.score, invalidFinger.tab, 0, [{ ...marker, kind: 'fingering', type: '', number: '5' }] as any)).toThrow('fingers 1–4');
+    const tefFinger = makeModel(false);
+    applyTechniques(tefFinger.score, tefFinger.tab, 0, [{ ...marker, kind: 'tef-fingering', type: '', number: '9' }] as any);
+    expect(tefFinger.from.beat.text).toBe('TEF 9');
   });
   it('preserves alternate tuning and removes only verified duplicate staff music', () => {
     const preview = readMusicXml(fixture(), 'Minor tune.musicxml');
@@ -167,5 +207,38 @@ describe('MusicXML preview', () => {
   it('rejects unsupported documents and entities', () => {
     expect(() => readMusicXml('<html/>', 'test.xml')).toThrow('partwise');
     expect(() => readMusicXml('<!ENTITY unsafe "abc">' + fixture(), 'test.xml')).toThrow('entity');
+  });
+  it('rejects malformed technique sources and ignores unsupported technical tags', () => {
+    vi.stubGlobal('DOMParser', class { parseFromString() { return { getElementsByTagName: () => [{}] }; } });
+    expect(() => extractTechniques('<score-partwise/>')).toThrow('Invalid MusicXML');
+    vi.stubGlobal('DOMParser', DOMParser);
+    expect(() => extractTechniques('<score-partwise/>')).toThrow('no part');
+    const unknown = techniques.replace('<hammer-on type="start">H</hammer-on>', '<other-technical>unrelated marker</other-technical>');
+    expect(extractTechniques(unknown).markers).toHaveLength(3);
+    const forward = techniques.replace('<note>', '<forward><duration>1</duration></forward><note>');
+    expect(extractTechniques(forward).markers.length).toBeGreaterThan(0);
+    expect(() => extractTechniques(techniques.replace('<note>', '<note><grace/>'))).toThrow('Grace-note');
+  });
+  it('rejects oversized and structurally unsupported scores', () => {
+    expect(() => readMusicXml('x'.repeat(2_000_001), 'big.xml')).toThrow('2 MB');
+    const loader = vi.spyOn(importer.ScoreLoader, 'loadScoreFromBytes');
+    loader.mockReturnValueOnce({ tracks: [], masterBars: [] } as any);
+    expect(() => readMusicXml(fixture(), 'empty.xml')).toThrow('one banjo part');
+    loader.mockReturnValueOnce({ tracks: [{ staves: [] }], masterBars: [] } as any);
+    expect(() => readMusicXml(fixture(), 'no-tab.xml')).toThrow('five-string');
+    loader.mockReturnValueOnce({ tracks: [{ staves: [{ tuning: [63, 60, 55, 48, 67] }] }], masterBars: Array.from({ length: 257 }) } as any);
+    expect(() => readMusicXml(fixture(), 'too-many.xml')).toThrow('256 measures');
+    loader.mockRestore();
+  });
+  it('uses the filename when the MusicXML title is blank', () => {
+    const preview = readMusicXml(techniques.replace('<work-title>Technique exercise</work-title>', ''), 'fallback.musicxml');
+    expect(preview.score.title).toBe('fallback');
+  });
+  it('stores the original imported document with bounded metadata', () => {
+    const document = toImportedScoreDocument({ score: { title: 'A'.repeat(200) }, filename: 'B'.repeat(200), sourceFormat: 'tef', source: '<score-partwise/> ' } as any, ['warning']);
+    expect(document).toMatchObject({ version: 2, kind: 'musicxml', title: 'A'.repeat(160), sourceName: 'B'.repeat(160), sourceFormat: 'tef', warnings: ['warning'] });
+  });
+  it('rejects technique markers with unsupported types', () => {
+    expect(() => readMusicXml(techniques.replace('<hammer-on type="start">H</hammer-on>', '<hammer-on type="continue">H</hammer-on>'), 'bad-type.xml')).toThrow('Unsupported');
   });
 });

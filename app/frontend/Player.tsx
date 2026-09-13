@@ -29,11 +29,10 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
   const [barsPerRow, setBarsPerRow] = useState(2);
   const [lyricsColumns, setLyricsColumns] = useState(1);
   useEffect(() => {
-    if (!element.current) return;
     setReady(false); setPlaying(false); setRendered(false); setError('');
     setSpeed(1); setLoop(false); setMetronome(false); setPosition({ currentTime: 0, endTime: 0 });
     const base = '/notation/';
-    const instance = new AlphaTabApi(element.current, {
+    const instance = new AlphaTabApi(element.current!, {
       core: { fontDirectory: `${base}font/`, useWorkers: !preview, enableLazyLoading: !preview },
       display: { scale: 1.1, barsPerRow },
       player: {
@@ -55,9 +54,8 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
   }, [score, preview, barsPerRow]);
   const transport = { ready, playing, ...position, onRestart: () => api.current?.stop(), onPlayPause: () => api.current?.playPause() };
   function printPreviewWithLyrics() {
-    const paper = scorePaper.current;
-    const lyrics = lyricsSection.current;
-    if (!paper || !lyrics) throw new Error('The printable score is not ready yet.');
+    const paper = scorePaper.current!;
+    const lyrics = lyricsSection.current!;
     const popup = window.open('', '_blank', 'width=1200,height=900');
     if (!popup) throw new Error('The print preview window was blocked by the browser.');
 

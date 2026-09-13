@@ -28,6 +28,79 @@ class TableditV3ParserTest < ActiveSupport::TestCase
     assert_empty document.xpath("//technical/notations")
   end
 
+  test "covers TablEdit format guards, tables, readers and duration mappings" do
+    refute Tef2::TableditV3Parser.tabledit_v3?(Array.new(10, 0))
+    false_magic = Array.new(0xCE, 0); false_magic[0x38, 4] = "nope".bytes
+    refute Tef2::TableditV3Parser.tabledit_v3?(false_magic)
+    false_format = Array.new(0xCE, 0); false_format[0x38, 4] = "debt".bytes; put_u16(false_format, 0xCC, 9 << 8)
+    refute Tef2::TableditV3Parser.tabledit_v3?(false_format)
+
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.validate_file!([]) }
+    invalid = false_magic.dup; invalid[0x38, 4] = "debt".bytes; put_u16(invalid, 0xCC, 10 << 8); invalid[0x10] = 1
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.validate_file!(invalid) }
+
+    assert_equal [], Tef2::TableditV3Parser.parse_texts(Array.new(0x60, 0))
+    text_bytes = Array.new(0x310, 0); put_u32(text_bytes, 0x54, 0x300); put_u16(text_bytes, 0x300, 1); put_u16(text_bytes, 0x302, 4); text_bytes[0x304, 3] = "ABC".bytes
+    assert_equal [ "ABC" ], Tef2::TableditV3Parser.parse_texts(text_bytes)
+    truncated_text = text_bytes.first(0x305)
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.parse_texts(truncated_text) }
+
+    assert_equal [], Tef2::TableditV3Parser.parse_chords(Array.new(0x60, 0))
+    assert_raises(Tef2::TableditV3Parser::Invalid) do
+      chord_error = Array.new(0x80, 0); put_u32(chord_error, 0x58, 0x60); put_u16(chord_error, 0x60, 31); put_u16(chord_error, 0x62, 0)
+      Tef2::TableditV3Parser.parse_chords(chord_error)
+    end
+
+    indirect = Array.new(0x310, 0); put_u32(indirect, 0x40, 0x300); put_u16(indirect, 0x300, 4); indirect[0x302, 3] = "ABC".bytes
+    assert_equal "ABC", Tef2::TableditV3Parser.indirect_text(indirect, 0x40)
+    assert_equal "", Tef2::TableditV3Parser.indirect_text(Array.new(0x50, 0), 0x40)
+    truncated_indirect = [ 0 ] * 0x44; put_u32(truncated_indirect, 0x40, 0xFF)
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.indirect_text(truncated_indirect, 0x40) }
+
+    assert_equal [ [], [], [ 1 ], [ 2 ], [ 3 ], [ 4 ], [ "T" ] ], (0..6).map { |value| Tef2::TableditV3Parser.modern_fingerings(value) }
+    assert_equal "é", Tef2::TableditV3Parser.decode_text([ 0xE9 ])
+    assert_equal "\u0081", Tef2::TableditV3Parser.decode_text([ 0x81 ])
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.duration_ticks(16) }
+    assert_equal 1024, Tef2::TableditV3Parser.duration_ticks(0)
+    assert_equal 16, Tef2::TableditV3Parser.duration_ticks(17)
+
+    notes = [ { measure: 0, position: 0, tef2_duration: 4 }, { measure: 0, position: 0, tef2_duration: 8 }, { measure: 1, position: 0, tef2_duration: 2 } ]
+    assert_equal notes, Tef2::TableditV3Parser.assign_chord_durations(notes)
+    assert_equal true, notes[0][:is_chord]
+  end
+
+  test "covers TablEdit section and low-level reader failures" do
+    measures = [ { length_units: 64 }, { length_units: 64 } ]
+    assert_equal [ 1, 0 ], Tef2::TableditV3Parser.locate_measure([ 0, 64, 128 ], 64)
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.locate_measure([ 0, 64 ], 64) }
+
+    gap = Array.new(0x220, 0)
+    put_u32(gap, 0x3C, 0x200); put_u32(gap, 0x200, 0); gap[0x204] = 0x33; put_u32(gap, 0x20C, 0xFFFFFFFF)
+    assert_equal [ [], 1, [], [] ], Tef2::TableditV3Parser.parse_contents(gap, measures, 5)
+    truncated = gap.first(0x208)
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.parse_contents(truncated, measures, 5) }
+
+    reader = Tef2::TableditV3Parser::Reader.new([ 255, 1, 2, 3, 4, 5, 4, 0, 65, 66, 67, 0 ], 0)
+    assert_equal 255, reader.u8
+    assert_equal 1, reader.i8
+    assert_equal 770, reader.u16
+    assert_equal 4, reader.u8
+    assert_equal [ 5, 4 ], reader.bytes(2)
+    assert_equal "ABC", Tef2::TableditV3Parser::Reader.new([ 4, 0, 65, 66, 67, 0 ], 0).text
+    assert_raises(IndexError) { reader.require!(100) }
+    assert_raises(IndexError) { Tef2::TableditV3Parser::Reader.new([ 0, 0 ], -1).require!(1) }
+    assert_raises(IndexError) { Tef2::TableditV3Parser::Reader.new([ 0, 0 ], 0).text }
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.read_u16([ 0 ], 0) }
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.read_u32([ 0 ], 0) }
+
+    truncated_measures = Array.new(0x64, 0); put_u32(truncated_measures, 0x5C, 0x63)
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.parse_measures(truncated_measures) }
+    truncated_instruments = Array.new(0x68, 0); put_u32(truncated_instruments, 0x60, 0x67)
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.parse_instruments(truncated_instruments) }
+    truncated_chords = Array.new(0x80, 0); put_u32(truncated_chords, 0x58, 0x7F)
+    assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.parse_chords(truncated_chords) }
+  end
+
   private
 
   def modern_tef
@@ -88,5 +161,9 @@ class TableditV3ParserTest < ActiveSupport::TestCase
 
   def put_u32(bytes, offset, value)
     bytes[offset, 4] = [ value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF, (value >> 24) & 0xFF ]
+  end
+
+  def put_u16(bytes, offset, value)
+    bytes[offset, 2] = [ value & 0xFF, (value >> 8) & 0xFF ]
   end
 end

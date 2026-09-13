@@ -93,5 +93,5 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run typecheck && npm test && npm run build
+      - run: npm run typecheck && npm run test:coverage && npm run build
       - run: python3 -m unittest discover -s converter -p 'test_*.py'
