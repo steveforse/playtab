@@ -1,6 +1,6 @@
 # Playtab feature roadmap
 
-This is the ordered feature backlog for Playtab. Each item has a dedicated feature branch and should land through a pull request into `main` after the required CI checks pass.
+This is the ordered feature backlog for Playtab. Each item has a planned branch name; create that branch when implementation begins and land the work through a pull request into `main` after the required CI checks pass.
 
 ## Ordered feature work
 
