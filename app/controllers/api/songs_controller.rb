@@ -1,5 +1,7 @@
 module Api
   class SongsController < ApplicationController
+    MAX_SCORE_REQUEST_BYTES = 3_000_000
+
     def index
       render json: Song.order(created_at: :desc).limit(100).select(:id, :title, :created_at)
     end
@@ -9,8 +11,8 @@ module Api
     end
 
     def create
-      if request.content_length.to_i > 500_000
-        return render json: { error: "Score is too large (500 KB maximum)." }, status: :content_too_large
+      if request.content_length.to_i > MAX_SCORE_REQUEST_BYTES
+        return render json: { error: "Score is too large (3 MB maximum)." }, status: :content_too_large
       end
       unless params[:score].is_a?(ActionController::Parameters)
         return render json: { error: "Score must be an object." }, status: :unprocessable_entity

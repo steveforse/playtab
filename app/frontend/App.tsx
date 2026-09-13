@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Player } from './Player';
-import { demo, validateScore, type Score } from './music/score';
+import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
-import { readMusicXml, type MusicXmlPreview } from './music/musicxml';
+import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 
 type LibraryItem = { id: number; title: string };
 const initialText = exportAscii(demo);
@@ -41,18 +41,22 @@ export function App() {
     setPreview(null);
     setScore(next); setSource(original); setWarnings(diagnostics); setSavedId(id); setMessage(''); setError('');
   }
+  function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null) {
+    setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setSavedId(id); setMessage(''); setError('');
+  }
   async function openSong(id: number) {
     try {
       const song = await apiRequest(`/api/songs/${id}`);
-      validateScore(song.score);
-      load(song.score, song.source_text, song.source_text ? ['Imported from plaintext using equal-note rhythm. Original text is preserved with this score.'] : [], id);
+      validateStoredScore(song.score);
+      if (isImportedScoreDocument(song.score)) loadPreview(readMusicXml(song.score.source, song.score.sourceName, song.score.sourceFormat), song.score.warnings, id);
+      else load(song.score, song.source_text, song.source_text ? ['Imported from plaintext using equal-note rhythm. Original text is preserved with this score.'] : [], id);
     } catch (e) { setError((e as Error).message); }
   }
   async function save() {
-    if (preview) return;
     setSaving(true); setError('');
     try {
-      const item = await apiRequest('/api/songs', { method: 'POST', body: JSON.stringify({ score, source_text: source }) });
+      const document = preview ? toImportedScoreDocument(preview, warnings) : score;
+      const item = await apiRequest('/api/songs', { method: 'POST', body: JSON.stringify({ score: document, source_text: preview ? null : source }) });
       setSavedId(item.id); setLibrary(items => [item, ...items]); setMessage('Saved to your library.');
     } catch (e) { setError((e as Error).message); } finally { setSaving(false); }
   }
@@ -80,10 +84,8 @@ export function App() {
         conversionWarnings = converted.warnings;
       } else contents = await file.text();
       if (isXml || isTef) {
-        setPreview(readMusicXml(contents, isTef ? file.name.replace(/\.tef$/i, '.musicxml') : file.name));
-        setSavedId(null); setMessage(''); setError('');
-        setWarnings(['MusicXML preview: tuning and rhythm come from the file. Conversion may omit techniques, text, or other source details; compare with the original TEF.', 'Preview is not saved to your library. Download the original MusicXML to keep it.']);
-        if (isTef) setWarnings(conversionWarnings);
+        const filename = isTef ? file.name.replace(/\.tef$/i, '.musicxml') : file.name;
+        loadPreview(readMusicXml(contents, filename, isTef ? 'tef' : 'musicxml'), isTef ? conversionWarnings : ['MusicXML preview: tuning and rhythm come from the file. Save this score to preserve the imported document in your library.']);
         dialog.current?.close();
       } else if (extension === 'json') {
         const document: unknown = JSON.parse(contents); validateScore(document);
@@ -111,7 +113,7 @@ export function App() {
       <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></header>
       <div className="workspace">
         <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
-        <div className="title-row"><div><h1>{preview?.score.title ?? score.title}</h1><p className="subtitle">5-string banjo <span>·</span> {preview ? preview.tuningLabel : 'Open G tuning'} <span>·</span> {preview?.score.masterBars.length ?? score.measures.length} measures</p></div><button className="save-button" disabled={saving || savedId !== null || !!preview} onClick={save}>{preview ? 'Preview only' : savedId ? '✓ Saved' : saving ? 'Saving…' : '＋ Save to library'}</button></div>
+        <div className="title-row"><div><h1>{preview?.score.title ?? score.title}</h1><p className="subtitle">5-string banjo <span>·</span> {preview ? preview.tuningLabel : 'Open G tuning'} <span>·</span> {preview?.score.masterBars.length ?? score.measures.length} measures</p></div><button className="save-button" disabled={saving || savedId !== null} onClick={save}>{savedId ? '✓ Saved' : saving ? 'Saving…' : '＋ Save to library'}</button></div>
         {error && <p className="alert" role="alert">{error}</p>}
         {message && <p className="success" role="status">{message}</p>}
         {warnings.length > 0 && <details className="import-notice" open><summary>Check your import</summary>{warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}

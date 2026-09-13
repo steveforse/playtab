@@ -9,6 +9,18 @@ export type Score = {
   measures: { beats: Beat[] }[];
 };
 
+export type ImportedScoreDocument = {
+  version: 2;
+  kind: 'musicxml';
+  title: string;
+  sourceName: string;
+  sourceFormat: 'musicxml' | 'tef';
+  source: string;
+  warnings: string[];
+};
+
+export type StoredScore = Score | ImportedScoreDocument;
+
 // Top-to-bottom tablature order: first through fifth string. MIDI concert pitch.
 export const OPEN_G = [62, 59, 55, 50, 67];
 
@@ -35,6 +47,27 @@ export function validateScore(value: unknown): asserts value is Score {
       }
     }
   }
+}
+
+export function validateImportedScore(value: unknown): asserts value is ImportedScoreDocument {
+  const fail = (message: string): never => { throw new Error(message); };
+  if (!value || typeof value !== 'object') fail('Score must be an object.');
+  const document = value as ImportedScoreDocument;
+  if (document.version !== 2 || document.kind !== 'musicxml') fail('Unsupported imported score document.');
+  if (typeof document.title !== 'string' || !document.title.trim() || document.title.length > 160) fail('Title must contain 1–160 characters.');
+  if (typeof document.sourceName !== 'string' || !document.sourceName.trim() || document.sourceName.length > 160) fail('Imported filename must contain 1–160 characters.');
+  if (document.sourceFormat !== 'musicxml' && document.sourceFormat !== 'tef') fail('Unsupported imported score format.');
+  if (typeof document.source !== 'string' || new TextEncoder().encode(document.source).length > 2_000_000 || !/<score-partwise[\s>]/.test(document.source)) fail('Imported MusicXML is invalid or too large.');
+  if (!Array.isArray(document.warnings) || document.warnings.length > 20 || document.warnings.some(warning => typeof warning !== 'string' || warning.length > 500)) fail('Invalid import warnings.');
+}
+
+export function validateStoredScore(value: unknown): asserts value is StoredScore {
+  if (value && typeof value === 'object' && (value as { version?: unknown }).version === 2) validateImportedScore(value);
+  else validateScore(value);
+}
+
+export function isImportedScoreDocument(value: unknown): value is ImportedScoreDocument {
+  return Boolean(value && typeof value === 'object' && (value as { version?: unknown; kind?: unknown }).version === 2 && (value as { kind?: unknown }).kind === 'musicxml');
 }
 
 export function pitch(note: TabNote, score: Score): number {

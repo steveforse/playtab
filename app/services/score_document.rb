@@ -1,10 +1,12 @@
-# Bounded v1: one five-string track, full 4/4 measures, equal beats.
+# Version 1 is the bounded native score. Version 2 stores the validated source
+# MusicXML for an imported preview so its richer alphaTab model can be rebuilt.
 # Keep in sync with app/frontend/music/score.ts and contract fixtures.
 class ScoreDocument
   class Invalid < StandardError; end
 
   def self.validate!(score)
     fail_with("must be an object") unless score.is_a?(Hash)
+    return validate_imported!(score) if score["version"] == 2
     fail_with("unsupported version") unless score["version"] == 1
     fail_with("invalid title") unless score["title"].is_a?(String) && score["title"].strip.length.between?(1, 160)
     fail_with("tempo must be 30–240") unless score["tempo"].is_a?(Integer) && score["tempo"].between?(30, 240)
@@ -27,6 +29,24 @@ class ScoreDocument
         fail_with("duplicate string in chord") unless strings.uniq == strings
       end
     end
+    true
+  end
+
+  def self.validate_imported!(document)
+    fail_with("unsupported imported score document") unless document["kind"] == "musicxml"
+    fail_with("invalid title") unless document["title"].is_a?(String) && document["title"].strip.length.between?(1, 160)
+    fail_with("invalid imported filename") unless document["sourceName"].is_a?(String) && document["sourceName"].strip.length.between?(1, 160)
+    fail_with("unsupported imported score format") unless %w[musicxml tef].include?(document["sourceFormat"])
+    source = document["source"]
+    fail_with("invalid MusicXML source") unless source.is_a?(String) && source.bytesize <= 2_000_000 && source.match?(%r{<score-partwise(?:\s|>)}) && !source.match?(/<!ENTITY/i)
+    begin
+      xml = Nokogiri::XML::Document.parse(source) { |config| config.strict.nonet }
+      fail_with("invalid MusicXML root") unless xml.root&.name == "score-partwise"
+    rescue Nokogiri::XML::SyntaxError
+      fail_with("invalid MusicXML source")
+    end
+    warnings = document["warnings"]
+    fail_with("invalid import warnings") unless warnings.is_a?(Array) && warnings.length <= 20 && warnings.all? { |warning| warning.is_a?(String) && warning.length <= 500 }
     true
   end
 

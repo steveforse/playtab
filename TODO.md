@@ -4,7 +4,7 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
 
 ## Ordered feature work
 
-- [ ] **1. Save imported scores to the library** — `feature/persist-imported-scores`
+- [x] **1. Save imported scores to the library** — `feature/persist-imported-scores`
   - Expand the versioned score document so it can preserve imported alternate tunings, rhythms, techniques, lyrics, chords, sections, and metadata.
   - Save TEF and MusicXML previews without silently simplifying unsupported content.
   - Add reopen, validation, and migration coverage.
@@ -47,6 +47,7 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
 ## Already completed
 
 - Native Ruby TEF2 and TablEdit TEF3 import with bounded Docker/TuxGuitar fallback.
+- Imported TEF and MusicXML previews saved as version-2 library documents and reconstructed on reopen.
 - Full private Brainjo corpus validation: 375 unique files parsed and loaded by alphaTab.
 - TEF chords, sections, fingering, thumb markers, hammer-ons, pull-offs, bends, and standalone lyrics preservation.
 - Configurable measures per line, lyric columns, and PDF layout fixes.
