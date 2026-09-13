@@ -58,10 +58,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(422, {'error': 'This TEF could not be converted safely. It may be damaged or contain unsupported notation.'})
             if not output.is_file() or not 0 < output.stat().st_size <= MAX_OUTPUT:
                 return self.reply(422, {'error': 'Converted score exceeds the preview size limit.'})
-            self.reply(200, {'musicxml': output.read_text(), 'warnings': [
-                'Experimental TEF2 conversion: some techniques or source details may be unsupported. Compare with the original.',
-                'This is a playable preview, not yet saved to your library. Download the converted MusicXML to keep it.'
-            ]})
+            musicxml = output.read_text()
+        self.reply(200, {'musicxml': musicxml, 'warnings': [
+            'Experimental TEF2 conversion: some techniques or source details may be unsupported. Compare with the original.',
+            'This is a playable preview, not yet saved to your library. Download the converted MusicXML to keep it.'
+        ]})
 
 
 if __name__ == '__main__':
