@@ -1,10 +1,12 @@
 import { importer, type model } from '@coderline/alphatab';
 import { extractTechniques, applyTechniques } from './musicxml-techniques';
+import type { ImportedScoreDocument } from './score';
 
-export type MusicXmlPreview = { id: string; source: string; score: model.Score; tuningLabel: string; lyricsSection: string | null };
+export type MusicXmlSourceFormat = 'musicxml' | 'tef';
+export type MusicXmlPreview = { id: string; source: string; filename: string; sourceFormat: MusicXmlSourceFormat; score: model.Score; tuningLabel: string; lyricsSection: string | null };
 
 // Preview keeps the imported model separate from the deliberately limited v1 document.
-export function readMusicXml(source: string, filename: string): MusicXmlPreview {
+export function readMusicXml(source: string, filename: string, sourceFormat: MusicXmlSourceFormat = 'musicxml'): MusicXmlPreview {
   if (new TextEncoder().encode(source).length > 2_000_000) throw new Error('MusicXML preview is limited to 2 MB.');
   if (/<!ENTITY/i.test(source)) throw new Error('XML entity declarations are not supported.');
   if (!/<score-partwise[\s>]/.test(source)) throw new Error('Choose an uncompressed partwise MusicXML file.');
@@ -27,9 +29,21 @@ export function readMusicXml(source: string, filename: string): MusicXmlPreview 
   tab.index = 0;
   tab.showStandardNotation = false;
   tab.showTablature = true;
-  score.title = score.title.trim() || filename.replace(/\.(musicxml|xml)$/i, '');
+  score.title = (score.title.trim() || filename.replace(/\.(musicxml|xml)$/i, '')).slice(0, 160);
   applyTechniques(score, tab, originalStaffIndex, techniques.markers);
   const names = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
   const tuningLabel = [...tab.tuning].reverse().map((n, i) => i === 0 ? names[n % 12].toLowerCase() : names[n % 12]).join(' ');
-  return { id: crypto.randomUUID(), source, score, tuningLabel, lyricsSection: techniques.lyricsSection };
+  return { id: crypto.randomUUID(), source, filename, sourceFormat, score, tuningLabel, lyricsSection: techniques.lyricsSection };
+}
+
+export function toImportedScoreDocument(preview: MusicXmlPreview, warnings: string[]): ImportedScoreDocument {
+  return {
+    version: 2,
+    kind: 'musicxml',
+    title: preview.score.title.slice(0, 160),
+    sourceName: preview.filename.slice(0, 160),
+    sourceFormat: preview.sourceFormat,
+    source: preview.source,
+    warnings,
+  };
 }

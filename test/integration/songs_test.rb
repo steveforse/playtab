@@ -23,4 +23,16 @@ class SongsTest < ActionDispatch::IntegrationTest
       assert_response :unprocessable_entity
     end
   end
+
+  test "create and reopen an imported MusicXML document" do
+    document = { version: 2, kind: "musicxml", title: "Minor tune", sourceName: "minor.musicxml",
+      sourceFormat: "musicxml", source: '<score-partwise version="4.0"></score-partwise>', warnings: [ "Compare the source." ] }
+    assert_difference("Song.count", 1) do
+      post api_songs_url, params: { score: document }, as: :json
+      assert_response :created
+    end
+    id = response.parsed_body["id"]
+    get api_song_url(id), as: :json
+    assert_equal JSON.parse(document.to_json), response.parsed_body["score"]
+  end
 end
