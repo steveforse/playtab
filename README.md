@@ -4,6 +4,8 @@ A Rails 8.1 + React/TypeScript practice room for five-string banjo, using alphaT
 
 This is the first playable prototype: a local, single-user workspace. Authentication and production deployment hardening are not implemented. Compose binds the app to localhost.
 
+See [TODO.md](TODO.md) for the ordered feature roadmap.
+
 ## Run with Docker
 
 Requires Docker and Docker Compose. No host Ruby or PostgreSQL install is needed.
