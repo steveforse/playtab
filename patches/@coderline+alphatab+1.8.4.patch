@@ -1,0 +1,15 @@
+diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
+index b6203da..c7a5eaa 100644
+--- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
++++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
+@@ -59240,6 +59240,10 @@ class TieGlyphLabels {
+ * @internal
+ */
+ class TabSlurGlyph extends TabTieGlyph {
++	// Playtab: use a consistent upward arch for hammer-on/pull-off slurs.
++	calculateTieDirection() {
++		return this._forSlide ? super.calculateTieDirection() : BeamDirection.Up;
++	}
+ 	_forSlide;
+ 	_labels = null;
+ 	constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {

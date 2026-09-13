@@ -1,0 +1,509 @@
+# frozen_string_literal: true
+
+require "nokogiri"
+
+module Tef2
+  # Builds partwise MusicXML from FullParser output
+  # Matches alphaTab's expectations: two staves (tab + notation), identical content
+  class FullMusicxmlBuilder
+    TICKS_PER_QUARTER = 960
+    DIVISIONS = 960
+    TEF2_TICKS_PER_QUARTER = 256
+    TEF2_TICKS_PER_BEAT = 256
+
+    # Open G tuning: MIDI pitches for strings 1-5 (high to low)
+    DEFAULT_TUNING = [ 62, 59, 55, 50, 67 ].freeze
+
+    # Build MusicXML from FullParser output
+    # @param parsed [Hash] output from FullParser.parse
+    # @return [String] MusicXML document
+    def self.build(parsed)
+      measures = parsed[:measures]
+      notes = parsed[:notes]
+      annotations = parsed[:annotations]
+      texts = parsed[:texts] || []
+      chords = parsed[:chords] || []
+      time_sig = parsed[:time_signature]
+      tempo = parsed[:tempo]
+      strings = parsed[:strings]
+      tuning = parsed[:tuning] || DEFAULT_TUNING
+      measure_signatures = parsed[:measure_signatures]
+      lyrics_text = parsed[:lyrics_text].to_s
+
+      builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
+        xml.send("score-partwise", version: "3.1") do
+          write_lyrics_metadata(xml, lyrics_text) if lyrics_text.match?(/\ALYRICS\s*&\s*CHORDS\b/i)
+
+          xml.send("part-list") do
+            xml.send("score-part", id: "P1") do
+              xml.send("part-name", "Banjo")
+              xml.send("score-instrument", id: "P1-I1") do
+                xml.send("instrument-name", "Banjo")
+              end
+              xml.send("midi-instrument", id: "P1-I1") do
+                xml.send("midi-channel", 1)
+                xml.send("midi-program", 105)  # Banjo
+                xml.send("midi-bank", 0)
+              end
+            end
+          end
+
+          xml.part(id: "P1") do
+            measures.times do |m|
+              xml.measure(number: m + 1) do
+                measure_time_sig = measure_signatures&.fetch(m, time_sig) || time_sig
+                write_measure_attributes(xml, m, measure_time_sig, tempo, strings, tuning) if m == 0
+                write_measure_time_signature(xml, measure_time_sig) if m.positive? && measure_signatures && measure_time_sig != measure_signatures[m - 1]
+                write_tempo_direction(xml, tempo) if m == 0 && tempo > 0
+                write_measure_notes(xml, m, notes, annotations, texts, chords, strings, tuning, measure_time_sig)
+              end
+            end
+          end
+        end
+      end
+      builder.to_xml(save_with: Nokogiri::XML::Node::SaveOptions::FORMAT)
+    end
+
+    private
+
+    def self.write_measure_attributes(xml, measure_index, time_sig, tempo, strings, tuning)
+      xml.attributes do
+        xml.divisions DIVISIONS
+        xml.staves 2
+        xml.key { xml.fifths 1 }  # G major
+        write_time_signature(xml, time_sig)
+
+        # Staff 1: Standard notation
+        xml.clef(number: "1") { xml.sign "G"; xml.line 2; xml.send("clef-octave-change", -1) }
+        # Staff 2: Tablature
+        xml.clef(number: "2") { xml.sign "TAB"; xml.line 5 }
+        xml.send("staff-details", number: "2", "print-object" => "yes") do
+          xml.send("staff-type", "alternate")
+          xml.send("staff-lines", strings)
+          # MusicXML staff-tuning goes from low to high (string 5 to string 1).
+          tuning.reverse.each_with_index do |pitch, index|
+            xml.send("staff-tuning", line: index + 1) do
+              xml.send("tuning-step", pitch_step(pitch))
+              xml.send("tuning-octave", pitch_octave(pitch))
+              xml.send("tuning-alter", pitch_alter(pitch))
+            end
+          end
+        end
+      end
+    end
+
+    def self.write_measure_time_signature(xml, time_sig)
+      xml.attributes { write_time_signature(xml, time_sig) }
+    end
+
+    def self.write_time_signature(xml, time_sig)
+      xml.time { xml.beats time_sig[:numerator]; xml.send("beat-type", time_sig[:denominator]) }
+    end
+
+    def self.write_tempo_direction(xml, tempo)
+      xml.direction(placement: "above") do
+        xml.send("direction-type") do
+          xml.metronome do
+            xml.send("beat-unit", "quarter")
+            xml.send("per-minute", tempo)
+          end
+        end
+      end
+    end
+
+    def self.write_measure_notes(xml, measure_index, notes, annotations, texts, chords, strings, tuning, time_sig)
+      # Filter notes for this measure
+      measure_notes = notes.select { |n| n[:measure] == measure_index }
+      measure_texts = texts.select { |text| text[:measure] == measure_index }
+      measure_chords = chords.select { |chord| chord[:measure] == measure_index }
+      return if measure_notes.empty? && measure_texts.empty? && measure_chords.empty?
+
+      # Build technique pairs from ALL notes (techniques can span measures)
+      all_notes_by_string = notes.group_by { |n| n[:string] }
+      technique_pairs = build_technique_pairs(all_notes_by_string)
+
+      # Sort notes by position
+      sorted_notes = measure_notes.sort_by { |n| n[:position] }
+
+      # Track cursor for rest insertion (in TEF2 ticks)
+      ticks_per_measure = tef2_ticks_per_measure(time_sig)
+      cursor = 0
+      metadata_positions = (measure_texts + measure_chords).map { |item| item[:position].to_i }.uniq.sort
+      metadata_index = 0
+
+      # === STAFF 1: Standard notation ===
+      sorted_notes.each do |note|
+        tef2_pos = note[:position]
+        tef2_dur = note[:tef2_duration]
+
+        while metadata_index < metadata_positions.length && metadata_positions[metadata_index] <= tef2_pos
+          write_measure_metadata(
+            xml,
+            measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
+            measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+            staff: 1
+          )
+          metadata_index += 1
+        end
+
+        # Insert rest if gap
+        if tef2_pos > cursor
+          rest_dur_tef2 = tef2_pos - cursor
+          rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
+          write_rest(xml, rest_dur_xml, staff: 1)
+        end
+
+        write_note_notation(xml, note, technique_pairs, tuning)
+        cursor = tef2_pos + tef2_dur
+      end
+
+      while metadata_index < metadata_positions.length
+        write_measure_metadata(
+          xml,
+          measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
+          measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+          staff: 1
+        )
+        metadata_index += 1
+      end
+
+      # End-of-measure rest for staff 1
+      if cursor < ticks_per_measure
+        rest_dur_tef2 = ticks_per_measure - cursor
+        rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
+        write_rest(xml, rest_dur_xml, staff: 1)
+      end
+
+      # === STAFF 2: Tablature (use backup to go back to measure start) ===
+      xml.backup { xml.duration ticks_per_measure * DIVISIONS / TEF2_TICKS_PER_QUARTER }
+      cursor = 0
+      metadata_index = 0
+
+      sorted_notes.each do |note|
+        tef2_pos = note[:position]
+        tef2_dur = note[:tef2_duration]
+
+        while metadata_index < metadata_positions.length && metadata_positions[metadata_index] <= tef2_pos
+          write_measure_metadata(
+            xml,
+            measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
+            measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+            staff: 2
+          )
+          metadata_index += 1
+        end
+
+        # Insert rest if gap
+        if tef2_pos > cursor
+          rest_dur_tef2 = tef2_pos - cursor
+          rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
+          write_rest(xml, rest_dur_xml, staff: 2)
+        end
+
+        write_note_tab(xml, note, technique_pairs, annotations, strings, tuning)
+        cursor = tef2_pos + tef2_dur
+      end
+
+      while metadata_index < metadata_positions.length
+        write_measure_metadata(
+          xml,
+          measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
+          measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+          staff: 2
+        )
+        metadata_index += 1
+      end
+
+      # End-of-measure rest for staff 2
+      if cursor < ticks_per_measure
+        rest_dur_tef2 = ticks_per_measure - cursor
+        rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
+        write_rest(xml, rest_dur_xml, staff: 2)
+      end
+    end
+
+    def self.write_measure_metadata(xml, texts, chords, staff:)
+      text_values = texts.map { |text| text[:text].to_s.strip }.reject(&:empty?)
+      unless text_values.empty?
+        xml.direction(placement: "above") do
+          xml.send("direction-type") { xml.words(text_values.join(" / ")) }
+          xml.staff staff
+        end
+      end
+
+      chords.each { |chord| write_harmony(xml, chord, staff:) }
+    end
+
+    def self.write_harmony(xml, chord, staff:)
+      name = chord[:name].to_s.strip
+      return if name.empty?
+
+      match = name.match(/\A([A-Ga-g])([#b♯♭]?)(.*)\z/)
+      root = match ? match[1].upcase : "C"
+      accidental = match ? match[2] : ""
+      suffix = match ? match[3] : name
+      alter = { "#" => 1, "♯" => 1, "b" => -1, "♭" => -1 }[accidental]
+
+      # TEF chord records include diagram voicings, but the source score uses
+      # chord names at the measure positions.  Per-measure diagrams are an
+      # export/layout choice and make the imported tab substantially noisier.
+      xml.harmony(placement: "above") do
+        xml.root do
+          xml.send("root-step", root)
+          xml.send("root-alter", alter) if alter
+        end
+        xml.kind(text: suffix) { xml.text "major" }
+        xml.staff staff
+      end
+    end
+
+    def self.tef2_to_xml_duration(tef2_ticks)
+      # TEF2: 256 ticks per quarter
+      # XML: 960 divisions per quarter
+      (tef2_ticks * DIVISIONS / TEF2_TICKS_PER_QUARTER).round
+    end
+
+    def self.tef2_ticks_per_measure(time_sig)
+      TEF2_TICKS_PER_QUARTER * time_sig[:numerator] * 4 / time_sig[:denominator]
+    end
+
+    def self.write_rest(xml, duration, staff: 1)
+      xml.note do
+        xml.rest
+        xml.duration duration
+        xml.voice 1
+        xml.staff staff
+      end
+    end
+
+    def self.write_note_notation(xml, note, technique_pairs, tuning)
+      string = note[:string]  # 0-based, 0 = highest
+      fret = note[:fret]
+      tef2_dur = note[:tef2_duration]
+      component_idx = note[:component_index]
+      is_chord = note[:is_chord]
+
+      xml_duration = tef2_to_xml_duration(tef2_dur)
+
+      # Compute pitch for notation staff (staff 1)
+      string_pitch = tuning[string]
+      note_pitch = string_pitch + fret
+
+      pair_key = [ string, component_idx ]
+      pair = technique_pairs[pair_key]
+      technique_number = pair ? pair[:number] : nil
+
+      xml.note do
+        xml.chord if is_chord
+        xml.pitch do
+          xml.step pitch_step(note_pitch)
+          xml.octave pitch_octave(note_pitch)
+          xml.alter pitch_alter(note_pitch)
+        end
+
+        xml.duration xml_duration
+        xml.voice 1
+        xml.type note_type(xml_duration)
+        xml.staff 1
+
+        # Technique markers
+        if pair
+          tag = pair[:kind]
+          type = pair[:is_start] ? "start" : "stop"
+          xml.notations { xml.technical { xml.send(tag, type: type, number: technique_number) } }
+        end
+
+        write_bend(xml, note)
+      end
+    end
+
+    def self.write_note_tab(xml, note, technique_pairs, annotations, strings, tuning)
+      string = note[:string]  # 0-based, 0 = highest
+      fret = note[:fret]
+      tef2_dur = note[:tef2_duration]
+      component_idx = note[:component_index]
+      is_chord = note[:is_chord]
+
+      xml_duration = tef2_to_xml_duration(tef2_dur)
+
+      pair_key = [ string, component_idx ]
+      pair = technique_pairs[pair_key]
+      technique_number = pair ? pair[:number] : nil
+
+      xml.note do
+        xml.chord if is_chord
+        # Tablature staff: pitch is not used, but some importers expect it
+        # Use the same pitch as notation staff
+        string_pitch = tuning[string]
+        note_pitch = string_pitch + fret
+        xml.pitch do
+          xml.step pitch_step(note_pitch)
+          xml.octave pitch_octave(note_pitch)
+          xml.alter pitch_alter(note_pitch)
+        end
+
+        xml.duration xml_duration
+        xml.voice 1
+        xml.type note_type(xml_duration)
+        xml.stem "none"  # Tab stems are hidden
+        xml.staff 2
+
+        # Tablature technical info
+        xml.notations do
+          xml.technical do
+            xml.string(string + 1)  # 1-based for MusicXML
+            xml.fret fret
+
+            # Hammer-on / pull-off
+            if pair
+              tag = pair[:kind]
+              type = pair[:is_start] ? "start" : "stop"
+              xml.send(tag, type: type, number: technique_number)
+            end
+
+            write_bend_technical(xml, note)
+
+            write_modern_fingerings(xml, note)
+
+            # TEF2 stores these as annotation payloads rather than as fret
+            # extensions.  TablEdit displays codes 2 and 4 as circled fingers
+            # 1 and 3.  Code 6 is the right-hand thumb marker; keep it as
+            # technical text because MusicXML's numeric fingering element
+            # cannot represent it.
+            if (ann = annotations[note[:index]])
+              if [ 2, 4 ].include?(ann)
+                xml.fingering(enclosure: "circle") { xml.text({ 2 => 1, 4 => 3 }.fetch(ann)) }
+              else
+                xml.send("other-technical") { xml.text "TEF fingering code #{ann}" }
+              end
+            end
+          end
+        end
+      end
+    end
+
+    # TEF2 stores its optional "LYRICS & CHORDS" page as free text rather
+    # than as note-aligned lyric events. Keep it in standard MusicXML metadata
+    # so the frontend can render it as a separate section below the score.
+    def self.write_lyrics_metadata(xml, lyrics_text)
+      xml.identification do
+        xml.miscellaneous do
+          xml.send("miscellaneous-field", name: "playtab-lyrics") { xml.text lyrics_text.delete("\0") }
+        end
+      end
+    end
+
+    def self.write_bend(xml, note)
+      effect = note[:effect1].to_i
+      return unless [ 4, 12, 13 ].include?(effect)
+
+      xml.notations do
+        xml.technical do
+          write_bend_technical(xml, note)
+        end
+      end
+    end
+
+    def self.write_bend_technical(xml, note)
+      effect = note[:effect1].to_i
+      return unless [ 4, 12, 13 ].include?(effect)
+
+      xml.bend do
+        # TablEdit effect 4 is the quarter bend shown in the Cluck Ol' Hen
+        # source PDF. Effects 12/13 are the standard whole-tone bend and
+        # bend-release values used by other TEF3 files.
+        xml.send("bend-alter", effect == 4 ? 0.5 : 2)
+        xml.release if effect == 13
+      end
+    end
+
+    def self.write_modern_fingerings(xml, note)
+      fingerings = Array(note[:fingerings]).dup
+      fingerings << "T" if note[:stroke].to_i == 1 && !fingerings.include?("T")
+      return if fingerings.empty?
+
+      fingerings.each do |fingering|
+        if fingering == "T"
+          xml.send("other-technical", "TEF fingering T")
+        else
+          xml.fingering(enclosure: "circle") { xml.text fingering }
+        end
+      end
+    end
+
+    TICKS_PER_MEASURE = 1024  # TEF2 ticks per measure (256 * 4)
+
+    def self.build_technique_pairs(notes_by_string)
+      pairs = {}
+
+      notes_by_string.each do |string, string_notes|
+        # Sort by absolute tick position
+        string_notes.sort_by! { |n| n[:absolute_position] || (n[:measure] * TICKS_PER_MEASURE + n[:position]) }
+
+        # For each technique note, find the next note on the same string
+        string_notes.each_with_index do |note, i|
+          effect = [ note[:technique], note[:effect1], note[:effect3] ].find { |value| [ 1, 2 ].include?(value.to_i) }
+          next unless effect
+
+          # Find destination note (next note on same string with tef2_duration > 0)
+          dest = string_notes[(i+1)..-1].find { |n| n[:tef2_duration] > 0 }
+          next unless dest
+
+          # TEF2 uses both effect1 values for the same legato marker.  The
+          # direction is determined by the destination fret, as TuxGuitar
+          # does when it rewrites its shared hammer flag.
+          kind = if note[:modern_tabledit] && [ 1, 2 ].include?(note[:effect1].to_i)
+            note[:effect1].to_i == 1 ? "hammer-on" : "pull-off"
+          else
+            dest[:fret] > note[:fret] ? "hammer-on" : "pull-off"
+          end
+          pair_num = note[:component_index]
+
+          pairs[[ string, note[:component_index] ]] = {
+            kind: kind,
+            number: pair_num,
+            is_start: true
+          }
+          pairs[[ string, dest[:component_index] ]] = {
+            kind: kind,
+            number: pair_num,
+            is_start: false
+          }
+        end
+      end
+
+      pairs
+    end
+
+    PITCH_COMPONENTS = [
+      [ "C", 0 ], [ "D", -1 ], [ "D", 0 ], [ "E", -1 ],
+      [ "E", 0 ], [ "F", 0 ], [ "G", -1 ], [ "G", 0 ],
+      [ "A", -1 ], [ "A", 0 ], [ "B", -1 ], [ "B", 0 ]
+    ].freeze
+
+    def self.pitch_step(midi_pitch)
+      PITCH_COMPONENTS[midi_pitch % 12][0]
+    end
+
+    def self.pitch_alter(midi_pitch)
+      PITCH_COMPONENTS[midi_pitch % 12][1]
+    end
+
+    def self.pitch_octave(midi_pitch)
+      # MusicXML numbers middle C (MIDI 60) as octave 4.
+      (midi_pitch / 12) - 1
+    end
+
+    def self.note_type(duration_ticks)
+      case duration_ticks
+      when DIVISIONS * 4 then "whole"
+      when DIVISIONS * 2 then "half"
+      when DIVISIONS then "quarter"
+      when DIVISIONS / 2 then "eighth"
+      when DIVISIONS / 4 then "16th"
+      when DIVISIONS / 8 then "32nd"
+      else "quarter"
+      end
+    end
+  end
+end

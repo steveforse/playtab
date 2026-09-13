@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+# A single native command, with process cleanup on Ctrl-C. Container users use compose.yml.
+children = [spawn("npm", "run", "dev", "--", "--port", "3036"), spawn("bundle", "exec", "rails", "server", *ARGV)]
+stop = proc { children.each { |pid| Process.kill("TERM", pid) rescue Errno::ESRCH } }
+trap("INT", &stop)
+trap("TERM", &stop)
+begin
+  Process.wait
+ensure
+  stop.call
+end

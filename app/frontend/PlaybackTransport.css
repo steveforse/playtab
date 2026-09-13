@@ -1,0 +1,3 @@
+.player-top { margin: 0 0 18px; }
+.top-player-status { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.top-player-status span { color: #818978; font-size: 10px; }

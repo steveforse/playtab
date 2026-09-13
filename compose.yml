@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: playtab
+      POSTGRES_PASSWORD: playtab
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playtab"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  web:
+    image: ruby:3.4
+    working_dir: /app
+    command: bash -c "bundle install && bundle exec rails db:prepare && rm -f tmp/pids/server.pid && bundle exec rails server -b 0.0.0.0"
+    environment:
+      PGHOST: db
+      VITE_RUBY_HOST: vite
+      VITE_RUBY_PORT: 3036
+      VITE_RUBY_AUTO_BUILD: "false"
+      TEF_CONVERTER_URL: http://converter:8080
+    networks: [default, conversion]
+    volumes:
+      - .:/app
+      - bundle:/usr/local/bundle
+    ports:
+      - "127.0.0.1:${PLAYTAB_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      vite:
+        condition: service_started
+      converter:
+        condition: service_healthy
+  vite:
+    image: node:22
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --port 3036"
+    environment:
+      VITE_RUBY_HOST: 0.0.0.0
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    ports:
+      - "127.0.0.1:3036:3036"
+  converter:
+    build:
+      context: .
+      dockerfile: converter/Dockerfile
+    networks: [conversion]
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 64
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+networks:
+  conversion:
+    internal: true
+volumes:
+  postgres:
+  bundle:
+    name: playtab_bundle
+  node_modules:
