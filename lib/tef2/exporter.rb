@@ -538,7 +538,7 @@ module Tef2
         if model.lyrics
           encoded = model.lyrics.encode(Encoding::UTF_8).bytes
           length = encoded.length + 1
-          bytes.concat([ length & 0xFF, (length >> 8) & 0xFF, 0, *encoded ])
+          bytes.concat([ length & 0xFF, (length >> 8) & 0xFF, *encoded, 0 ])
         end
         track = Array.new(50, 0)
         track[0] = 5
