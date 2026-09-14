@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { demo } from '../../app/frontend/music/score';
 
@@ -37,7 +37,7 @@ vi.mock('@coderline/alphatab', () => ({
 }));
 vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlphaTab }));
 
-import { Player } from '../../app/frontend/Player';
+import { Player, downloadBytes } from '../../app/frontend/Player';
 
 Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
 
@@ -132,6 +132,45 @@ describe('notation player', () => {
     vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.change(select, { target: { value: 'pdf' } });
     expect(screen.getByRole('alert').textContent).toContain('print preview window was blocked');
+  });
+
+  it('exports TEF2 and TEF3 downloads and shows server loss warnings', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ filename: 'Imported-tune.tef', content: btoa('TEF'), warnings: ['Lyrics are not represented.'] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const createObjectURL = vi.fn(() => 'blob:tef');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    readyPlayer(preview);
+
+    const select = screen.getByLabelText('Export score');
+    fireEvent.change(select, { target: { value: 'tef2' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ version: 'tef2' });
+    expect(screen.getByRole('status').textContent).toContain('Lyrics are not represented.');
+
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ filename: 'tune.tef', content: btoa('TEF3'), warnings: [] }) });
+    fireEvent.change(select, { target: { value: 'tef3' } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('status').textContent).toContain('TEF export completed.');
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+    downloadBytes(btoa('timer'), 'timer.tef');
+    vi.runAllTimers();
+  });
+
+  it('reports TEF export request and response failures', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({ error: 'TEF2 cannot represent this score.' }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error('not json'); } });
+    vi.stubGlobal('fetch', fetchMock);
+    readyPlayer();
+    const select = screen.getByLabelText('Export score');
+    fireEvent.change(select, { target: { value: 'tef2' } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('TEF2 cannot represent this score.'));
+    fireEvent.change(select, { target: { value: 'tef3' } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('TEF export returned an invalid file.'));
   });
 
   it('prints a lyrics preview after fitting wide notation to the popup page', async () => {

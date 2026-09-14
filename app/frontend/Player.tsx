@@ -3,11 +3,20 @@ import { AlphaTabApi, PlayerOutputMode } from '@coderline/alphatab';
 import { toAlphaTab } from './music/alphatab';
 import { exportAscii } from './music/ascii';
 import type { Score } from './music/score';
-import type { MusicXmlPreview } from './music/musicxml';
+import { toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { PlaybackTransport } from './PlaybackTransport';
 
 export function download(text: string, filename: string, type = 'text/plain') {
   const url = URL.createObjectURL(new Blob([text], { type }));
+  const anchor = document.createElement('a');
+  anchor.href = url; anchor.download = filename; anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function downloadBytes(encoded: string, filename: string, type = 'application/octet-stream') {
+  const binary = atob(encoded);
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type }));
   const anchor = document.createElement('a');
   anchor.href = url; anchor.download = filename; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -21,6 +30,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
+  const [exportNotice, setExportNotice] = useState('');
   const [speed, setSpeed] = useState(1);
   const [loop, setLoop] = useState(false);
   const [metronome, setMetronome] = useState(false);
@@ -29,7 +39,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
   const [barsPerRow, setBarsPerRow] = useState(2);
   const [lyricsColumns, setLyricsColumns] = useState(1);
   useEffect(() => {
-    setReady(false); setPlaying(false); setRendered(false); setError('');
+    setReady(false); setPlaying(false); setRendered(false); setError(''); setExportNotice('');
     setSpeed(1); setLoop(false); setMetronome(false); setPosition({ currentTime: 0, endTime: 0 });
     const base = '/notation/';
     const instance = new AlphaTabApi(element.current!, {
@@ -112,8 +122,29 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
     void popup.document.fonts.ready.then(print);
     setTimeout(print, 1000);
   }
+  async function exportTef(version: 'tef2' | 'tef3') {
+    const payload = preview ? toImportedScoreDocument(preview, []) : score;
+    const response = await fetch('/api/tef_exports', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '',
+      },
+      body: JSON.stringify({ score: payload, version }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `TEF export failed (${response.status}).`);
+    if (typeof body.content !== 'string' || typeof body.filename !== 'string') throw new Error('TEF export returned an invalid file.');
+    downloadBytes(body.content, body.filename);
+    const warnings = Array.isArray(body.warnings) ? body.warnings.filter((warning: unknown): warning is string => typeof warning === 'string') : [];
+    setExportNotice(warnings.length > 0 ? `TEF export completed with warnings:\n${warnings.join('\n')}` : 'TEF export completed.');
+  }
   function exportFile(format: string) {
-    setError('');
+    setError(''); setExportNotice('');
+    if (format === 'tef2' || format === 'tef3') {
+      void exportTef(format).catch(e => setError((e as Error).message));
+      return;
+    }
     try {
       if (preview && format === 'musicxml') download(preview.source, `${preview.score.title}.musicxml`, 'application/vnd.recordare.musicxml+xml');
       if (format === 'json') download(JSON.stringify(score, null, 2), `${score.title}.playtab.json`, 'application/json');
@@ -139,11 +170,12 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
           </select></label>}
         </div>
         <label className="export-label">Export <select aria-label="Export score" value="" disabled={!rendered} onChange={e => exportFile(e.target.value)}>
-          <option value="" disabled>Choose format ↗</option><option value="pdf">Print / save PDF</option><option value="midi">MIDI (.mid)</option>{preview ? <option value="musicxml">Original MusicXML</option> : <><option value="txt">Plaintext (.txt)</option><option value="json">Playtab (.json)</option></>}
+          <option value="" disabled>Choose format ↗</option><option value="pdf">Print / save PDF</option><option value="midi">MIDI (.mid)</option><option value="tef2">TEF2 (.tef)</option><option value="tef3">TablEdit TEF3 (.tef)</option>{preview ? <option value="musicxml">Original MusicXML</option> : <><option value="txt">Plaintext (.txt)</option><option value="json">Playtab (.json)</option></>}
         </select></label>
       </div>
     </div>
     {error && <p className="alert" role="alert">{error}</p>}
+    {exportNotice && <p className="success export-notice" role="status">{exportNotice}</p>}
     <section ref={scorePaper} className="score-paper" aria-label="Banjo tablature">
       <div className="paper-topline"><span>PLAYTAB / {preview ? 'IMPORT PREVIEW' : 'PRACTICE SERIES'}</span><span>{preview ? preview.tuningLabel : 'OPEN G · 4/4'}</span></div>
       {!rendered && <p className="loading">Setting out your music…</p>}

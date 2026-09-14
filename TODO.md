@@ -24,9 +24,10 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Native scores edit their notes, measures, title, and tempo in the bounded JSON model.
   - Imported scores update targeted MusicXML nodes and preserve untouched source information when saved.
 
-- [ ] **5. Add TEF export** — `feature/tef-export`
+- [x] **5. Add TEF export** — `feature/tef-export`
   - Export supported library scores and edited imports back to `.tef`.
-  - Report fields that cannot be represented by the selected TEF version.
+  - Export native scores and imported MusicXML through bounded TEF2 and TablEdit TEF3 writers.
+  - Report fields that cannot be represented by the selected TEF version before download.
 
 - [ ] **6. Add PDF recognition/import** — `feature/pdf-recognition`
   - Extract tablature, lyrics, chords, sections, and annotations from source PDFs.
@@ -52,6 +53,7 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
 - Full private Brainjo corpus validation: 375 unique files parsed and loaded by alphaTab.
 - TEF chords, sections, fingering, thumb markers, hammer-ons, pull-offs, bends, and standalone lyrics preservation.
 - Configurable measures per line, lyric columns, and PDF layout fixes.
+- TEF2 and TablEdit TEF3 export with explicit loss warnings.
 - Public GitHub repository with passing Rails, frontend, converter, lint, and security CI.
 
 ## Project rules
