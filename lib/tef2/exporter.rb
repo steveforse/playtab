@@ -114,6 +114,8 @@ module Tef2
         target_staff = measure_nodes.any? { |measure| measure.xpath("./note[staff='2']").any? } ? "2" : nil
         tuning = nil
         tempo = nil
+        seen_texts = {}
+        seen_chords = {}
 
         measure_nodes.each_with_index do |measure, measure_index|
           divisions = measure.at_xpath("./attributes/divisions")&.text.to_i.positive? ? measure.at_xpath("./attributes/divisions").text.to_i : divisions
@@ -124,14 +126,25 @@ module Tef2
 
           measure.xpath("./direction/direction-type/words").each do |words|
             text = words.text.strip
-            texts << { measure: measure_index, position: 0, text: text } unless text.empty?
+            position = xml_ticks(words.parent.parent.at_xpath("./offset")&.text.to_i, divisions)
+            key = [ measure_index, position, text ]
+            if !text.empty? && !seen_texts[key]
+              texts << { measure: measure_index, position: position, text: text }
+              seen_texts[key] = true
+            end
           end
           measure.xpath("./harmony").each do |harmony|
             name = chord_name(harmony)
-            chords << { measure: measure_index, position: 0, name: name } unless name.empty?
+            position = xml_ticks(harmony.at_xpath("./offset")&.text.to_i, divisions)
+            key = [ measure_index, position, name ]
+            if !name.empty? && !seen_chords[key]
+              chords << { measure: measure_index, position: position, name: name }
+              seen_chords[key] = true
+            end
           end
 
           cursor = 0
+          previous_note_position = nil
           measure.element_children.each do |element|
             case element.name
             when "backup"
@@ -142,15 +155,21 @@ module Tef2
               staff = element.at_xpath("./staff")&.text
               selected = target_staff ? staff == target_staff : element.at_xpath("./notations/technical/string")
               duration = xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions)
-              if selected && !element.at_xpath("./rest")
+              if selected && element.at_xpath("./rest")
+                cursor += duration
+                previous_note_position = nil
+              elsif selected
                 technical = element.at_xpath("./notations/technical")
                 string = technical&.at_xpath("./string")&.text.to_i
                 fret = technical&.at_xpath("./fret")&.text.to_i
                 if string.between?(1, 5) && fret >= 0
-                  notes << note_from_xml(element, measure_index, cursor, duration, string, fret)
+                  chord_note = element.at_xpath("./chord")
+                  position = chord_note && previous_note_position ? previous_note_position : cursor
+                  notes << note_from_xml(element, measure_index, position, duration, string, fret)
+                  cursor += duration unless chord_note
+                  previous_note_position = position
                 end
               end
-              cursor += duration unless element.at_xpath("./chord")
             end
           end
         end
@@ -237,8 +256,12 @@ module Tef2
       def self.note_from_xml(element, measure, position, duration, string, fret)
         technical = element.at_xpath("./notations/technical")
         fingering = technical&.at_xpath("./fingering")&.text.to_s
-        thumb = technical&.xpath("./other-technical").any? { |node| node.text.strip == "TEF fingering T" }
-        technique = element.at_xpath("./notations/technical/*[self::hammer-on or self::pull-off or self::slide or self::bend]")
+        thumb = technical&.xpath("./other-technical").any? do |node|
+          [ "TEF fingering T", "TEF fingering code 6" ].include?(node.text.strip)
+        end
+        technique = element.xpath("./notations/technical/*[self::hammer-on or self::pull-off or self::slide or self::bend]").find do |node|
+          node["type"] != "stop"
+        end
         effect1 = case technique&.name
         when "hammer-on" then 1
         when "pull-off" then 2
@@ -272,8 +295,11 @@ module Tef2
         root = harmony.at_xpath("./root/root-step")&.text.to_s
         alter = harmony.at_xpath("./root/root-alter")&.text.to_f
         accidental = alter == 1 ? "#" : alter == -1 ? "b" : ""
-        kind = harmony.at_xpath("./kind")&.text.to_s
-        root.empty? ? "" : "#{root}#{accidental}#{kind == 'major' ? '' : kind}"
+        kind_node = harmony.at_xpath("./kind")
+        display_kind = kind_node&.[]("text").to_s
+        kind = display_kind.empty? ? kind_node&.text.to_s.strip : display_kind
+        suffix = display_kind.empty? && %w[major maj].include?(kind.downcase) ? "" : kind
+        root.empty? ? "" : "#{root}#{accidental}#{suffix}"
       end
 
       def self.loss_warnings(xml, target_staff, notes, measures)
