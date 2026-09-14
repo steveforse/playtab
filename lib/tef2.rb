@@ -7,6 +7,7 @@ require_relative "tef2/full_parser"
 require_relative "tef2/full_musicxml_builder"
 require_relative "tef2/tabledit_v3_parser"
 require_relative "tef2/converter_client"
+require_relative "tef2/exporter"
 
 module Tef2
   class Error < StandardError; end

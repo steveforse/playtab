@@ -22,6 +22,9 @@ test('renders and plays a banjo score, imports text and exports', async ({ page 
   const download = page.waitForEvent('download');
   await page.getByLabel('Export score').selectOption('json');
   expect((await download).suggestedFilename()).toBe('Browser verification tab.playtab.json');
+  const tefDownload = page.waitForEvent('download');
+  await page.getByLabel('Export score').selectOption('tef2');
+  expect((await tefDownload).suggestedFilename()).toBe('Browser-verification-tab.tef');
   await page.screenshot({ path: 'tmp/playtab-desktop.png', fullPage: true });
   expect(errors).toEqual([]);
 });

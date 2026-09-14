@@ -41,7 +41,7 @@ bin/setup
 2. Choose **Import a tab** to use the included plaintext example or load a `.txt` file.
 3. Choose a note duration. Read the import assumptions before trusting playback.
 4. Save to the library; reopen the score after a page reload.
-5. Export plaintext, MIDI, Playtab JSON, or use the browser print dialog to save a PDF.
+5. Export plaintext, MIDI, Playtab JSON, TEF2, TablEdit TEF3, or use the browser print dialog to save a PDF.
 
 Play/pause and restart are available above and below the score, synchronized to one player.
 
@@ -55,7 +55,7 @@ Play/pause and restart are available above and below the score, synchronized to 
 - The stored version-1 score format remains intentionally limited. Imported MusicXML/TEF previews additionally preserve explicit alternate tunings, chords, section text, fingering, hammer-ons, pull-offs, bends, and selected other techniques where the source format provides enough information.
 - The score editor can change native notes and measures, and can edit imported title, tempo, tuning, note strings and frets, measure count, lyrics, chord names, section text, annotations, and supported techniques. Imported edits are applied to the source MusicXML before the score is saved, so untouched source metadata remains available when the score is reopened.
 
-PDF uploads and TEF export are still pending. The bundled SoundFont is a starter sound, not an auditioned premium banjo library.
+PDF uploads are still pending. The bundled SoundFont is a starter sound, not an auditioned premium banjo library.
 
 ### Direct TEF uploads
 
@@ -84,6 +84,10 @@ TEF2 annotation-flagged records are normalized before decoding: annotation paylo
 `script/review_musicxml.py INPUT_XML REVIEW_JSON OUTPUT_XML` applies explicit, human-reviewed fret/pitch/fingering corrections to both duplicate staves. Reviews are bound to the input XML SHA-256 and expected original note values. The original XML is retained; private review manifests and outputs belong in ignored `tmp/`. This workflow does not imply a general annotation-decoding fix.
 
 To include the private conversion in browser checks, set `PLAYTAB_TEFPREVIEW_XML` to its absolute MusicXML path along with `PLAYTAB_URL`.
+
+### TEF export
+
+Use the export menu on a native library score or an imported and edited preview to choose TEF2 or TablEdit TEF3. Playtab writes one five-string track and preserves notes, tuning, rhythm, supported techniques, fingering, chord names, section text, and the standalone lyric page where the selected format has a corresponding field. The download reports any source details that the selected format cannot represent, including timed lyrics, independent voices, rests, and some layout techniques. TEF2 is limited to 4/4 measures and frets 0–24; choose TablEdit TEF3 for larger frets or changing time signatures.
 
 ## Checks
 
