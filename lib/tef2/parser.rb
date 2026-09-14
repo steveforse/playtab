@@ -124,7 +124,13 @@ module Tef2
         b4 = bytes[offset + 4]
         b5 = bytes[offset + 5]
 
-        type = (b2 >> 5) & 0x07  # bits 5-7
+        # Note types use the low five bits; the two extended control types keep
+        # their full byte values so they cannot be confused with note effects.
+        type = if [ TYPE_TEMPO_CHANGE, TYPE_ENDING_ALT ].include?(b2)
+          b2
+        else
+          b2 & 0x1F
+        end
         fret_code = b2 & 0x1F    # bits 0-4
         effect1 = b3 & 0x1F      # bits 0-4
         dynamic_flag = (b3 >> 5) & 0x01  # bit 5 = annotation flag

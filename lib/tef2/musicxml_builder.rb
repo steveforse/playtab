@@ -27,9 +27,9 @@ module Tef2
     def self.build(measures:, timeline:, annotations:, tuning: DEFAULT_TUNING)
       builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
         xml.send("score-partwise", version: "3.1") do
-          xml.part_list do
-            xml.score_part(id: "P1") do
-              xml.part_name "Banjo"
+          xml.send("part-list") do
+            xml.send("score-part", id: "P1") do
+              xml.send("part-name", "Banjo")
             end
           end
 
@@ -52,18 +52,18 @@ module Tef2
       xml.attributes do
         xml.divisions DIVISIONS
         xml.key { xml.fifths 1 }  # G major (1 sharp)
-        xml.time { xml.beats BEATS_PER_MEASURE; xml.beat_type 4 }
+        xml.time { xml.beats BEATS_PER_MEASURE; xml.send("beat-type", 4) }
         xml.clef { xml.sign "G"; xml.line 2 }
 
         # Staff details for tablature
-        xml.staff_details(print_object: "yes") do
-          xml.staff_lines 5
-          xml.staff_tuning do
+        xml.send("staff-details", "print-object" => "yes") do
+          xml.send("staff-lines", 5)
+          xml.send("staff-tuning") do
             # Tuning is specified from low to high in MusicXML
             tuning.reverse.each do |pitch|
-              xml.tuning_step pitch_step(pitch)
-              xml.tuning_octave pitch_octave(pitch)
-              xml.tuning_alter 0
+              xml.send("tuning-step", pitch_step(pitch))
+              xml.send("tuning-octave", pitch_octave(pitch))
+              xml.send("tuning-alter", 0)
             end
           end
         end
@@ -127,15 +127,12 @@ module Tef2
             # Hammer-on / pull-off
             pair_key = [ string, component_index ]
             if (pair = technique_pairs[pair_key])
-              tag = pair[:kind]  # "hammer-on" or "pull-off"
-              xml.send(tag, type: "start", number: pair[:number])
-            end
-            if (pair = technique_pairs.fetch(pair_key, nil)&.dig(:stop_for))
-              # Find the pair where this note is the stop
-              stop_pair = technique_pairs.values.find { |p| p[:stop_for] == component_index && p[:string] == string }
-              if stop_pair
-                tag = stop_pair[:kind]
-                xml.send(tag, type: "stop", number: stop_pair[:number])
+              if pair[:stop_for]
+                xml.send(pair[:kind], type: "start", number: pair[:number])
+              else
+                # Find the pair where this note is the stop.
+                stop_pair = technique_pairs.values.find { |p| p[:stop_for] == component_index && p[:string] == string }
+                xml.send(stop_pair[:kind], type: "stop", number: stop_pair[:number]) if stop_pair
               end
             end
 
