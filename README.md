@@ -53,6 +53,7 @@ Play/pause and restart are available above and below the score, synchronized to 
 - Fifth-string frets are relative to its own nut: 0 sounds G4, 2 sounds A4. **Physical neck fret numbering is not supported yet.**
 - JSON can preserve rest beats. ASCII import cannot infer rests or durations from whitespace; ASCII export rejects rests and mixed-duration measures to avoid silent loss.
 - The stored version-1 score format remains intentionally limited. Imported MusicXML/TEF previews additionally preserve explicit alternate tunings, chords, section text, fingering, hammer-ons, pull-offs, bends, and selected other techniques where the source format provides enough information.
+- The score editor can change native notes and measures, and can edit imported title, tempo, tuning, note strings and frets, measure count, lyrics, chord names, section text, annotations, and supported techniques. Imported edits are applied to the source MusicXML before the score is saved, so untouched source metadata remains available when the score is reopened.
 
 PDF uploads and TEF export are still pending. The bundled SoundFont is a starter sound, not an auditioned premium banjo library.
 

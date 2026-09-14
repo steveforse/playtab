@@ -19,9 +19,10 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Preserve fingering and unsupported effect values as explicit MusicXML technical metadata with import warnings.
   - Keep raw TEF2 repeat maps and source-only layout records explicit until their playback semantics are independently verified.
 
-- [ ] **4. Add score editing** — `feature/score-editing`
+- [x] **4. Add score editing** — `feature/score-editing`
   - Edit notes, measures, tuning, tempo, lyrics, chords, sections, annotations, and techniques after import.
-  - Preserve imported information when an edited score is saved.
+  - Native scores edit their notes, measures, title, and tempo in the bounded JSON model.
+  - Imported scores update targeted MusicXML nodes and preserve untouched source information when saved.
 
 - [ ] **5. Add TEF export** — `feature/tef-export`
   - Export supported library scores and edited imports back to `.tef`.
