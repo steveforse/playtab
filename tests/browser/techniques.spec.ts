@@ -9,6 +9,7 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   const notation = page.getByTestId('notation');
   await expect(notation.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(1);
   await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
+  await expect(notation.locator('svg text').filter({ hasText: /^sl\.?$/i })).toHaveCount(0);
   await page.setViewportSize({ width: 900, height: 1000 });
   await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
   await page.screenshot({ path: 'tmp/techniques.png', fullPage: true });

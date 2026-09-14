@@ -145,8 +145,8 @@ describe('MusicXML preview', () => {
     expect(notes.map(n => n.isHammerPullOrigin)).toEqual([true, false, true, false]);
     expect(notes[0].hammerPullDestination).toBe(notes[1]);
     expect(notes[2].hammerPullDestination).toBe(notes[3]);
-    expect(notes[0].slideOutType).toBe(model.SlideOutType.Legato);
-    expect(notes[2].slideOutType).toBe(model.SlideOutType.Legato);
+    expect(notes.every(n => n.slideOutType === model.SlideOutType.None)).toBe(true);
+    expect(notes.every(n => n.slideTarget === null)).toBe(true);
     expect(notes.map(n => n.beat.playbackStart)).toEqual([0, 960, 1920, 2880]);
     expect(preview.source).toBe(techniques);
   });

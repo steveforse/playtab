@@ -163,6 +163,6 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
       </div>
     </div>
     <p className="player-hint">Click a note to seek. Drag across notes to select a practice range, then turn on Loop.</p>
-    {preview && <p className="player-hint">Audio preview: imported hammer-ons and pull-offs use held-note legato articulation; slides and bends retain their pitch movement.</p>}
+    {preview && <p className="player-hint">Audio preview: imported hammer-ons and pull-offs use held-note articulation; slides and bends retain their pitch movement.</p>}
   </>;
 }

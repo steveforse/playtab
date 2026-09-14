@@ -1,4 +1,4 @@
-import { model, Settings } from '@coderline/alphatab';
+import { Settings, type model } from '@coderline/alphatab';
 
 type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; kind: string; type: string; number: string };
 const children = (node: Element) => Array.from(node.childNodes).filter((n): n is Element => n.nodeType === 1);
@@ -93,12 +93,6 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       if (!next?.notes.includes(note)) throw new Error('Technique must end on the next note on the same string.');
       if (marker.kind === 'pull-off' ? from.fret <= note.fret : from.fret >= note.fret) throw new Error('Technique direction disagrees with the frets.');
       from.isHammerPullOrigin = true;
-      // alphaTab's default H/PO MIDI path lowers the destination velocity but
-      // still starts a second picked sample. Reuse its legato slide playback
-      // path so the origin sample is held, its pitch moves to the destination,
-      // and the destination does not reattack. The effect slur remains H/PO
-      // because isHammerPullOrigin is still set.
-      from.slideOutType = model.SlideOutType.Legato;
       spans.push({ from, to: note, label: marker.kind === 'pull-off' ? 'PO' : 'H' });
     } else throw new Error('Unsupported MusicXML technique marker.');
   }
