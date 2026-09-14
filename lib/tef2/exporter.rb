@@ -308,6 +308,14 @@ module Tef2
         bytes
       end
 
+      def info(title)
+        bytes = Array.new(200, 0)
+        encoded = title.to_s.encode(Encoding::UTF_8).bytes.first(198)
+        bytes[0, encoded.length] = encoded
+        bytes[encoded.length] = 0
+        bytes
+      end
+
       def duration_code(ticks, table)
         table.min_by { |code, value| (value - ticks.to_i).abs }.first
       end
@@ -315,6 +323,15 @@ module Tef2
 
     class LegacyWriter
       DURATION_CODES = (0..31).to_h { |code| [ code, FullParser.duration_ticks(code) ] }.freeze
+      # These fields are not consumed by the TuxGuitar-compatible reader, but
+      # they are part of the legacy TEF2 header expected by TEF View. They
+      # describe the 4/4 layout and the single-track export produced here.
+      LEGACY_LAYOUT_MARKER = 3
+      LEGACY_POSITION_UNIT = 480
+      LEGACY_TRACK_MARKER = 2
+      LEGACY_HEADER_FLAGS = 1
+      LEGACY_HEADER_WIDTH = 632
+      LEGACY_HEADER_STYLE = 163
 
       def self.build(model)
         raise Invalid, "TEF2 export supports 4/4 measures only." unless model.measures.all? { |sig| sig == { numerator: 4, denominator: 4 } }
@@ -325,11 +342,18 @@ module Tef2
 
         components = components_for(model)
         bytes = Array.new(FullParser::HEADER_SIZE + components.length * FullParser::COMPONENT_SIZE, 0)
+        bytes[0, 200] = Binary.info(model.title)
         Binary.u16(bytes, 200, model.measures.length)
         bytes[202] = 4
         bytes[204] = 4
+        bytes[205] = LEGACY_LAYOUT_MARKER
         Binary.u16(bytes, 220, model.tempo.clamp(30, 240))
+        Binary.u16(bytes, 226, LEGACY_POSITION_UNIT)
+        Binary.u16(bytes, 230, LEGACY_TRACK_MARKER)
+        bytes[239] = LEGACY_HEADER_FLAGS
         Binary.u16(bytes, 256, components.length)
+        Binary.u16(bytes, 246, LEGACY_HEADER_WIDTH)
+        bytes[249] = LEGACY_HEADER_STYLE
         bytes[228] = model.texts.length
         bytes[236] = model.chords.length
         bytes[238] = model.lyrics ? 1 : 0

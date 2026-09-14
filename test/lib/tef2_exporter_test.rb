@@ -5,6 +5,13 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     result = Tef2::Exporter.export(imported_document, version: "tef2")
     parsed = Tef2::FullParser.parse(result[:bytes])
 
+    assert_equal "Imported", result[:bytes].byteslice(0, 8).delete("\0")
+    assert_equal 3, result[:bytes].getbyte(205)
+    assert_equal 480, result[:bytes].byteslice(226, 2).unpack1("v")
+    assert_equal 2, result[:bytes].byteslice(230, 2).unpack1("v")
+    assert_equal 1, result[:bytes].getbyte(239)
+    assert_equal 632, result[:bytes].byteslice(246, 2).unpack1("v")
+    assert_equal 163, result[:bytes].getbyte(249)
     assert_equal [ "Verse" ], parsed[:texts].map { |text| text[:text] }
     assert_equal [ "G" ], parsed[:chords].map { |chord| chord[:name] }
     assert_includes parsed[:lyrics_text], "LYRICS & CHORDS"
