@@ -33,7 +33,7 @@ const alphaTab = vi.hoisted(() => {
 
 vi.mock('@coderline/alphatab', () => ({
   AlphaTabApi: alphaTab.FakeAlphaTabApi,
-  PlayerOutputMode: { WebAudioScriptProcessor: 2 },
+  PlayerOutputMode: { WebAudioAudioWorklets: 0, WebAudioScriptProcessor: 1 },
 }));
 vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlphaTab }));
 
