@@ -134,14 +134,15 @@ module Tef2
           measure.xpath("./direction/direction-type/words").each do |words|
             text = words.text.strip
             position = xml_ticks(words.parent.parent.at_xpath("./offset")&.text.to_i, divisions)
-            key = [ measure_index, position, text ]
+            string = metadata_string(words.parent.parent["data-playtab-string"])
+            key = [ measure_index, position, text, string ]
             if !text.empty? && !seen_texts[key]
               direction = words.parent.parent
               texts << {
                 measure: measure_index,
                 position: position,
                 text: text,
-                string: metadata_string(direction["data-playtab-string"])
+                string: string
               }.compact
               seen_texts[key] = true
             end
@@ -149,15 +150,18 @@ module Tef2
           measure.xpath("./harmony").each do |harmony|
             name = chord_name(harmony)
             position = xml_ticks(harmony.at_xpath("./offset")&.text.to_i, divisions)
-            key = [ measure_index, position, name ]
+            string = metadata_string(harmony["data-playtab-string"])
+            strings = chord_strings(harmony["data-playtab-strings"])
+            first_fret = metadata_first_fret(harmony["data-playtab-first-fret"])
+            key = [ measure_index, position, name, string, strings, first_fret ]
             if !name.empty? && !seen_chords[key]
               chords << {
                 measure: measure_index,
                 position: position,
                 name: name,
-                string: metadata_string(harmony["data-playtab-string"]),
-                strings: chord_strings(harmony["data-playtab-strings"]),
-                first_fret: metadata_first_fret(harmony["data-playtab-first-fret"])
+                string: string,
+                strings: strings,
+                first_fret: first_fret
               }.compact
               seen_chords[key] = true
             end
@@ -169,6 +173,7 @@ module Tef2
             case element.name
             when "backup"
               cursor = [ cursor - xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions), 0 ].max
+              previous_note_position = nil
             when "forward"
               cursor += xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions)
             when "note"
@@ -633,7 +638,7 @@ module Tef2
           record[0, 5] = Exporter.chord_values(chord)
           record[5, 9] = Array.new(9, 0xFF)
           record[14, 17] = Binary.text(chord[:name], 17)
-          record[31] = 1
+          record[31] = chord[:first_fret].to_i.positive? ? chord[:first_fret].to_i.clamp(1, 255) : 1
           bytes.concat(record)
         end
         bytes

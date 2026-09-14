@@ -34,7 +34,7 @@ module Tef2
 
       builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
         xml.send("score-partwise", version: "3.1") do
-          write_lyrics_metadata(xml, lyrics_text) if lyrics_text.match?(/\ALYRICS\s*&\s*CHORDS\b/i)
+          write_lyrics_metadata(xml, lyrics_text) unless lyrics_text.empty?
 
           xml.send("part-list") do
             xml.send("score-part", id: "P1") do
@@ -189,6 +189,8 @@ module Tef2
           rest_dur_tef2 = tef2_pos - cursor
           rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
           write_rest(xml, rest_dur_xml, staff: 1)
+        elsif tef2_pos < cursor && !note[:is_chord]
+          xml.backup { xml.duration tef2_to_xml_duration(cursor - tef2_pos) }
         end
 
         write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning)
@@ -238,6 +240,8 @@ module Tef2
           rest_dur_tef2 = tef2_pos - cursor
           rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
           write_rest(xml, rest_dur_xml, staff: 2)
+        elsif tef2_pos < cursor && !note[:is_chord]
+          xml.backup { xml.duration tef2_to_xml_duration(cursor - tef2_pos) }
         end
 
         write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning)

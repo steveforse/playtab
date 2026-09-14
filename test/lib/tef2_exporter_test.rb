@@ -89,6 +89,7 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     tef3_chord = Tef2::TableditV3Parser.parse(Tef2::Exporter::TableditWriter.build(chord_model))[:chords].first
     assert_equal [ 0, 2, 2, 1, -1 ], tef2_chord[:strings]
     assert_equal [ 0, 2, 2, 1, -1 ], tef3_chord[:strings]
+    assert_equal 2, tef3_chord[:first_fret]
   end
 
   test "round trips TEF3 tuplets, grace notes, ties and thumb fingering" do

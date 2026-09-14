@@ -342,7 +342,7 @@ module Tef2
         length = read_short(bytes, offset)
         raise Invalid, "Truncated TEF2 free-text block" unless length && offset + 2 + length <= bytes.length
         offset += 2 + length
-        lyrics_text = decode_text(bytes[offset - length, length])
+        lyrics_text = decode_text(bytes[offset - length, length]).delete("\0")
       end
 
       tracks = []
