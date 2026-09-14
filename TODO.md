@@ -29,11 +29,12 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Export native scores and imported MusicXML through bounded TEF2 and TablEdit TEF3 writers.
   - Report fields that cannot be represented by the selected TEF version before download.
 
-- [ ] **6. Add PDF recognition/import** — `feature/pdf-recognition`
+- [x] **6. Add vector PDF recognition/import** — `feature/pdf-recognition`
   - Extract tablature, lyrics, chord names, sections, techniques, and fingering marks from vector source PDFs.
   - Emit a bounded five-string MusicXML preview through the Rails upload flow.
   - Preserve reviewable recognition counts and warnings for inferred timing, missing tempo, unresolved voicings, and uncertain marks.
-  - Remaining: improve timing and cross-layout association, decode graphical rhythm/tempo data where possible, and validate the generated MusicXML semantically across the paired corpus.
+  - Completed on commit `c561d33`; all 356 paired Brainjo PDFs recognize successfully.
+  - Remaining follow-up: improve timing and cross-layout association, decode graphical rhythm/tempo data where possible, and validate generated MusicXML semantically against the paired TEF corpus.
 
 - [ ] **7. Improve lyrics and chord presentation** — `feature/lyrics-chord-presentation`
   - Support timed lyrics when source timing is available.
@@ -47,6 +48,12 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
 - [ ] **9. Productize the workspace** — `feature/productize-workspace`
   - Add authentication, multi-user libraries, synchronization, and deployment hardening.
   - Reassess upload limits and service isolation before public hosting.
+
+- [ ] **10. Add scanned PDF recognition/import** — `feature/scanned-pdf-recognition`
+  - Detect image-only PDFs and route them to a separate recognition pipeline.
+  - Render pages at a controlled resolution, deskew and clean the images, then recognize tablature staff lines, fret numbers, rhythms, lyrics, chords, sections, and techniques.
+  - Attach confidence scores and provide a review workflow for uncertain recognition before creating MusicXML.
+  - Build a labeled, private evaluation corpus and enforce resource, timeout, and upload limits for OCR/OMR processing.
 
 ## Already completed
 
