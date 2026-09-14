@@ -71,8 +71,8 @@ class Tef2ExporterTest < ActiveSupport::TestCase
       "title" => "Chord positions",
       "source" => <<~XML
         <score-partwise><part><measure number="1"><attributes><divisions>960</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>
-        <direction><direction-type><words>Verse</words></direction-type><offset>240</offset></direction><direction><direction-type><words>Verse</words></direction-type><offset>240</offset></direction>
-        <harmony><root><root-step>G</root-step></root><kind text=" min">major</kind><offset>240</offset></harmony><harmony><root><root-step>G</root-step></root><kind text=" min">major</kind><offset>240</offset></harmony>
+        <direction data-playtab-string="4"><direction-type><words>Verse</words></direction-type><offset>240</offset></direction><direction data-playtab-string="4"><direction-type><words>Verse</words></direction-type><offset>240</offset></direction>
+        <harmony data-playtab-string="3" data-playtab-strings="0,2,2,1,-1" data-playtab-first-fret="2"><root><root-step>G</root-step></root><kind text=" min">major</kind><offset>240</offset></harmony><harmony data-playtab-string="3" data-playtab-strings="0,2,2,1,-1" data-playtab-first-fret="2"><root><root-step>G</root-step></root><kind text=" min">major</kind><offset>240</offset></harmony>
         <note><pitch><step>G</step><octave>3</octave></pitch><duration>960</duration><staff>2</staff><notations><technical><string>1</string><fret>0</fret><other-technical>TEF fingering code 6</other-technical></technical></notations></note>
         <note><chord/><pitch><step>D</step><octave>3</octave></pitch><duration>960</duration><staff>2</staff><notations><technical><string>2</string><fret>0</fret></technical></notations></note>
         </measure></part></score-partwise>
@@ -81,7 +81,14 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert_equal [ [ 0, 0 ], [ 0, 1 ] ], chord_model.notes.map { |note| [ note[:position], note[:string] ] }
     assert_equal [ [ 64, "Verse" ] ], chord_model.texts.map { |text| [ text[:position], text[:text] ] }
     assert_equal [ [ 64, "G min" ] ], chord_model.chords.map { |chord| [ chord[:position], chord[:name] ] }
+    assert_equal [ 4 ], chord_model.texts.map { |text| text[:string] }
+    assert_equal [ [ 3, [ 0, 2, 2, 1, -1 ], 2 ] ], chord_model.chords.map { |chord| [ chord[:string], chord[:strings], chord[:first_fret] ] }
     assert_equal 6, chord_model.notes.first[:annotation]
+
+    tef2_chord = Tef2::FullParser.parse(Tef2::Exporter::LegacyWriter.build(chord_model))[:chords].first
+    tef3_chord = Tef2::TableditV3Parser.parse(Tef2::Exporter::TableditWriter.build(chord_model))[:chords].first
+    assert_equal [ 0, 2, 2, 1, -1 ], tef2_chord[:strings]
+    assert_equal [ 0, 2, 2, 1, -1 ], tef3_chord[:strings]
   end
 
   test "round trips TEF3 tuplets, grace notes, ties and thumb fingering" do

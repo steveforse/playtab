@@ -16,6 +16,13 @@ module Tef2
     TEF2_TICKS_PER_QUARTER = 256
     TEF3_UNITS_PER_QUARTER = 16
 
+    def self.chord_values(chord)
+      values = chord[:strings].to_a.first(5)
+      return Array.new(5, 0) unless values.length == 5
+
+      values.map { |fret| fret.to_i.negative? ? 0xFF : fret.to_i.clamp(0, 31) }
+    end
+
     def self.export(document, version: TEF2)
       model = Model.from(document)
       bytes = case version.to_s
@@ -129,7 +136,13 @@ module Tef2
             position = xml_ticks(words.parent.parent.at_xpath("./offset")&.text.to_i, divisions)
             key = [ measure_index, position, text ]
             if !text.empty? && !seen_texts[key]
-              texts << { measure: measure_index, position: position, text: text }
+              direction = words.parent.parent
+              texts << {
+                measure: measure_index,
+                position: position,
+                text: text,
+                string: metadata_string(direction["data-playtab-string"])
+              }.compact
               seen_texts[key] = true
             end
           end
@@ -138,7 +151,14 @@ module Tef2
             position = xml_ticks(harmony.at_xpath("./offset")&.text.to_i, divisions)
             key = [ measure_index, position, name ]
             if !name.empty? && !seen_chords[key]
-              chords << { measure: measure_index, position: position, name: name }
+              chords << {
+                measure: measure_index,
+                position: position,
+                name: name,
+                string: metadata_string(harmony["data-playtab-string"]),
+                strings: chord_strings(harmony["data-playtab-strings"]),
+                first_fret: metadata_first_fret(harmony["data-playtab-first-fret"])
+              }.compact
               seen_chords[key] = true
             end
           end
@@ -300,6 +320,25 @@ module Tef2
         kind = display_kind.empty? ? kind_node&.text.to_s.strip : display_kind
         suffix = display_kind.empty? && %w[major maj].include?(kind.downcase) ? "" : kind
         root.empty? ? "" : "#{root}#{accidental}#{suffix}"
+      end
+
+      def self.metadata_string(value)
+        return if value.nil?
+
+        parsed = value.to_i
+        parsed if parsed.between?(0, 4)
+      end
+
+      def self.chord_strings(value)
+        strings = value.to_s.split(",").map(&:to_i)
+        strings if strings.length == 5 && strings.all? { |fret| fret.between?(-1, 49) }
+      end
+
+      def self.metadata_first_fret(value)
+        return if value.nil?
+
+        parsed = value.to_i
+        parsed if parsed.positive?
       end
 
       def self.loss_warnings(xml, target_staff, notes, measures)
@@ -488,7 +527,7 @@ module Tef2
         end
         model.chords.each do |chord|
           record = Array.new(32, 0xFF)
-          record[0, 5] = Array.new(5, 0)
+          record[0, 5] = Exporter.chord_values(chord)
           record[14, 16] = Binary.text(chord[:name], 16)
           bytes.concat(record)
         end
@@ -591,7 +630,7 @@ module Tef2
         bytes = [ 32, 0, chords.length & 0xFF, (chords.length >> 8) & 0xFF ]
         chords.each do |chord|
           record = Array.new(32, 0)
-          record[0, 5] = Array.new(5, 0)
+          record[0, 5] = Exporter.chord_values(chord)
           record[5, 9] = Array.new(9, 0xFF)
           record[14, 17] = Binary.text(chord[:name], 17)
           record[31] = 1

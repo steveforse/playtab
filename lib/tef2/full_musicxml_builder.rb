@@ -267,7 +267,11 @@ module Tef2
       tempo_changes.each { |tempo_change| write_tempo_direction(xml, tempo_change[:tempo]) }
       text_values = texts.map { |text| text[:text].to_s.strip }.reject(&:empty?)
       unless text_values.empty?
-        xml.direction(placement: "above") do
+        direction_attributes = { placement: "above" }
+        if texts.length == 1 && texts.first[:string].to_i.between?(0, 4)
+          direction_attributes["data-playtab-string"] = texts.first[:string].to_i
+        end
+        xml.direction(direction_attributes) do
           xml.send("direction-type") { xml.words(text_values.join(" / ")) }
           xml.offset tef2_to_xml_duration(position) if position.to_i.positive?
           xml.staff staff
@@ -287,10 +291,18 @@ module Tef2
       suffix = match ? match[3] : name
       alter = { "#" => 1, "♯" => 1, "b" => -1, "♭" => -1 }[accidental]
 
-      # TEF chord records include diagram voicings, but the source score uses
-      # chord names at the measure positions.  Per-measure diagrams are an
-      # export/layout choice and make the imported tab substantially noisier.
-      xml.harmony(placement: "above") do
+      harmony_attributes = { placement: "above" }
+      strings = chord[:strings].to_a.first(5)
+      if strings.length == 5
+        harmony_attributes["data-playtab-strings"] = strings.map { |value| value.to_i }.join(",")
+      end
+      if chord[:first_fret].to_i.positive?
+        harmony_attributes["data-playtab-first-fret"] = chord[:first_fret].to_i
+      end
+      if chord[:string].to_i.between?(0, 4)
+        harmony_attributes["data-playtab-string"] = chord[:string].to_i
+      end
+      xml.harmony(harmony_attributes) do
         xml.root do
           xml.send("root-step", root)
           xml.send("root-alter", alter) if alter
