@@ -14,6 +14,7 @@ class PdfMusicxmlTest(unittest.TestCase):
             "tempo": None,
             "notes": [
                 {"measure": 0, "position": 0, "string": 0, "fret": 0, "dead": False},
+                {"measure": 0, "position": 64, "string": 0, "fret": 1, "dead": False},
                 {"measure": 0, "position": 128, "string": 0, "fret": 2, "dead": False},
             ],
             "sections": [{"measure": 0, "position": 128, "text": "Verse"}],

@@ -37,6 +37,7 @@ class MetadataPage(FakePage):
         visitor_text("Verse", matrix, (1, 0, 0, 1, 40, 570), None, 12)
         visitor_text("C min", matrix, (1, 0, 0, 1, 40, 653), None, 12)
         visitor_text("H", matrix, (1, 0, 0, 1, 40, 623), None, 12)
+        visitor_text("Sl", matrix, (1, 0, 0, 1, 55, 623), None, 12)
         visitor_text("1", matrix, (1, 0, 0, 1, 40, 670), None, 12)
 
 
@@ -77,6 +78,7 @@ class PdfRecognizerTest(unittest.TestCase):
         self.assertEqual(result["sections"][0]["text"], "Verse")
         self.assertEqual(result["chords"][0]["name"], "C min")
         self.assertEqual(result["techniques"][0]["type"], "hammer-on")
+        self.assertEqual(result["techniques"][1]["type"], "slide")
         self.assertEqual(result["fingerings"][0]["value"], "1")
         self.assertEqual(result["lyrics"], "VERSE\nOne line\nTwo lines\nThree lines")
 
@@ -84,6 +86,22 @@ class PdfRecognizerTest(unittest.TestCase):
         self.assertEqual(PdfRecognizer._position(20, 20, 300), 0)
         self.assertEqual(PdfRecognizer._position(160, 20, 300), 512)
         self.assertEqual(PdfRecognizer._position(300, 20, 300), 896)
+
+    def test_position_detects_sixteenth_note_spacing(self):
+        self.assertEqual(PdfRecognizer._position_step(20, 220, [45, 56.5, 68]), 64)
+
+    def test_recognizes_selectable_metronome_tempo_forms(self):
+        page = {"texts": [{"x": 40, "y": 700, "text": "♩ = 200"}], "systems": []}
+        self.assertEqual(PdfRecognizer._tempo([page]), 200)
+
+        split_page = {
+            "texts": [
+                {"x": 40, "y": 700, "text": "quarter note"},
+                {"x": 80, "y": 700, "text": "180"},
+            ],
+            "systems": [],
+        }
+        self.assertEqual(PdfRecognizer._tempo([split_page]), 180)
 
 
 if __name__ == "__main__":
