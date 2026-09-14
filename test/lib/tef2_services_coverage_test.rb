@@ -17,6 +17,21 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
     end
   end
 
+  test "reports unsupported effect codes while retaining the native conversion" do
+    parsed = {
+      notes: [ { fret: 0, effect1: 64, effect2: 14, effect3: 12 } ], annotations: {},
+      track_data: [ { capo: 0 } ], repeats: []
+    }
+    Tef2::TableditV3Parser.stub(:tabledit_v3?, false) do
+      Tef2::FullParser.stub(:parse, parsed) do
+        Tef2::FullMusicxmlBuilder.stub(:build, "<score-partwise/>") do
+          result = Tef2.try_full_parse("bytes")
+          assert_includes result[:warnings], "Unsupported TEF effect codes are preserved as TEF technical metadata: effect1=64, effect2=14, effect3=12."
+        end
+      end
+    end
+  end
+
   test "returns nil for unexpected full parser failures and preserves parser errors" do
     Tef2::TableditV3Parser.stub(:tabledit_v3?, false) do
       Tef2::FullParser.stub(:parse, ->(*) { raise RuntimeError, "unexpected" }) do

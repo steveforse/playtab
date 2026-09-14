@@ -59,8 +59,6 @@ module Tef2
         )
       end
 
-      raise Invalid, "TEF2 tempo changes are unsupported" if components[:tempo_changes].any?
-
       raise Invalid, "TEF2 does not contain a track" unless track
       raise Invalid, "TEF2 track count must be one" unless header[:tracks] == 1
       raise Invalid, "TEF2 track must contain five strings" unless track[:tuning]&.length == 5
@@ -189,6 +187,7 @@ module Tef2
             effect2: effect2,
             tef2_duration: duration_ticks(duration_code),
             duration_code: duration_code,
+            tuplet: tuplet_duration?(duration_code),
             dynamic: b3 >> 5,
             annotation: annotation
           }
@@ -211,7 +210,16 @@ module Tef2
         elsif b2 == TYPE_TEMPO_CHANGE
           tempo_changes << { measure: measure, position: position, tempo: (b4 << 8) | b3, type: :tempo_change }
         elsif b2 == TYPE_ENDING_ALT || (b2 & 0x1F) == TYPE_ENDING
-          endings << { measure: measure, position: position, ending_type: b2, type: :ending }
+          flags = b2 == TYPE_ENDING_ALT ? b4 : 0
+          endings << {
+            measure: measure,
+            position: position,
+            ending_type: b2,
+            ending_number: flags & 0x07,
+            is_open: (flags & 0x40) != 0,
+            is_close: (flags & 0x80) != 0,
+            type: :ending
+          }
         end
       end
 
@@ -260,6 +268,10 @@ module Tef2
         ticks *= 2.0 / 3.0
       end
       [ ticks.round, 1 ].max
+    end
+
+    def self.tuplet_duration?(code)
+      code % 3 == 2 && ![ 20, 23, 26, 29 ].include?(code)
     end
 
     def self.assign_chord_durations(notes)

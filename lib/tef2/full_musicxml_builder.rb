@@ -23,6 +23,8 @@ module Tef2
       annotations = parsed[:annotations]
       texts = parsed[:texts] || []
       chords = parsed[:chords] || []
+      endings = parsed[:endings] || []
+      tempo_changes = parsed[:tempo_changes] || []
       time_sig = parsed[:time_signature]
       tempo = parsed[:tempo]
       strings = parsed[:strings]
@@ -55,7 +57,9 @@ module Tef2
                 write_measure_attributes(xml, m, measure_time_sig, tempo, strings, tuning) if m == 0
                 write_measure_time_signature(xml, measure_time_sig) if m.positive? && measure_signatures && measure_time_sig != measure_signatures[m - 1]
                 write_tempo_direction(xml, tempo) if m == 0 && tempo > 0
-                write_measure_notes(xml, m, notes, annotations, texts, chords, strings, tuning, measure_time_sig)
+                write_measure_barlines(xml, m, endings, location: "left")
+                write_measure_notes(xml, m, notes, annotations, texts, chords, tempo_changes, strings, tuning, measure_time_sig)
+                write_measure_barlines(xml, m, endings, location: "right")
               end
             end
           end
@@ -96,6 +100,36 @@ module Tef2
       xml.attributes { write_time_signature(xml, time_sig) }
     end
 
+    def self.write_measure_barlines(xml, measure_index, endings, location:)
+      measure_endings = endings.select { |ending| ending[:measure] == measure_index }
+      return if measure_endings.empty?
+
+      if location == "left" && measure_endings.any? { |ending| ending[:is_open] }
+        xml.barline(location: "left") { xml.repeat(direction: "forward") }
+      end
+
+      return unless location == "right"
+
+      closing = measure_endings.find { |ending| ending[:is_close] }
+      if closing
+        number = closing[:ending_number].to_i
+        xml.barline(location: "right") do
+          if number >= 2
+            xml.ending(number: number - 1, type: "stop")
+            xml.repeat(direction: "backward", times: number - 1)
+          else
+            xml.repeat(direction: "backward")
+          end
+        end
+      end
+
+      measure_endings.select { |ending| !ending[:is_close] && ending[:ending_number].to_i.positive? }.each do |ending|
+        xml.barline(location: "right") do
+          xml.ending(number: ending[:ending_number], type: "start")
+        end
+      end
+    end
+
     def self.write_time_signature(xml, time_sig)
       xml.time { xml.beats time_sig[:numerator]; xml.send("beat-type", time_sig[:denominator]) }
     end
@@ -111,16 +145,19 @@ module Tef2
       end
     end
 
-    def self.write_measure_notes(xml, measure_index, notes, annotations, texts, chords, strings, tuning, time_sig)
+    def self.write_measure_notes(xml, measure_index, notes, annotations, texts, chords, tempo_changes, strings, tuning, time_sig)
       # Filter notes for this measure
       measure_notes = notes.select { |n| n[:measure] == measure_index }
       measure_texts = texts.select { |text| text[:measure] == measure_index }
       measure_chords = chords.select { |chord| chord[:measure] == measure_index }
-      return if measure_notes.empty? && measure_texts.empty? && measure_chords.empty?
+      measure_tempos = tempo_changes.select { |change| change[:measure] == measure_index }
+      return if measure_notes.empty? && measure_texts.empty? && measure_chords.empty? && measure_tempos.empty?
 
       # Build technique pairs from ALL notes (techniques can span measures)
       all_notes_by_string = notes.group_by { |n| n[:string] }
       technique_pairs = build_technique_pairs(all_notes_by_string)
+      slide_pairs = build_slide_pairs(all_notes_by_string)
+      tie_pairs = build_tie_pairs(all_notes_by_string)
 
       # Sort notes by position
       sorted_notes = measure_notes.sort_by { |n| n[:position] }
@@ -128,7 +165,7 @@ module Tef2
       # Track cursor for rest insertion (in TEF2 ticks)
       ticks_per_measure = tef2_ticks_per_measure(time_sig)
       cursor = 0
-      metadata_positions = (measure_texts + measure_chords).map { |item| item[:position].to_i }.uniq.sort
+      metadata_positions = (measure_texts + measure_chords + measure_tempos).map { |item| item[:position].to_i }.uniq.sort
       metadata_index = 0
 
       # === STAFF 1: Standard notation ===
@@ -141,6 +178,7 @@ module Tef2
             xml,
             measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
             measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+            measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
             staff: 1
           )
           metadata_index += 1
@@ -153,7 +191,7 @@ module Tef2
           write_rest(xml, rest_dur_xml, staff: 1)
         end
 
-        write_note_notation(xml, note, technique_pairs, tuning)
+        write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning)
         cursor = tef2_pos + tef2_dur
       end
 
@@ -162,6 +200,7 @@ module Tef2
           xml,
           measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
           measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+          measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
           staff: 1
         )
         metadata_index += 1
@@ -188,6 +227,7 @@ module Tef2
             xml,
             measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
             measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+            measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
             staff: 2
           )
           metadata_index += 1
@@ -200,7 +240,7 @@ module Tef2
           write_rest(xml, rest_dur_xml, staff: 2)
         end
 
-        write_note_tab(xml, note, technique_pairs, annotations, strings, tuning)
+        write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning)
         cursor = tef2_pos + tef2_dur
       end
 
@@ -209,6 +249,7 @@ module Tef2
           xml,
           measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
           measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
+          measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
           staff: 2
         )
         metadata_index += 1
@@ -222,7 +263,8 @@ module Tef2
       end
     end
 
-    def self.write_measure_metadata(xml, texts, chords, staff:)
+    def self.write_measure_metadata(xml, texts, chords, tempo_changes, staff:)
+      tempo_changes.each { |tempo_change| write_tempo_direction(xml, tempo_change[:tempo]) }
       text_values = texts.map { |text| text[:text].to_s.strip }.reject(&:empty?)
       unless text_values.empty?
         xml.direction(placement: "above") do
@@ -276,7 +318,7 @@ module Tef2
       end
     end
 
-    def self.write_note_notation(xml, note, technique_pairs, tuning)
+    def self.write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning)
       string = note[:string]  # 0-based, 0 = highest
       fret = note[:fret]
       tef2_dur = note[:tef2_duration]
@@ -291,7 +333,11 @@ module Tef2
 
       pair_key = [ string, component_idx ]
       pair = technique_pairs[pair_key]
+      slide = slide_pairs[pair_key]
+      tie = tie_pairs[pair_key]
       technique_number = pair ? pair[:number] : nil
+
+      write_grace_note(xml, note, tuning, staff: 1) if note[:grace]
 
       xml.note do
         xml.chord if is_chord
@@ -302,22 +348,17 @@ module Tef2
         end
 
         xml.duration xml_duration
-        xml.voice 1
+        xml.voice(note[:voice].to_i.positive? ? note[:voice] : 1)
         xml.type note_type(xml_duration)
+        write_time_modification(xml, note)
         xml.staff 1
+        write_notehead(xml, note)
 
-        # Technique markers
-        if pair
-          tag = pair[:kind]
-          type = pair[:is_start] ? "start" : "stop"
-          xml.notations { xml.technical { xml.send(tag, type: type, number: technique_number) } }
-        end
-
-        write_bend(xml, note)
+        write_note_notations(xml, note, pair, slide, tie, technique_number, tab: false)
       end
     end
 
-    def self.write_note_tab(xml, note, technique_pairs, annotations, strings, tuning)
+    def self.write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning)
       string = note[:string]  # 0-based, 0 = highest
       fret = note[:fret]
       tef2_dur = note[:tef2_duration]
@@ -328,7 +369,11 @@ module Tef2
 
       pair_key = [ string, component_idx ]
       pair = technique_pairs[pair_key]
+      slide = slide_pairs[pair_key]
+      tie = tie_pairs[pair_key]
       technique_number = pair ? pair[:number] : nil
+
+      write_grace_note(xml, note, tuning, staff: 2) if note[:grace]
 
       xml.note do
         xml.chord if is_chord
@@ -343,43 +388,141 @@ module Tef2
         end
 
         xml.duration xml_duration
-        xml.voice 1
+        xml.voice(note[:voice].to_i.positive? ? note[:voice] : 1)
         xml.type note_type(xml_duration)
+        write_time_modification(xml, note)
         xml.stem "none"  # Tab stems are hidden
         xml.staff 2
+        write_notehead(xml, note)
 
-        # Tablature technical info
+        write_note_notations(xml, note, pair, slide, tie, technique_number, tab: true, annotations: annotations)
+      end
+    end
+
+    def self.write_grace_note(xml, note, tuning, staff:)
+      string = note[:string]
+      fret = note[:grace_note_fret].to_i
+      note_pitch = tuning[string] + fret
+
+      xml.note do
+        xml.grace(slash: "yes")
+        xml.pitch do
+          xml.step pitch_step(note_pitch)
+          xml.octave pitch_octave(note_pitch)
+          xml.alter pitch_alter(note_pitch)
+        end
+        xml.voice 1
+        xml.staff staff
         xml.notations do
           xml.technical do
-            xml.string(string + 1)  # 1-based for MusicXML
+            xml.string(string + 1)
             xml.fret fret
-
-            # Hammer-on / pull-off
-            if pair
-              tag = pair[:kind]
-              type = pair[:is_start] ? "start" : "stop"
-              xml.send(tag, type: type, number: technique_number)
-            end
-
-            write_bend_technical(xml, note)
-
-            write_modern_fingerings(xml, note)
-
-            # TEF2 stores these as annotation payloads rather than as fret
-            # extensions.  TablEdit displays codes 2 and 4 as circled fingers
-            # 1 and 3.  Code 6 is the right-hand thumb marker; keep it as
-            # technical text because MusicXML's numeric fingering element
-            # cannot represent it.
-            if (ann = annotations[note[:index]])
-              if [ 2, 4 ].include?(ann)
-                xml.fingering(enclosure: "circle") { xml.text({ 2 => 1, 4 => 3 }.fetch(ann)) }
-              else
-                xml.send("other-technical") { xml.text "TEF fingering code #{ann}" }
-              end
+            if note[:grace_note_effect].to_i.positive?
+              xml.send("other-technical") { xml.text "TEF grace effect #{note[:grace_note_effect]}" }
             end
           end
         end
       end
+    end
+
+    def self.write_time_modification(xml, note)
+      return unless note[:tuplet]
+
+      xml.send("time-modification") do
+        xml.send("actual-notes", 3)
+        xml.send("normal-notes", 2)
+      end
+    end
+
+    def self.write_note_notations(xml, note, pair, slide, tie, technique_number, tab:, annotations: {})
+      xml.notations do
+        xml.tied(type: tie[:is_start] ? "start" : "stop", number: tie[:number]) if tie
+        if note[:effect1].to_i == 14 || note[:effect2].to_i >> 4 == 3 || note[:effect3].to_i == 3
+          xml.arpeggiate(direction: "down")
+        end
+        if note[:effect1].to_i == 10
+          xml.ornaments { xml.send("wavy-line") }
+        elsif note[:effect1].to_i == 11
+          xml.ornaments { xml.tremolo 1 }
+        end
+        if note[:effect2].to_i & 0x0F == 7
+          xml.articulations { xml.staccato }
+        end
+        xml.technical do
+          if tab
+            xml.string(note[:string] + 1)
+            xml.fret note[:fret]
+          end
+
+          if pair
+            tag = pair[:kind]
+            type = pair[:is_start] ? "start" : "stop"
+            xml.send(tag, type: type, number: technique_number)
+          end
+          if slide
+            type = slide[:is_start] ? "start" : "stop"
+            xml.slide(type: type, number: slide[:number])
+          end
+
+          write_bend_technical(xml, note)
+          write_effect_technical(xml, note)
+          write_modern_fingerings(xml, note) if tab
+
+          # TEF2 stores these as annotation payloads rather than as fret
+          # extensions.  Known codes become visible fingerings; other codes
+          # remain explicit technical metadata.
+          if tab && (ann = annotations[note[:index]])
+            if [ 2, 4 ].include?(ann)
+              xml.fingering(enclosure: "circle") { xml.text({ 2 => 1, 4 => 3 }.fetch(ann)) }
+            else
+              xml.send("other-technical") { xml.text "TEF fingering code #{ann}" }
+            end
+          end
+        end
+      end
+    end
+
+    def self.write_notehead(xml, note)
+      if note[:effect2].to_i & 0x0F == 4
+        xml.notehead(parentheses: "yes") { xml.text "normal" }
+      elsif note[:effect1].to_i == 15 || note[:effect3].to_i == 10
+        xml.notehead { xml.text "x" }
+      end
+    end
+
+    def self.write_effect_technical(xml, note)
+      effect1 = note[:effect1].to_i
+      effect2 = note[:effect2].to_i
+      effect3 = note[:effect3].to_i
+
+      case effect1
+      when 6
+        xml.harmonic { xml.natural }
+      when 7
+        xml.harmonic { xml.artificial }
+      when 9
+        xml.method_missing(:tap)
+      end
+
+      case effect3
+      when 6
+        xml.harmonic { xml.natural }
+      when 7
+        xml.harmonic { xml.artificial }
+      end
+
+      low = effect2 & 0x0F
+      high = (effect2 >> 4) & 0x0F
+      metadata = []
+      metadata << "TEF let ring" if low == 1 || high == 8 || effect3 == 8
+      metadata << "TEF slap" if low == 2
+      metadata << "TEF fade in" if low == 8
+      metadata << "TEF fade out" if low == 9
+      metadata << "TEF grace effect #{note[:grace_note_effect]}" if note[:grace_note_effect].to_i.positive? && note[:grace]
+      metadata << "TEF effect1 #{effect1}" unless (0..15).cover?(effect1)
+      metadata << "TEF effect2 #{low}" unless [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15 ].include?(low)
+      metadata << "TEF effect3 #{effect3}" if note[:effect3] && !(0..11).cover?(effect3)
+      metadata.each { |value| xml.send("other-technical") { xml.text value } }
     end
 
     # TEF2 stores its optional "LYRICS & CHORDS" page as free text rather
@@ -389,17 +532,6 @@ module Tef2
       xml.identification do
         xml.miscellaneous do
           xml.send("miscellaneous-field", name: "playtab-lyrics") { xml.text lyrics_text.delete("\0") }
-        end
-      end
-    end
-
-    def self.write_bend(xml, note)
-      effect = note[:effect1].to_i
-      return unless [ 4, 12, 13 ].include?(effect)
-
-      xml.notations do
-        xml.technical do
-          write_bend_technical(xml, note)
         end
       end
     end
@@ -438,15 +570,15 @@ module Tef2
 
       notes_by_string.each do |string, string_notes|
         # Sort by absolute tick position
-        string_notes.sort_by! { |n| n[:absolute_position] || (n[:measure] * TICKS_PER_MEASURE + n[:position]) }
+        ordered_notes = string_notes.sort_by { |n| n[:absolute_position] || (n[:measure] * TICKS_PER_MEASURE + n[:position]) }
 
         # For each technique note, find the next note on the same string
-        string_notes.each_with_index do |note, i|
-          effect = [ note[:technique], note[:effect1], note[:effect3] ].find { |value| [ 1, 2 ].include?(value.to_i) }
+        ordered_notes.each_with_index do |note, i|
+          effect = legato_effect(note)
           next unless effect
 
           # Find destination note (next note on same string with tef2_duration > 0)
-          dest = string_notes[(i+1)..-1].find { |n| n[:tef2_duration] > 0 }
+          dest = ordered_notes[(i + 1)..].find { |n| n[:tef2_duration] > 0 }
           next unless dest
 
           # TEF2 uses both effect1 values for the same legato marker.  The
@@ -454,6 +586,8 @@ module Tef2
           # does when it rewrites its shared hammer flag.
           kind = if note[:modern_tabledit] && [ 1, 2 ].include?(note[:effect1].to_i)
             note[:effect1].to_i == 1 ? "hammer-on" : "pull-off"
+          elsif note[:modern_tabledit] && [ 1, 2 ].include?(note[:effect3].to_i)
+            note[:effect3].to_i == 1 ? "hammer-on" : "pull-off"
           else
             dest[:fret] > note[:fret] ? "hammer-on" : "pull-off"
           end
@@ -469,6 +603,50 @@ module Tef2
             number: pair_num,
             is_start: false
           }
+        end
+      end
+
+      pairs
+    end
+
+    def self.legato_effect(note)
+      [ note[:technique], note[:effect1], note[:effect3], note[:effect2].to_i >> 4 ].find { |value| [ 1, 2 ].include?(value.to_i) }
+    end
+
+    def self.build_slide_pairs(notes_by_string)
+      pairs = {}
+
+      notes_by_string.each do |string, string_notes|
+        ordered_notes = string_notes.sort_by { |n| n[:absolute_position] || (n[:measure] * TICKS_PER_MEASURE + n[:position]) }
+        ordered_notes.each_with_index do |note, index|
+          next unless note[:effect1].to_i == 3
+
+          destination = ordered_notes[(index + 1)..].find { |candidate| candidate[:tef2_duration].to_i.positive? }
+          next unless destination
+
+          number = note[:component_index]
+          pairs[[ string, note[:component_index] ]] = { number: number, is_start: true }
+          pairs[[ string, destination[:component_index] ]] = { number: number, is_start: false }
+        end
+      end
+
+      pairs
+    end
+
+    def self.build_tie_pairs(notes_by_string)
+      pairs = {}
+
+      notes_by_string.each do |string, string_notes|
+        ordered_notes = string_notes.sort_by { |n| n[:absolute_position] || (n[:measure] * TICKS_PER_MEASURE + n[:position]) }
+        ordered_notes.each_with_index do |note, index|
+          next unless note[:tie]
+
+          destination = ordered_notes[(index + 1)..].find { |candidate| candidate[:tef2_duration].to_i.positive? }
+          next unless destination
+
+          number = note[:component_index]
+          pairs[[ string, note[:component_index] ]] = { number: number, is_start: true }
+          pairs[[ string, destination[:component_index] ]] = { number: number, is_start: false }
         end
       end
 

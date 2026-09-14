@@ -46,6 +46,10 @@ module Tef2
     if parsed[:annotations].values.any? { |code| ![ 2, 4, 6 ].include?(code) }
       warnings << "TEF fingering codes without a known finger mapping are shown as TEF code labels."
     end
+    unsupported_effects = unsupported_effect_codes(parsed[:notes])
+    unless unsupported_effects.empty?
+      warnings << "Unsupported TEF effect codes are preserved as TEF technical metadata: #{unsupported_effects.join(', ')}."
+    end
     if parsed[:track_data].any? { |track| track[:capo].to_i.positive? }
       warnings << "Capo metadata is preserved in the source tuning; imported fret numbers are unchanged."
     end
@@ -58,6 +62,20 @@ module Tef2
   rescue => e
     # If full parser fails, fall back
     nil
+  end
+
+  def self.unsupported_effect_codes(notes)
+    notes.flat_map do |note|
+      effect1 = note[:effect1].to_i
+      effect2 = note[:effect2].to_i
+      effect3 = note[:effect3]
+      values = []
+      values << "effect1=#{effect1}" unless (0..15).cover?(effect1)
+      low = effect2 & 0x0F
+      values << "effect2=#{low}" unless [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15 ].include?(low)
+      values << "effect3=#{effect3.to_i}" if effect3 && !(0..11).cover?(effect3.to_i)
+      values
+    end.uniq.sort
   end
 
   # Simple native Ruby parser (fallback for basic subset)
