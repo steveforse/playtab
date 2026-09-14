@@ -179,7 +179,7 @@ module Tef2
             measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
             measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
             measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-            staff: 1
+            staff: 1, position: metadata_positions[metadata_index]
           )
           metadata_index += 1
         end
@@ -201,7 +201,7 @@ module Tef2
           measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
           measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
           measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-          staff: 1
+          staff: 1, position: metadata_positions[metadata_index]
         )
         metadata_index += 1
       end
@@ -228,7 +228,7 @@ module Tef2
             measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
             measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
             measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-            staff: 2
+            staff: 2, position: metadata_positions[metadata_index]
           )
           metadata_index += 1
         end
@@ -250,7 +250,7 @@ module Tef2
           measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
           measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
           measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-          staff: 2
+          staff: 2, position: metadata_positions[metadata_index]
         )
         metadata_index += 1
       end
@@ -263,20 +263,21 @@ module Tef2
       end
     end
 
-    def self.write_measure_metadata(xml, texts, chords, tempo_changes, staff:)
+    def self.write_measure_metadata(xml, texts, chords, tempo_changes, staff:, position: 0)
       tempo_changes.each { |tempo_change| write_tempo_direction(xml, tempo_change[:tempo]) }
       text_values = texts.map { |text| text[:text].to_s.strip }.reject(&:empty?)
       unless text_values.empty?
         xml.direction(placement: "above") do
           xml.send("direction-type") { xml.words(text_values.join(" / ")) }
+          xml.offset tef2_to_xml_duration(position) if position.to_i.positive?
           xml.staff staff
         end
       end
 
-      chords.each { |chord| write_harmony(xml, chord, staff:) }
+      chords.each { |chord| write_harmony(xml, chord, staff:, position:) }
     end
 
-    def self.write_harmony(xml, chord, staff:)
+    def self.write_harmony(xml, chord, staff:, position: 0)
       name = chord[:name].to_s.strip
       return if name.empty?
 
@@ -295,6 +296,7 @@ module Tef2
           xml.send("root-alter", alter) if alter
         end
         xml.kind(text: suffix) { xml.text "major" }
+        xml.offset tef2_to_xml_duration(position) if position.to_i.positive?
         xml.staff staff
       end
     end
