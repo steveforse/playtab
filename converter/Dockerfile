@@ -10,6 +10,7 @@ COPY script/TefProbe.java ./
 RUN javac -cp 'tux/lib/*:tux/share/plugins/*' TefProbe.java
 COPY converter/server.py ./
 COPY converter/pdf_recognizer.py ./
+COPY converter/pdf_musicxml.py ./
 USER 10001:10001
 EXPOSE 8080
 CMD ["python3", "server.py"]

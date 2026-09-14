@@ -30,6 +30,23 @@ class FakeReader:
         self.pages = pages
 
 
+class MetadataPage(FakePage):
+    def extract_text(self, visitor_text, visitor_operand_before):
+        super().extract_text(visitor_text, visitor_operand_before)
+        matrix = (1, 0, 0, 1, 0, 0)
+        visitor_text("Verse", matrix, (1, 0, 0, 1, 40, 570), None, 12)
+        visitor_text("C min", matrix, (1, 0, 0, 1, 40, 653), None, 12)
+        visitor_text("H", matrix, (1, 0, 0, 1, 40, 623), None, 12)
+        visitor_text("1", matrix, (1, 0, 0, 1, 40, 670), None, 12)
+
+
+class LyricsPage:
+    def extract_text(self, visitor_text, visitor_operand_before):
+        matrix = (1, 0, 0, 1, 0, 0)
+        for index, line in enumerate(("VERSE", "One line", "Two lines", "Three lines")):
+            visitor_text(line, matrix, (1, 0, 0, 1, 40, 700 - index * 16), None, 12)
+
+
 class PdfRecognizerTest(unittest.TestCase):
     def test_rejects_non_pdf_and_empty_uploads(self):
         recognizer = PdfRecognizer()
@@ -52,6 +69,16 @@ class PdfRecognizerTest(unittest.TestCase):
         with patch("pdf_recognizer.PdfReader", return_value=FakeReader([FakePage(with_staff=False)])):
             with self.assertRaisesRegex(PdfRecognitionError, "five-line"):
                 PdfRecognizer().recognize(b"%PDF-1.3 synthetic")
+
+    def test_recognizes_layout_metadata_and_a_standalone_lyric_page(self):
+        with patch("pdf_recognizer.PdfReader", return_value=FakeReader([MetadataPage(), LyricsPage()])):
+            result = PdfRecognizer().recognize(b"%PDF-1.3 synthetic", "Demo.pdf")
+
+        self.assertEqual(result["sections"][0]["text"], "Verse")
+        self.assertEqual(result["chords"][0]["name"], "C min")
+        self.assertEqual(result["techniques"][0]["type"], "hammer-on")
+        self.assertEqual(result["fingerings"][0]["value"], "1")
+        self.assertEqual(result["lyrics"], "VERSE\nOne line\nTwo lines\nThree lines")
 
     def test_position_rounds_to_supported_eighth_note_grid(self):
         self.assertEqual(PdfRecognizer._position(20, 20, 300), 0)

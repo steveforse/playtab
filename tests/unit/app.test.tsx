@@ -113,8 +113,11 @@ describe('workspace application', () => {
     render(<App />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     openImport();
-    selectFile('notes.pdf');
-    expect((await screen.findByRole('alert')).textContent).toContain('PDF recognition');
+    fetchMock.mockResolvedValueOnce(response({ musicxml: preview.source, warnings: ['PDF warning'] }));
+    selectFile('notes.pdf', 'raw pdf');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pdf_imports', expect.objectContaining({ method: 'POST' })));
+    await waitFor(() => expect(screen.getByText('PDF warning')).toBeTruthy());
+    openImport();
     selectFile('notes.mid');
     expect((await screen.findByRole('alert')).textContent).toContain('Choose a .tef');
     selectFile('notes.musicxml', 'x', 2_000_001);

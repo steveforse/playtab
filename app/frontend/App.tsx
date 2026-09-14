@@ -79,28 +79,26 @@ export function App() {
     if (!file) return;
     setImportError('');
     const extension = file.name.split('.').pop()?.toLowerCase();
-    if (extension === 'pdf') {
-      setImportError('PDF recognition is not available in this build. Paste the original text tablature if you have it.');
-      return;
-    }
     const isXml = extension === 'xml' || extension === 'musicxml';
     const isTef = extension === 'tef';
-    if (!['txt', 'json', 'xml', 'musicxml', 'tef'].includes(extension ?? '')) { setImportError('Choose a .tef, .txt, Playtab .json, or .musicxml file.'); return; }
-    if (file.size > (isXml ? 2_000_000 : 100_000)) { setImportError(isXml ? 'Choose MusicXML smaller than 2 MB.' : 'Choose a file smaller than 100 KB.'); return; }
+    const isPdf = extension === 'pdf';
+    if (!['txt', 'json', 'xml', 'musicxml', 'tef', 'pdf'].includes(extension ?? '')) { setImportError('Choose a .tef, .txt, Playtab .json, .musicxml, or .pdf file.'); return; }
+    const limit = isXml ? 2_000_000 : isPdf ? 10_000_000 : 100_000;
+    if (file.size > limit) { setImportError(isXml ? 'Choose MusicXML smaller than 2 MB.' : isPdf ? 'Choose a PDF smaller than 10 MB.' : 'Choose a file smaller than 100 KB.'); return; }
     setReading(true);
     try {
       let contents: string;
       let conversionWarnings: string[] = [];
-      if (isTef) {
+      if (isTef || isPdf) {
         const form = new FormData();
         form.append('file', file);
-        const converted = await apiRequest('/api/tef_imports', { method: 'POST', body: form, signal: AbortSignal.timeout(25000) });
+        const converted = await apiRequest(isPdf ? '/api/pdf_imports' : '/api/tef_imports', { method: 'POST', body: form, signal: AbortSignal.timeout(isPdf ? 30000 : 25000) });
         contents = converted.musicxml;
         conversionWarnings = converted.warnings;
       } else contents = await file.text();
-      if (isXml || isTef) {
-        const filename = isTef ? file.name.replace(/\.tef$/i, '.musicxml') : file.name;
-        loadPreview(readMusicXml(contents, filename, isTef ? 'tef' : 'musicxml'), isTef ? conversionWarnings : ['MusicXML preview: tuning and rhythm come from the file. Save this score to preserve the imported document in your library.']);
+      if (isXml || isTef || isPdf) {
+        const filename = isTef || isPdf ? file.name.replace(/\.(tef|pdf)$/i, '.musicxml') : file.name;
+        loadPreview(readMusicXml(contents, filename, isTef ? 'tef' : isPdf ? 'pdf' : 'musicxml'), isTef || isPdf ? conversionWarnings : ['MusicXML preview: tuning and rhythm come from the file. Save this score to preserve the imported document in your library.']);
         dialog.current?.close();
       } else if (extension === 'json') {
         const document: unknown = JSON.parse(contents); validateScore(document);
@@ -140,14 +138,14 @@ export function App() {
     </main>
     <dialog ref={dialog} className="import-dialog">
       <div className="dialog-heading"><div><div className="eyebrow">BRING YOUR OWN MUSIC</div><h2>Import a tab</h2></div><button className="icon-button" aria-label="Close import" onClick={() => dialog.current?.close()}>×</button></div>
-      <p>Open a TEF file to convert and play it, or preview uncompressed MusicXML. You can also paste simple five-string tablature below.</p>
+      <p>Open a TEF or vector PDF to convert and play it, or preview uncompressed MusicXML. You can also paste simple five-string tablature below.</p>
       <label className="file-picker">↥ Open a file <input aria-label="Choose tablature file" type="file" accept=".txt,.json,.xml,.musicxml,.tef,.pdf" disabled={reading} onChange={e => { void readFile(e.target.files?.[0]); e.target.value = ''; }} /></label>
       <div className="import-fields"><label>Title<input value={title} maxLength={160} onChange={e => setTitle(e.target.value)} /></label><label>Assume each note is<select value={duration} onChange={e => setDuration(Number(e.target.value) as 4 | 8 | 16)}><option value={4}>A quarter note</option><option value={8}>An eighth note</option><option value={16}>A sixteenth note</option></select></label></div>
       <label className="text-label">Tablature <span>Top to bottom: D · B · G · D · g</span><textarea aria-label="Plaintext tablature" spellCheck={false} value={text} onChange={e => setText(e.target.value)} /></label>
       <p className="import-help">4/4, open G, no capo. Only frets and barlines for now. Fifth-string fret numbers are relative to its own nut. Rhythm is assumed from your choice above; blank spacing does not encode rests.</p>
       {importError && <p className="alert" role="alert">{importError}</p>}
       {reading && <p role="status">Reading and converting your file…</p>}
-      <div className="dialog-footer"><span>TEF2 preview supported · PDF import coming later.</span><button className="primary" disabled={reading} onClick={importText}>Open in player →</button></div>
+      <div className="dialog-footer"><span>TEF and vector PDF preview supported.</span><button className="primary" disabled={reading} onClick={importText}>Open in player →</button></div>
     </dialog>
   </div>;
 }
