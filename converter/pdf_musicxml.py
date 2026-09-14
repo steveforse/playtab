@@ -67,7 +67,7 @@ def build_musicxml(score):
             if target > cursor:
                 _write_rest(measure, target - cursor)
             next_target = _pdf_position_to_xml(positions[event_index + 1]) if event_index + 1 < len(positions) else MEASURE_TICKS
-            duration = max(480, next_target - target) if next_target > target else 480
+            duration = max(120, next_target - target) if next_target > target else 120
             duration = min(duration, MEASURE_TICKS - target)
             for note_index, note in enumerate(sorted(events[position], key=lambda value: value["string"])):
                 _write_note(
@@ -225,7 +225,7 @@ def _pdf_position_to_xml(position):
 
 
 def _duration_type(duration):
-    return {240: "16th", 480: "eighth", 960: "quarter", 1920: "half", 3840: "whole"}.get(duration, "eighth")
+    return {120: "32nd", 240: "16th", 480: "eighth", 960: "quarter", 1920: "half", 3840: "whole"}.get(duration, "eighth")
 
 
 def _parse_tuning(label):

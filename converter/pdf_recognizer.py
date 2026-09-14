@@ -26,6 +26,8 @@ MAX_PDF_SIZE = 10_000_000
 MAX_PAGES = 64
 MEASURE_TICKS = 1024
 POSITION_STEP = 128
+POSITION_LEFT_MARGIN_RATIO = 0.08
+POSITION_RIGHT_MARGIN_RATIO = 0.02
 
 SECTION_LABELS = {
     "intro", "verse", "verses", "chorus", "bridge", "high solo", "low solo",
@@ -33,12 +35,18 @@ SECTION_LABELS = {
 }
 TECHNIQUE_LABELS = {
     "h": "hammer-on",
+    "ho": "hammer-on",
+    "hammeron": "hammer-on",
     "po": "pull-off",
+    "pulloff": "pull-off",
+    "p/o": "pull-off",
     "slide": "slide",
+    "sl": "slide",
     "s": "slide",
     "bend": "bend",
     "b": "bend",
     "t": "thumb",
+    "thumb": "thumb",
 }
 
 
@@ -107,6 +115,7 @@ class PdfRecognizer:
 
         notes = []
         measure_index = 0
+        timing_steps = set()
         for system in systems:
             system["measure_start"] = measure_index
             bars = system["bars"]
@@ -116,8 +125,11 @@ class PdfRecognizer:
                     for event in system["events"]
                     if left + 5 <= event["x"] < right - 2
                 ]
+                event_xs = [item["x"] for item in events]
+                step = self._position_step(left, right, event_xs)
+                timing_steps.add(step)
                 for event in events:
-                    position = self._position(event["x"], left, right)
+                    position = self._position(event["x"], left, right, step=step)
                     for note in event["notes"]:
                         notes.append(
                             {
@@ -134,9 +146,10 @@ class PdfRecognizer:
             raise PdfRecognitionError("No tablature notes were recognized.")
 
         title, tuning = self._header(pages[0]["texts"])
+        timing_name = "sixteenth-note" if any(step <= 64 for step in timing_steps) else "eighth-note"
         metadata = self._metadata(pages, systems)
         warnings_list = [
-            "PDF note timing is inferred from horizontal layout and rounded to the nearest eighth-note position.",
+            f"PDF note timing is inferred from horizontal layout and rounded to the nearest {timing_name} position.",
             "PDF recognition cannot guarantee hidden TEF duration, voice, repeat, or source metadata fidelity.",
         ]
         if not tuning:
@@ -358,7 +371,7 @@ class PdfRecognizer:
         candidates = []
         for item in texts:
             label = re.sub(r"\s+", " ", item["text"]).strip()
-            if label.casefold() not in SECTION_LABELS:
+            if not self._is_section_label(system, item, label):
                 continue
             if not self._near_system(system, item["x"], item["y"], vertical=42):
                 continue
@@ -372,7 +385,7 @@ class PdfRecognizer:
         # flat symbols and suffixes into separate positioned text objects.
         candidates = [
             item for item in texts
-            if system["bars"][0] - 2 <= item["x"] <= system["bars"][-1] + 2
+            if system["bars"][0] - 18 <= item["x"] <= system["bars"][-1] + 18
             and system["bottom"] + 8 <= item["y"] <= system["bottom"] + 35
         ]
         groups = []
@@ -417,8 +430,8 @@ class PdfRecognizer:
     def _techniques_for_system(self, system, texts):
         result = []
         for item in texts:
-            label = item["text"].strip().casefold()
-            technique = TECHNIQUE_LABELS.get(label)
+            label = item["text"].strip()
+            technique = self._technique_type(label)
             if not technique or not self._near_system(system, item["x"], item["y"], vertical=42):
                 continue
             note = self._nearest_note(system, item["x"])
@@ -447,7 +460,7 @@ class PdfRecognizer:
                 continue
             if not system["top"] - 34 <= item["y"] <= system["bottom"] + 34:
                 continue
-            if not system["bars"][0] - 2 <= item["x"] <= system["bars"][-1] + 2:
+            if not system["bars"][0] - 18 <= item["x"] <= system["bars"][-1] + 18:
                 continue
             note = self._nearest_note(system, item["x"], limit=16)
             if note is None:
@@ -490,8 +503,26 @@ class PdfRecognizer:
         return current["fret"] > following["fret"]
 
     @staticmethod
+    def _technique_type(value):
+        label = value.casefold().strip()
+        return TECHNIQUE_LABELS.get(label) or TECHNIQUE_LABELS.get(re.sub(r"[\s._-]+", "", label))
+
+    def _is_section_label(self, system, item, label):
+        if label.casefold() in SECTION_LABELS:
+            return True
+        if item["y"] >= system["top"] - 8:
+            return False
+        if not 2 <= len(label) <= 32 or not re.search(r"[a-zA-Z]", label):
+            return False
+        if self._technique_type(label) or self._normalize_chord(label):
+            return False
+        if re.search(r"(?:page\s+\d|tuning|arranged|clawhammerbanjo|\.net)", label, re.IGNORECASE):
+            return False
+        return True
+
+    @staticmethod
     def _near_system(system, x, y, vertical):
-        return system["bars"][0] - 2 <= x <= system["bars"][-1] + 2 and system["top"] - vertical <= y <= system["bottom"] + vertical
+        return system["bars"][0] - 18 <= x <= system["bars"][-1] + 18 and system["top"] - vertical <= y <= system["bottom"] + vertical
 
     @staticmethod
     def _nearest_note(system, x, limit=24):
@@ -511,7 +542,14 @@ class PdfRecognizer:
     def _measure_position(system, x):
         bars = system["bars"]
         measure_offset = max(0, min(len(bars) - 2, next((index for index, right in enumerate(bars[1:]) if x < right), len(bars) - 2)))
-        return system["measure_start"] + measure_offset, PdfRecognizer._position(x, bars[measure_offset], bars[measure_offset + 1])
+        left, right = bars[measure_offset], bars[measure_offset + 1]
+        event_xs = [
+            event["x"]
+            for event in system["events"]
+            if left + 5 <= event["x"] < right - 2
+        ]
+        step = PdfRecognizer._position_step(left, right, event_xs)
+        return system["measure_start"] + measure_offset, PdfRecognizer._position(x, left, right, step=step)
 
     @staticmethod
     def _lyrics(pages):
@@ -530,19 +568,56 @@ class PdfRecognizer:
     @staticmethod
     def _tempo(pages):
         for page in pages:
-            for item in page["texts"]:
-                match = re.search(r"(?:tempo|bpm)\s*[:=]?\s*(\d{2,3})", item["text"], re.IGNORECASE)
-                if match:
-                    return int(match.group(1))
+            texts = page["texts"]
+            for item in texts:
+                value = item["text"]
+                for pattern in (
+                    r"(?:tempo|bpm)\s*[:=]?\s*(\d{2,3})",
+                    r"(?:m\.?\s*m\.?|mm)\s*[:=]?\s*(\d{2,3})",
+                    r"(?:quarter(?:\s+note)?|q|[♩♪♫])\s*(?:=|at)\s*(\d{2,3})",
+                ):
+                    match = re.search(pattern, value, re.IGNORECASE)
+                    if match:
+                        return int(match.group(1))
+
+            # PDF producers sometimes emit the metronome symbol and its
+            # number as separate text objects.  Reconnect nearby objects
+            # without treating an unrelated page number as a tempo.
+            for symbol in texts:
+                if not re.search(r"(?:quarter|metronome|[♩♪♫])", symbol["text"], re.IGNORECASE):
+                    continue
+                for number in texts:
+                    if not re.fullmatch(r"\d{2,3}", number["text"]):
+                        continue
+                    if abs(symbol["y"] - number["y"]) <= 6 and 0 < number["x"] - symbol["x"] <= 96:
+                        return int(number["text"])
         return None
 
     @staticmethod
-    def _position(x, left, right):
+    def _position_step(left, right, event_xs):
+        unique_xs = sorted(set(event_xs or []))
+        if len(unique_xs) < 2:
+            return POSITION_STEP
+        smallest_gap = min(
+            gap for gap in (right_x - left_x for left_x, right_x in zip(unique_xs, unique_xs[1:]))
+            if gap > 1.5
+        )
+        subdivisions = (right - left) / smallest_gap
+        if subdivisions >= 24:
+            return 32
+        if subdivisions >= 12:
+            return 64
+        return POSITION_STEP
+
+    @staticmethod
+    def _position(x, left, right, event_xs=None, step=None):
         width = right - left
-        margin = min(12.0, max(6.0, width * 0.07))
-        usable = max(1.0, width - margin)
-        raw = ((x - left - margin) / usable) * MEASURE_TICKS
-        return max(0, min(MEASURE_TICKS - POSITION_STEP, round(raw / POSITION_STEP) * POSITION_STEP))
+        left_margin = min(12.0, max(6.0, width * POSITION_LEFT_MARGIN_RATIO))
+        right_margin = min(4.0, max(2.0, width * POSITION_RIGHT_MARGIN_RATIO))
+        usable = max(1.0, width - left_margin - right_margin)
+        raw = ((x - left - left_margin) / usable) * MEASURE_TICKS
+        step = step or PdfRecognizer._position_step(left, right, event_xs or [])
+        return max(0, min(MEASURE_TICKS - step, round(raw / step) * step))
 
     @staticmethod
     def _header(texts):
