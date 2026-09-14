@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readMusicXml, toImportedScoreDocument } from '../../app/frontend/music/musicxml';
 import { applyTechniques, extractTechniques } from '../../app/frontend/music/musicxml-techniques';
-import { importer } from '@coderline/alphatab';
+import { importer, model } from '@coderline/alphatab';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { vi } from 'vitest';
 import fs from 'node:fs';
@@ -145,6 +145,8 @@ describe('MusicXML preview', () => {
     expect(notes.map(n => n.isHammerPullOrigin)).toEqual([true, false, true, false]);
     expect(notes[0].hammerPullDestination).toBe(notes[1]);
     expect(notes[2].hammerPullDestination).toBe(notes[3]);
+    expect(notes[0].slideOutType).toBe(model.SlideOutType.Legato);
+    expect(notes[2].slideOutType).toBe(model.SlideOutType.Legato);
     expect(notes.map(n => n.beat.playbackStart)).toEqual([0, 960, 1920, 2880]);
     expect(preview.source).toBe(techniques);
   });

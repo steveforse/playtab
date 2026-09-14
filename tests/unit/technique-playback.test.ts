@@ -14,13 +14,17 @@ function events(xml: string) {
   return file.events;
 }
 describe('technique playback contract', () => {
-  it('currently softens H/PO destinations but still retriggers each note', () => {
+  it('plays H/PO pairs as held legato pitch transitions without destination reattacks', () => {
     const played = events(fixture).filter((e): e is midi.NoteOnEvent => e instanceof midi.NoteOnEvent);
     const picked = events(plain).filter((e): e is midi.NoteOnEvent => e instanceof midi.NoteOnEvent);
-    expect(played).toHaveLength(4);
-    expect(played.map(n => n.noteKey)).toEqual(picked.map(n => n.noteKey));
-    expect(played[1].noteVelocity).toBeLessThan(picked[1].noteVelocity);
-    expect(played[3].noteVelocity).toBeLessThan(picked[3].noteVelocity);
+    expect(played).toHaveLength(2);
+    expect(picked).toHaveLength(4);
+    expect(played.map(n => n.noteKey)).toEqual([picked[0].noteKey, picked[2].noteKey]);
+
+    const bends = events(fixture).filter((e): e is midi.NoteBendEvent => e instanceof midi.NoteBendEvent);
+    expect(new Set(bends.map(b => b.value)).size).toBeGreaterThan(2);
+    expect(bends.some(b => b.noteKey === picked[0].noteKey && b.value > 2_147_483_648)).toBe(true);
+    expect(bends.some(b => b.noteKey === picked[2].noteKey && b.value < 2_147_483_648)).toBe(true);
   });
   it('emits changing pitch events for imported bends', () => {
     const bent = plain.replace('</technical>', '<bend><bend-alter>1</bend-alter></bend></technical>');

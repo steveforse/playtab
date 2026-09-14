@@ -37,9 +37,9 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
       display: { scale: 1.1, barsPerRow },
       player: {
         enablePlayer: true, soundFont: `${base}soundfont/sonivox.sf2`,
-        // alphaTab 1.8.4 has an asynchronous AudioWorklet start/pause race.
-        // Use its supported synchronous output until that race is fixed upstream.
-        outputMode: PlayerOutputMode.WebAudioScriptProcessor,
+        // alphaTab's AudioWorklet output now passes the start/pause smoke
+        // tests and avoids the legacy ScriptProcessor scheduling path.
+        outputMode: PlayerOutputMode.WebAudioAudioWorklets,
         enableCursor: true, enableUserInteraction: true, scrollElement: 'html',
       },
     });
@@ -163,6 +163,6 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
       </div>
     </div>
     <p className="player-hint">Click a note to seek. Drag across notes to select a practice range, then turn on Loop.</p>
-    {preview && <p className="player-hint">Audio preview: hammer-ons and pull-offs currently use quieter picked samples. Realistic legato articulation is not implemented yet.</p>}
+    {preview && <p className="player-hint">Audio preview: imported hammer-ons and pull-offs use held-note legato articulation; slides and bends retain their pitch movement.</p>}
   </>;
 }

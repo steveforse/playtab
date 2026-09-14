@@ -9,10 +9,10 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Save TEF and MusicXML previews without silently simplifying unsupported content.
   - Add reopen, validation, and migration coverage.
 
-- [ ] **2. Improve playback fidelity** — `feature/improve-playback-fidelity`
-  - Make hammer-ons and pull-offs sound legato instead of retriggering a picked sample.
-  - Improve slide and bend playback while preserving their discrete note pitches.
-  - Revisit alphaTab AudioWorklet output and the playback layer after the current start/pause race is resolved.
+- [x] **2. Improve playback fidelity** — `feature/improve-playback-fidelity`
+  - Imported hammer-ons and pull-offs use held-note legato pitch transitions instead of destination reattacks.
+  - Imported slide and bend MIDI output retains the source note keys while generating pitch movement.
+  - alphaTab AudioWorklet output is enabled after start, pause, synchronized transport, and browser playback smoke tests passed.
 
 - [ ] **3. Expand TEF compatibility** — `feature/expand-tef-compatibility`
   - Decode more TEF versions, fingering codes, effects, tuplets, repeats, rests, and edge cases.
