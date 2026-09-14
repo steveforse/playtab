@@ -6,6 +6,7 @@ import subprocess
 import threading
 import unittest
 from unittest.mock import patch
+import server
 from server import Handler
 
 
@@ -20,9 +21,9 @@ class ConverterTest(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
 
-    def post(self, body):
+    def post(self, body, path='/convert'):
         connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port)
-        connection.request('POST', '/convert', body=body)
+        connection.request('POST', path, body=body)
         response = connection.getresponse()
         result = response.status, json.loads(response.read())
         connection.close()
@@ -61,6 +62,23 @@ class ConverterTest(unittest.TestCase):
                 status, result = self.post(self.valid_header())
                 self.assertEqual(status, 422)
                 self.assertIn('error', result)
+
+    def test_pdf_conversion_returns_musicxml_and_recognition_counts(self):
+        recognized = {
+            'warnings': ['timing inferred'], 'sections': [{}], 'chords': [{}, {}],
+            'techniques': [{}], 'fingerings': [], 'lyrics': 'VERSE',
+        }
+        with patch('server.recognize', return_value=recognized), patch('server.build_musicxml', return_value='<score-partwise/>'):
+            status, result = self.post(b'%PDF-1.7 synthetic', '/pdf')
+        self.assertEqual(status, 200)
+        self.assertEqual(result['musicxml'], '<score-partwise/>')
+        self.assertEqual(result['recognition'], {'sections': 1, 'chords': 2, 'techniques': 1, 'fingerings': 0, 'lyrics': True})
+
+    def test_pdf_recognition_errors_are_safe(self):
+        with patch('server.recognize', side_effect=server.PdfRecognitionError('scan unsupported')):
+            status, result = self.post(b'%PDF-1.7 synthetic', '/pdf')
+        self.assertEqual(status, 422)
+        self.assertEqual(result['error'], 'scan unsupported')
 
 
 if __name__ == '__main__':

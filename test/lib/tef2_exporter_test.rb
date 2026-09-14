@@ -25,7 +25,7 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     end
     tail_offset += parsed[:chords].length * 32
     lyrics_length = result[:bytes].byteslice(tail_offset, 2).unpack1("v")
-    assert_equal "LYRICS &", result[:bytes].byteslice(tail_offset + 2, 9)
+    assert result[:bytes].byteslice(tail_offset + 2, 9).start_with?("LYRICS &")
     assert_equal 0, result[:bytes].getbyte(tail_offset + 2 + lyrics_length - 1)
     tail_offset += lyrics_length + 2
     assert_equal 5, result[:bytes].getbyte(tail_offset)

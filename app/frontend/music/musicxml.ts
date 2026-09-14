@@ -2,7 +2,7 @@ import { importer, type model } from '@coderline/alphatab';
 import { extractTechniques, applyTechniques } from './musicxml-techniques';
 import type { ImportedScoreDocument } from './score';
 
-export type MusicXmlSourceFormat = 'musicxml' | 'tef';
+export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
 export type MusicXmlPreview = { id: string; source: string; filename: string; sourceFormat: MusicXmlSourceFormat; score: model.Score; tuningLabel: string; lyricsSection: string | null };
 
 // Preview keeps the imported model separate from the deliberately limited v1 document.

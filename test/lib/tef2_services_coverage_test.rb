@@ -117,10 +117,42 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
       error = assert_raises(TefConverter::Unavailable) { TefConverter.convert("bytes") }
       assert_equal "TEF conversion failed: broken", error.message
     end
+
+    client = Object.new
+    client.define_singleton_method(:convert_pdf) { |_bytes| { "musicxml" => "pdf xml", "warnings" => [] } }
+    client.define_singleton_method(:stop!) { nil }
+    Tef2::ConverterClient.stub(:new, client) do
+      assert_equal({ "musicxml" => "pdf xml", "warnings" => [] }, PdfConverter.convert("pdf"))
+    end
+    assert_raises(PdfConverter::Invalid) { PdfConverter.convert("") }
+    invalid_pdf_client = Object.new
+    invalid_pdf_client.define_singleton_method(:convert_pdf) { |_bytes| raise Tef2::ConverterClient::Invalid, "bad PDF" }
+    invalid_pdf_client.define_singleton_method(:stop!) { nil }
+    Tef2::ConverterClient.stub(:new, invalid_pdf_client) do
+      assert_raises(PdfConverter::Invalid) { PdfConverter.convert("pdf") }
+    end
+    unavailable_pdf_client = Object.new
+    unavailable_pdf_client.define_singleton_method(:convert_pdf) { |_bytes| raise Tef2::ConverterClient::Unavailable, "down" }
+    unavailable_pdf_client.define_singleton_method(:stop!) { nil }
+    Tef2::ConverterClient.stub(:new, unavailable_pdf_client) do
+      assert_raises(PdfConverter::Unavailable) { PdfConverter.convert("pdf") }
+    end
+    [
+      { "musicxml" => "", "warnings" => [] },
+      { "musicxml" => "x" * 2_000_001, "warnings" => [] },
+      { "musicxml" => "xml", "warnings" => "bad" }
+    ].each do |response|
+      response_client = Object.new
+      response_client.define_singleton_method(:convert_pdf) { |_bytes| response }
+      response_client.define_singleton_method(:stop!) { nil }
+      Tef2::ConverterClient.stub(:new, response_client) do
+        assert_raises(PdfConverter::Unavailable) { PdfConverter.convert("pdf") }
+      end
+    end
   end
 
   test "covers converter client responses and lifecycle" do
-    client = Tef2::ConverterClient.new(port: 1234, converter_script: "server.py")
+    client = Tef2::ConverterClient.new(port: 1234, converter_script: "server.py", base_url: nil)
     assert_equal 1234, client.instance_variable_get(:@port)
     assert_equal "server.py", client.instance_variable_get(:@converter_script)
 
@@ -129,6 +161,7 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
     client.stub(:ensure_running!, nil) do
       Net::HTTP.stub(:new, http) do
         assert_equal({ "musicxml" => "xml", "warnings" => [] }, client.convert("bytes"))
+        assert_equal({ "musicxml" => "xml", "warnings" => [] }, client.convert_pdf("bytes"))
       end
     end
 
@@ -155,7 +188,7 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
   end
 
   test "covers converter client startup, stopping and health checks" do
-    client = Tef2::ConverterClient.new
+    client = Tef2::ConverterClient.new(base_url: nil)
     client.instance_variable_set(:@pid, 123)
     Process.stub(:kill, 0) { assert client.running? }
     Process.stub(:kill, ->(*) { raise Errno::ESRCH }) { refute client.running? }
@@ -171,14 +204,14 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
     Process.stub(:kill, ->(*) { raise Errno::ECHILD }) { client.stop!; assert_nil client.instance_variable_get(:@pid) }
     client.stop!
 
-    ready = Tef2::ConverterClient.new
+    ready = Tef2::ConverterClient.new(base_url: nil)
     ready.stub(:running?, true) { assert_nil ready.ensure_running! }
     ready.stub(:running?, false) do
       ready.stub(:spawn_python_server, 456) do
         ready.stub(:wait_for_ready, nil) { assert_nil ready.ensure_running! }
       end
     end
-    failed = Tef2::ConverterClient.new
+    failed = Tef2::ConverterClient.new(base_url: nil)
     failed.stub(:running?, false) do
       failed.stub(:spawn_python_server, -> { raise "boom" }) do
         failed.stub(:stop!, nil) do
@@ -188,14 +221,14 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
       end
     end
 
-    waiting = Tef2::ConverterClient.new
+    waiting = Tef2::ConverterClient.new(base_url: nil)
     calls = 0
     waiting.stub(:health_check, -> { calls += 1; calls >= 3 }) do
       waiting.stub(:sleep, nil) { waiting.send(:wait_for_ready) }
     end
     assert_equal 3, calls
 
-    down = Tef2::ConverterClient.new
+    down = Tef2::ConverterClient.new(base_url: nil)
     down.stub(:health_check, false) do
       current_time = Time.now
       calls = 0
@@ -208,10 +241,14 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
     client.stub(:health_check, true) { assert client.send(:health_check) }
     Net::HTTP.stub(:new, http) { assert client.send(:health_check) }
     http.stub(:get, ->(*) { raise SocketError, "offline" }) { refute client.send(:health_check) }
+
+    remote = Tef2::ConverterClient.new(base_url: "http://converter:8080")
+    assert_nil remote.ensure_running!
+    remote.stop!
   end
 
   test "spawns the converter with detached standard streams" do
-    client = Tef2::ConverterClient.new(converter_script: "server.py")
+    client = Tef2::ConverterClient.new(converter_script: "server.py", base_url: nil)
     Process.stub(:spawn, ->(*args) {
       options = args.pop
       assert_equal [ "python3", "server.py" ], args

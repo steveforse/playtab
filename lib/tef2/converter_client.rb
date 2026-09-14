@@ -16,16 +16,28 @@ module Tef2
     STARTUP_TIMEOUT = 10
     REQUEST_TIMEOUT = 20
 
-    def initialize(port: DEFAULT_PORT, converter_script: nil)
+    def initialize(port: DEFAULT_PORT, converter_script: nil, base_url: ENV["TEF_CONVERTER_URL"])
       @port = port
       @converter_script = converter_script || Rails.root.join("converter/server.py").to_s
       @pid = nil
-      @uri = URI("http://127.0.0.1:#{@port}")
+      @local_process = base_url.to_s.empty?
+      @uri = URI(base_url.to_s.empty? ? "http://127.0.0.1:#{@port}" : base_url)
     end
 
     # Convert TEF2 bytes to MusicXML via the Python service
     # Starts the service on demand if not running
     def convert(bytes)
+      request_conversion(bytes, "/convert")
+    end
+
+    # Convert a vector PDF score to MusicXML via the Python service.
+    def convert_pdf(bytes)
+      request_conversion(bytes, "/pdf")
+    end
+
+    private
+
+    def request_conversion(bytes, endpoint)
       ensure_running!
 
       http = Net::HTTP.new(@uri.host, @uri.port)
@@ -33,7 +45,7 @@ module Tef2
       http.read_timeout = REQUEST_TIMEOUT
       http.write_timeout = 5
 
-      request = Net::HTTP::Post.new("/convert")
+      request = Net::HTTP::Post.new(endpoint)
       request["Content-Type"] = "application/octet-stream"
       request.body = bytes
 
@@ -57,7 +69,10 @@ module Tef2
     end
 
     # Start the Python converter server as a child process
+    public
+
     def ensure_running!
+      return unless @local_process
       return if running?
 
       @pid = spawn_python_server
@@ -69,7 +84,7 @@ module Tef2
 
     # Stop the converter child process
     def stop!
-      return unless @pid
+      return unless @local_process && @pid
       Process.kill("TERM", @pid)
       Process.wait(@pid)
     rescue Errno::ESRCH, Errno::ECHILD

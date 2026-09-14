@@ -100,7 +100,7 @@ describe('stored score validation', () => {
     expect(() => validateImportedScore({ ...imported, version: 1 })).toThrow('Unsupported');
     expect(() => validateImportedScore({ ...imported, title: '' })).toThrow('Title');
     expect(() => validateImportedScore({ ...imported, sourceName: '' })).toThrow('filename');
-    expect(() => validateImportedScore({ ...imported, sourceFormat: 'pdf' as never })).toThrow('format');
+    expect(() => validateImportedScore({ ...imported, sourceFormat: 'mid' as never })).toThrow('format');
     expect(() => validateImportedScore({ ...imported, source: '<html/>' })).toThrow('MusicXML');
     expect(() => validateImportedScore({ ...imported, source: '<!ENTITY unsafe "x"><score-partwise/>' })).toThrow('MusicXML');
     expect(() => validateImportedScore({ ...imported, warnings: Array.from({ length: 21 }, () => 'warning') })).toThrow('warnings');

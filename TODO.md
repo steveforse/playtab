@@ -30,8 +30,10 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Report fields that cannot be represented by the selected TEF version before download.
 
 - [ ] **6. Add PDF recognition/import** — `feature/pdf-recognition`
-  - Extract tablature, lyrics, chords, sections, and annotations from source PDFs.
-  - Require reviewable confidence or warnings for uncertain recognition.
+  - Extract tablature, lyrics, chord names, sections, techniques, and fingering marks from vector source PDFs.
+  - Emit a bounded five-string MusicXML preview through the Rails upload flow.
+  - Preserve reviewable recognition counts and warnings for inferred timing, missing tempo, unresolved voicings, and uncertain marks.
+  - Remaining: improve timing and cross-layout association, decode graphical rhythm/tempo data where possible, and validate the generated MusicXML semantically across the paired corpus.
 
 - [ ] **7. Improve lyrics and chord presentation** — `feature/lyrics-chord-presentation`
   - Support timed lyrics when source timing is available.
