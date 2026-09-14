@@ -1,8 +1,79 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..c7a5eaa 100644
+index b6203da..1d20005
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-@@ -59240,6 +59240,10 @@ class TieGlyphLabels {
+@@ -43390,7 +43390,7 @@ class MidiFileGenerator {
+ 		if (staff.tuning.length > 0) for (const t of staff.tuning) this._handler.addNote(staff.track.index, beatStart, deadSlapDuration, t, MidiUtils.dynamicToVelocity(DynamicValue.F), staff.track.playbackInfo.primaryChannel);
+ 	}
+ 	_needsSecondaryChannel(note) {
+-		return note.hasBend || note.beat.hasWhammyBar || note.beat.vibrato !== VibratoType.None;
++		return note.hasBend || note.beat.hasWhammyBar || note.beat.vibrato !== VibratoType.None || note.isHammerPullOrigin || note.hammerPullOrigin;
+ 	}
+ 	_determineChannel(track, note) {
+ 		if (this._needsSecondaryChannel(note)) return track.playbackInfo.secondaryChannel;
+@@ -43422,6 +43422,13 @@ class MidiFileGenerator {
+ 		noteDuration.letRingEnd -= brushOffset;
+ 		const velocity = MidiFileGenerator._getNoteVelocity(note);
+ 		const channel = this._determineChannel(track, note);
++		// Play hammer-ons and pull-offs without a second picked attack. The
++		// destination can also be an origin in a chained H/PO passage; in that
++		// case each transition updates the original held voice.
++		if (note.hammerPullOrigin) {
++			if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel);
++			return;
++		}
+ 		let initialBend = 0;
+ 		const noteSoundDuration = Math.max(noteDuration.untilTieOrSlideEnd, noteDuration.letRingEnd);
+ 		if (note.hasBend) initialBend = MidiFileGenerator.getPitchWheel(note.bendPoints[0].value);
+@@ -43446,10 +43453,11 @@ class MidiFileGenerator {
+ 			return;
+ 		}
+ 		if (note.hasBend) this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
++		else if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel);
+ 		else if (note.beat.hasWhammyBar && note.index === 0) this._generateWhammy(note.beat, noteStart, noteDuration, channel, tempoOnBeatStart);
+ 		else if (note.slideInType !== SlideInType.None || note.slideOutType !== SlideOutType.None) this._generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
+ 		else if (note.vibrato !== VibratoType.None || note.isTieDestination && note.tieOrigin.vibrato !== VibratoType.None) this._generateVibrato(note, noteStart, noteDuration, noteKey, channel);
+-		if (!note.isTieDestination && (!note.slideOrigin || note.slideOrigin.slideOutType !== SlideOutType.Legato)) this._handler.addNote(track.index, noteStart, noteSoundDuration, noteKey, velocity, channel);
++		if (!note.isTieDestination && !note.hammerPullOrigin && (!note.slideOrigin || note.slideOrigin.slideOutType !== SlideOutType.Legato)) this._handler.addNote(track.index, noteStart, noteSoundDuration, noteKey, velocity, channel);
+ 	}
+ 	/**
+ 	* For every note within the octave, the number of keys to go up when playing ornaments.
+@@ -43576,6 +43584,14 @@ class MidiFileGenerator {
+ 				const tieDestinationDuration = this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart);
+ 				durationWithEffects.untilTieOrSlideEnd = endNote.beat.absolutePlaybackStart + tieDestinationDuration.untilTieOrSlideEnd - startTick;
+ 			} else durationWithEffects.untilTieOrSlideEnd = beatPlayDuration + this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart).untilTieOrSlideEnd;
++		} else if (note.isHammerPullOrigin) {
++			let endNote = note.hammerPullDestination;
++			while (endNote?.isHammerPullOrigin && endNote.hammerPullDestination) endNote = endNote.hammerPullDestination;
++			if (endNote) {
++				const startTick = note.beat.absolutePlaybackStart;
++				const destinationDuration = this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart);
++				durationWithEffects.untilTieOrSlideEnd = endNote.beat.absolutePlaybackStart + destinationDuration.untilTieOrSlideEnd - startTick;
++			}
+ 		} else if (note.slideOutType === SlideOutType.Legato) {
+ 			const endNote = note.slideTarget;
+ 			if (endNote) {
+@@ -43716,6 +43732,19 @@ class MidiFileGenerator {
+ 	static getPitchWheel(bendValue) {
+ 		return SynthConstants.DefaultPitchWheel + bendValue / 2 * MidiFileGenerator._pitchValuePerSemitone;
+ 	}
++	_generateHammerPull(note, noteKey, channel) {
++		let origin = note;
++		while (origin.hammerPullOrigin) origin = origin.hammerPullOrigin;
++		const destination = note.hammerPullDestination;
++		if (!destination) return;
++		const originKey = origin.calculateRealValue(this.applyTranspositionPitches, true);
++		const destinationKey = destination.calculateRealValue(this.applyTranspositionPitches, true);
++		const bendValue = MidiFileGenerator.getPitchWheel((destinationKey - originKey) * 2);
++		const track = note.beat.voice.bar.staff.track;
++		// An H/PO changes pitch at the destination onset. This is an immediate
++		// per-note pitch step, unlike a legato slide's interpolated glide.
++		this._handler.addNoteBend(track.index, destination.beat.absolutePlaybackStart, channel, originKey, bendValue);
++	}
+ 	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
+ 		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
+ 		const playedBendPoints = [];
+@@ -59240,6 +59269,10 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {
