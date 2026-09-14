@@ -31,7 +31,7 @@ module Tef2
       instrument = instruments.first
       raise Invalid, "TablEdit track must contain five strings" unless instrument[:strings] == 5
 
-      notes, marker_count, chord_markers, text_markers = parse_contents(bytes, measures, instrument[:strings])
+      notes, marker_count, chord_markers, text_markers, endings, tempo_changes = parse_contents(bytes, measures, instrument[:strings])
       raise Invalid, "TablEdit file contains no notes" if notes.empty?
 
       text_values = parse_texts(bytes)
@@ -66,9 +66,9 @@ module Tef2
         track_data: instruments,
         notes: assign_chord_durations(notes),
         chords: chords,
-        tempo_changes: [],
+        tempo_changes: tempo_changes,
         time_sig_changes: [],
-        endings: [],
+        endings: endings,
         repeats: [],
         texts: texts,
         percussions: [],
@@ -184,6 +184,8 @@ module Tef2
       marker_count = 0
       chord_markers = []
       text_markers = []
+      endings = []
+      tempo_changes = []
       measure_starts = [ 0 ]
       measures.each { |measure| measure_starts << measure_starts.last + measure[:length_units] }
 
@@ -231,15 +233,17 @@ module Tef2
             grace_note_fret: byte4 & 0x1F,
             tef2_duration: duration_ticks(duration_code),
             duration_code: duration_code,
+            tuplet: tuplet_duration?(duration_code),
             dynamic: (byte2 >> 5) & 0x07,
             fingering_combo: fingering_combo,
             fingerings: modern_fingerings(fingering_combo),
             stroke: byte7 >> 5,
             note_attributes: byte8,
+            attributes: (byte3 >> 4) & 0x03,
             annotation: nil,
             tie: (byte8 & 0x02) != 0 || (byte2 & 0x80) != 0,
             grace: (byte1 & 0x40) != 0,
-            voice: ((byte3 & 0x30) >> 4)
+            voice: (((byte3 >> 4) & 0x03) == 3 ? 2 : 1)
           }
         elsif marker == 0x39
           measure, local_units = locate_measure(measure_starts, absolute_units)
@@ -260,12 +264,32 @@ module Tef2
         elsif marker == 0x33
           # Gaps are emitted as MusicXML rests by the builder.
           nil
+        elsif byte1 == 0xB7
+          measure, local_units = locate_measure(measure_starts, absolute_units)
+          ending_flags = byte3
+          endings << {
+            measure: measure,
+            position: local_units * TEF2_TICKS_PER_QUARTER / 16,
+            ending_number: ending_flags & 0x07,
+            ending_flags: (ending_flags >> 3) & 0x07,
+            is_open: (ending_flags & 0x40) != 0,
+            is_close: (ending_flags & 0x80) != 0,
+            type: :ending
+          }
+        elsif byte1 == 0xFE
+          measure, local_units = locate_measure(measure_starts, absolute_units)
+          tempo_changes << {
+            measure: measure,
+            position: local_units * TEF2_TICKS_PER_QUARTER / 16,
+            tempo: byte2 | (byte3 << 8),
+            type: :tempo_change
+          }
         end
 
         offset = reader.u32
       end
 
-      [ notes, marker_count, chord_markers, text_markers ]
+      [ notes, marker_count, chord_markers, text_markers, endings, tempo_changes ]
     rescue IndexError
       raise Invalid, "Truncated TablEdit content section"
     end
@@ -314,6 +338,10 @@ module Tef2
       raise Invalid, "Unsupported TablEdit duration code #{code}" unless length_units
 
       length_units * TEF2_TICKS_PER_QUARTER / 16
+    end
+
+    def self.tuplet_duration?(code)
+      [ 2, 5, 8, 11, 14, 17 ].include?(code)
     end
 
     def self.parse_texts(bytes)

@@ -10,6 +10,7 @@ class TableditV3ParserTest < ActiveSupport::TestCase
     assert_equal [ [ 0, 0, 0 ], [ 1, 0, 5 ] ], parsed[:notes].map { |note| [ note[:measure], note[:position], note[:fret] ] }
     assert_equal 64, parsed[:notes].first[:tef2_duration]
     assert_equal 1, parsed[:notes].first[:effect1]
+    assert_equal 2, parsed[:notes].first[:voice]
     assert_equal [ 1 ], parsed[:notes].first[:fingerings]
     assert_equal 12, parsed[:notes].second[:effect1]
     assert_equal [ 2 ], Tef2::TableditV3Parser.modern_fingerings(3)
@@ -76,7 +77,17 @@ class TableditV3ParserTest < ActiveSupport::TestCase
 
     gap = Array.new(0x220, 0)
     put_u32(gap, 0x3C, 0x200); put_u32(gap, 0x200, 0); gap[0x204] = 0x33; put_u32(gap, 0x20C, 0xFFFFFFFF)
-    assert_equal [ [], 1, [], [] ], Tef2::TableditV3Parser.parse_contents(gap, measures, 5)
+    assert_equal [ [], 1, [], [], [], [] ], Tef2::TableditV3Parser.parse_contents(gap, measures, 5)
+    ending = gap.dup
+    ending[0x204, 8] = [ 0xB7, 1, 0xC1, 0, 0, 0, 0, 0 ]
+    parsed_ending = Tef2::TableditV3Parser.parse_contents(ending, measures, 5)
+    assert_equal({ measure: 0, position: 0, ending_number: 1, ending_flags: 0, is_open: true, is_close: true, type: :ending }, parsed_ending[4].first)
+    accent = gap.dup
+    accent[0x204] = 0x37
+    assert_empty Tef2::TableditV3Parser.parse_contents(accent, measures, 5)[4]
+    tempo = gap.dup
+    tempo[0x204, 8] = [ 0xFE, 90, 0, 0, 0, 0, 0, 0 ]
+    assert_equal [ 90 ], Tef2::TableditV3Parser.parse_contents(tempo, measures, 5)[5].map { |change| change[:tempo] }
     truncated = gap.first(0x208)
     assert_raises(Tef2::TableditV3Parser::Invalid) { Tef2::TableditV3Parser.parse_contents(truncated, measures, 5) }
 
@@ -144,7 +155,7 @@ class TableditV3ParserTest < ActiveSupport::TestCase
     bytes[0x344, 36] = chord
 
     put_u32(bytes, 0x200, 0)
-    bytes[0x204, 8] = [ 1, 0x4C, 1, 0, 0, 0, 2, 0 ]
+    bytes[0x204, 8] = [ 1, 0x4C, 0x31, 0, 0, 0, 2, 0 ]
     put_u32(bytes, 0x20C, 0)
     bytes[0x210, 8] = [ 0x35, 0, 0, 0, 0, 0, 0, 0 ]
     put_u32(bytes, 0x218, 0)

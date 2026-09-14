@@ -14,10 +14,10 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Imported slide and bend MIDI output retains the source note keys while generating pitch movement.
   - alphaTab AudioWorklet output is enabled after start, pause, synchronized transport, and browser playback smoke tests passed.
 
-- [ ] **3. Expand TEF compatibility** — `feature/expand-tef-compatibility`
-  - Decode more TEF versions, fingering codes, effects, tuplets, repeats, rests, and edge cases.
-  - Replace bounded warnings with independently verified mappings where the source format is understood.
-  - Keep unsupported data explicit rather than guessing or changing pitches.
+- [x] **3. Expand TEF compatibility** — `feature/expand-tef-compatibility`
+  - Decode verified TEF2 and TablEdit TEF3 effects, tuplets, grace notes, ties, voices, tempo changes, and alternate endings.
+  - Preserve fingering and unsupported effect values as explicit MusicXML technical metadata with import warnings.
+  - Keep raw TEF2 repeat maps and source-only layout records explicit until their playback semantics are independently verified.
 
 - [ ] **4. Add score editing** — `feature/score-editing`
   - Edit notes, measures, tuning, tempo, lyrics, chords, sections, annotations, and techniques after import.

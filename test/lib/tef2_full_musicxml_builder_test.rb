@@ -14,7 +14,8 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
           fret: 0,
           technique: 0,
           tef2_duration: 256,
-          is_chord: false
+          is_chord: false,
+          voice: 2
         }
       ],
     annotations: { 0 => 6 },
@@ -41,6 +42,7 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "C", document.at_xpath("//harmony/root/root-step").text
     assert_equal " min", document.at_xpath("//harmony/kind")[:text]
     assert_equal "TEF fingering code 6", document.at_xpath("//other-technical").text
+    assert_equal 2, document.xpath("//note[voice='2']").length
     assert_includes document.at_xpath("//miscellaneous-field[@name='playtab-lyrics']").text, "There once was a ship"
     assert_empty document.xpath("//lyric")
     assert_empty document.xpath("//harmony/frame")
