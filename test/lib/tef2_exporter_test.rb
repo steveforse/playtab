@@ -12,6 +12,27 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert_equal 1, result[:bytes].getbyte(239)
     assert_equal 632, result[:bytes].byteslice(246, 2).unpack1("v")
     assert_equal 163, result[:bytes].getbyte(249)
+    footer = result[:bytes].byteslice(-Tef2::Exporter::LegacyWriter::FOOTER_SIZE, Tef2::Exporter::LegacyWriter::FOOTER_SIZE)
+    assert_equal "Page &p / &n", footer.byteslice(96, 12)
+    assert_equal "&c&2&t &c&6&s &r&3&m ", footer.byteslice(224, 21).delete("\0")
+    assert_equal "&r&3&t - &3&s ", footer.byteslice(352, 15).delete("\0")
+
+    tail_offset = Tef2::FullParser::HEADER_SIZE + parsed[:component_count] * Tef2::FullParser::COMPONENT_SIZE
+    parsed[:texts].length.times do
+      length = result[:bytes].getbyte(tail_offset)
+      assert_equal 0, result[:bytes].getbyte(tail_offset + 1)
+      tail_offset += length + 2
+    end
+    tail_offset += parsed[:chords].length * 32
+    lyrics_length = result[:bytes].byteslice(tail_offset, 2).unpack1("v")
+    assert_equal 0, result[:bytes].getbyte(tail_offset + 2)
+    tail_offset += lyrics_length + 2
+    assert_equal 5, result[:bytes].getbyte(tail_offset)
+    assert_equal 99, result[:bytes].getbyte(tail_offset + 4)
+    assert_equal 16, result[:bytes].getbyte(tail_offset + 16)
+    assert_equal 7, result[:bytes].getbyte(tail_offset + 17)
+    assert_equal "Imported", result[:bytes].byteslice(tail_offset + 32, 16).delete("\0")
+    assert_equal 480, result[:bytes].length - tail_offset - 50
     assert_equal [ "Verse" ], parsed[:texts].map { |text| text[:text] }
     assert_equal [ "G" ], parsed[:chords].map { |chord| chord[:name] }
     assert_includes parsed[:lyrics_text], "LYRICS & CHORDS"

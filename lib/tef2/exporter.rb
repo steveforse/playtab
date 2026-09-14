@@ -323,6 +323,12 @@ module Tef2
 
     class LegacyWriter
       DURATION_CODES = (0..31).to_h { |code| [ code, FullParser.duration_ticks(code) ] }.freeze
+      FOOTER_SIZE = 480
+      DEFAULT_FOOTER_LAYOUT = "001111111000=0J1:@899<>700000024U00/0000\0" \
+        "00000001<D1.1101110::=I><0000000000000000000000\0" \
+        "0000000Page &p / &n"
+      DEFAULT_FOOTER_FIRST_HEADER = "&c&2&t &c&6&s &r&3&m "
+      DEFAULT_FOOTER_OTHER_HEADER = "&r&3&t - &3&s "
       # These fields are not consumed by the TuxGuitar-compatible reader, but
       # they are part of the legacy TEF2 header expected by TEF View. They
       # describe the 4/4 layout and the single-track export produced here.
@@ -411,7 +417,7 @@ module Tef2
         bytes = []
         model.texts.each do |text|
           encoded = text[:text].to_s.encode(Encoding::UTF_8).bytes
-          bytes.concat([ encoded.length, *encoded, 0 ])
+          bytes.concat([ encoded.length + 1, 0, *encoded, 0 ])
         end
         model.chords.each do |chord|
           record = Array.new(32, 0xFF)
@@ -421,14 +427,26 @@ module Tef2
         end
         if model.lyrics
           encoded = model.lyrics.encode(Encoding::UTF_8).bytes
-          bytes.concat([ encoded.length & 0xFF, (encoded.length >> 8) & 0xFF, *encoded ])
+          length = encoded.length + 1
+          bytes.concat([ length & 0xFF, (length >> 8) & 0xFF, 0, *encoded ])
         end
         track = Array.new(50, 0)
         track[0] = 5
+        track[4] = 99
         track[8] = 105
+        track[16] = 16
+        track[17] = 7
         model.tuning.each_with_index { |pitch, index| track[20 + index] = 96 - pitch }
-        track[37, 16] = Binary.text(model.title, 16)
-        bytes + track
+        track[32, 16] = Binary.text(model.title, 16)
+        bytes + track + footer
+      end
+
+      def self.footer
+        bytes = Array.new(FOOTER_SIZE, 0)
+        bytes[0, DEFAULT_FOOTER_LAYOUT.bytes.length] = DEFAULT_FOOTER_LAYOUT.bytes
+        bytes[224, DEFAULT_FOOTER_FIRST_HEADER.bytes.length] = DEFAULT_FOOTER_FIRST_HEADER.bytes
+        bytes[352, DEFAULT_FOOTER_OTHER_HEADER.bytes.length] = DEFAULT_FOOTER_OTHER_HEADER.bytes
+        bytes
       end
     end
 
