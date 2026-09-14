@@ -34,7 +34,7 @@ module Tef2
 
       builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
         xml.send("score-partwise", version: "3.1") do
-          write_lyrics_metadata(xml, lyrics_text) if lyrics_text.match?(/\ALYRICS\s*&\s*CHORDS\b/i)
+          write_lyrics_metadata(xml, lyrics_text) unless lyrics_text.empty?
 
           xml.send("part-list") do
             xml.send("score-part", id: "P1") do
@@ -179,7 +179,7 @@ module Tef2
             measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
             measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
             measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-            staff: 1
+            staff: 1, position: metadata_positions[metadata_index]
           )
           metadata_index += 1
         end
@@ -189,6 +189,8 @@ module Tef2
           rest_dur_tef2 = tef2_pos - cursor
           rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
           write_rest(xml, rest_dur_xml, staff: 1)
+        elsif tef2_pos < cursor && !note[:is_chord]
+          xml.backup { xml.duration tef2_to_xml_duration(cursor - tef2_pos) }
         end
 
         write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning)
@@ -201,7 +203,7 @@ module Tef2
           measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
           measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
           measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-          staff: 1
+          staff: 1, position: metadata_positions[metadata_index]
         )
         metadata_index += 1
       end
@@ -228,7 +230,7 @@ module Tef2
             measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
             measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
             measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-            staff: 2
+            staff: 2, position: metadata_positions[metadata_index]
           )
           metadata_index += 1
         end
@@ -238,6 +240,8 @@ module Tef2
           rest_dur_tef2 = tef2_pos - cursor
           rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
           write_rest(xml, rest_dur_xml, staff: 2)
+        elsif tef2_pos < cursor && !note[:is_chord]
+          xml.backup { xml.duration tef2_to_xml_duration(cursor - tef2_pos) }
         end
 
         write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning)
@@ -250,7 +254,7 @@ module Tef2
           measure_texts.select { |text| text[:position].to_i == metadata_positions[metadata_index] },
           measure_chords.select { |chord| chord[:position].to_i == metadata_positions[metadata_index] },
           measure_tempos.select { |tempo_change| tempo_change[:position].to_i == metadata_positions[metadata_index] },
-          staff: 2
+          staff: 2, position: metadata_positions[metadata_index]
         )
         metadata_index += 1
       end
@@ -263,20 +267,25 @@ module Tef2
       end
     end
 
-    def self.write_measure_metadata(xml, texts, chords, tempo_changes, staff:)
+    def self.write_measure_metadata(xml, texts, chords, tempo_changes, staff:, position: 0)
       tempo_changes.each { |tempo_change| write_tempo_direction(xml, tempo_change[:tempo]) }
       text_values = texts.map { |text| text[:text].to_s.strip }.reject(&:empty?)
       unless text_values.empty?
-        xml.direction(placement: "above") do
+        direction_attributes = { placement: "above" }
+        if texts.length == 1 && texts.first[:string].to_i.between?(0, 4)
+          direction_attributes["data-playtab-string"] = texts.first[:string].to_i
+        end
+        xml.direction(direction_attributes) do
           xml.send("direction-type") { xml.words(text_values.join(" / ")) }
+          xml.offset tef2_to_xml_duration(position) if position.to_i.positive?
           xml.staff staff
         end
       end
 
-      chords.each { |chord| write_harmony(xml, chord, staff:) }
+      chords.each { |chord| write_harmony(xml, chord, staff:, position:) }
     end
 
-    def self.write_harmony(xml, chord, staff:)
+    def self.write_harmony(xml, chord, staff:, position: 0)
       name = chord[:name].to_s.strip
       return if name.empty?
 
@@ -286,15 +295,24 @@ module Tef2
       suffix = match ? match[3] : name
       alter = { "#" => 1, "♯" => 1, "b" => -1, "♭" => -1 }[accidental]
 
-      # TEF chord records include diagram voicings, but the source score uses
-      # chord names at the measure positions.  Per-measure diagrams are an
-      # export/layout choice and make the imported tab substantially noisier.
-      xml.harmony(placement: "above") do
+      harmony_attributes = { placement: "above" }
+      strings = chord[:strings].to_a.first(5)
+      if strings.length == 5
+        harmony_attributes["data-playtab-strings"] = strings.map { |value| value.to_i }.join(",")
+      end
+      if chord[:first_fret].to_i.positive?
+        harmony_attributes["data-playtab-first-fret"] = chord[:first_fret].to_i
+      end
+      if chord[:string].to_i.between?(0, 4)
+        harmony_attributes["data-playtab-string"] = chord[:string].to_i
+      end
+      xml.harmony(harmony_attributes) do
         xml.root do
           xml.send("root-step", root)
           xml.send("root-alter", alter) if alter
         end
         xml.kind(text: suffix) { xml.text "major" }
+        xml.offset tef2_to_xml_duration(position) if position.to_i.positive?
         xml.staff staff
       end
     end

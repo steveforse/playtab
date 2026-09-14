@@ -16,6 +16,13 @@ module Tef2
     TEF2_TICKS_PER_QUARTER = 256
     TEF3_UNITS_PER_QUARTER = 16
 
+    def self.chord_values(chord)
+      values = chord[:strings].to_a.first(5)
+      return Array.new(5, 0) unless values.length == 5
+
+      values.map { |fret| fret.to_i.negative? ? 0xFF : fret.to_i.clamp(0, 31) }
+    end
+
     def self.export(document, version: TEF2)
       model = Model.from(document)
       bytes = case version.to_s
@@ -114,6 +121,8 @@ module Tef2
         target_staff = measure_nodes.any? { |measure| measure.xpath("./note[staff='2']").any? } ? "2" : nil
         tuning = nil
         tempo = nil
+        seen_texts = {}
+        seen_chords = {}
 
         measure_nodes.each_with_index do |measure, measure_index|
           divisions = measure.at_xpath("./attributes/divisions")&.text.to_i.positive? ? measure.at_xpath("./attributes/divisions").text.to_i : divisions
@@ -124,33 +133,68 @@ module Tef2
 
           measure.xpath("./direction/direction-type/words").each do |words|
             text = words.text.strip
-            texts << { measure: measure_index, position: 0, text: text } unless text.empty?
+            position = xml_ticks(words.parent.parent.at_xpath("./offset")&.text.to_i, divisions)
+            string = metadata_string(words.parent.parent["data-playtab-string"])
+            key = [ measure_index, position, text, string ]
+            if !text.empty? && !seen_texts[key]
+              direction = words.parent.parent
+              texts << {
+                measure: measure_index,
+                position: position,
+                text: text,
+                string: string
+              }.compact
+              seen_texts[key] = true
+            end
           end
           measure.xpath("./harmony").each do |harmony|
             name = chord_name(harmony)
-            chords << { measure: measure_index, position: 0, name: name } unless name.empty?
+            position = xml_ticks(harmony.at_xpath("./offset")&.text.to_i, divisions)
+            string = metadata_string(harmony["data-playtab-string"])
+            strings = chord_strings(harmony["data-playtab-strings"])
+            first_fret = metadata_first_fret(harmony["data-playtab-first-fret"])
+            key = [ measure_index, position, name, string, strings, first_fret ]
+            if !name.empty? && !seen_chords[key]
+              chords << {
+                measure: measure_index,
+                position: position,
+                name: name,
+                string: string,
+                strings: strings,
+                first_fret: first_fret
+              }.compact
+              seen_chords[key] = true
+            end
           end
 
           cursor = 0
+          previous_note_position = nil
           measure.element_children.each do |element|
             case element.name
             when "backup"
               cursor = [ cursor - xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions), 0 ].max
+              previous_note_position = nil
             when "forward"
               cursor += xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions)
             when "note"
               staff = element.at_xpath("./staff")&.text
               selected = target_staff ? staff == target_staff : element.at_xpath("./notations/technical/string")
               duration = xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions)
-              if selected && !element.at_xpath("./rest")
+              if selected && element.at_xpath("./rest")
+                cursor += duration
+                previous_note_position = nil
+              elsif selected
                 technical = element.at_xpath("./notations/technical")
                 string = technical&.at_xpath("./string")&.text.to_i
                 fret = technical&.at_xpath("./fret")&.text.to_i
                 if string.between?(1, 5) && fret >= 0
-                  notes << note_from_xml(element, measure_index, cursor, duration, string, fret)
+                  chord_note = element.at_xpath("./chord")
+                  position = chord_note && previous_note_position ? previous_note_position : cursor
+                  notes << note_from_xml(element, measure_index, position, duration, string, fret)
+                  cursor += duration unless chord_note
+                  previous_note_position = position
                 end
               end
-              cursor += duration unless element.at_xpath("./chord")
             end
           end
         end
@@ -237,8 +281,12 @@ module Tef2
       def self.note_from_xml(element, measure, position, duration, string, fret)
         technical = element.at_xpath("./notations/technical")
         fingering = technical&.at_xpath("./fingering")&.text.to_s
-        thumb = technical&.xpath("./other-technical").any? { |node| node.text.strip == "TEF fingering T" }
-        technique = element.at_xpath("./notations/technical/*[self::hammer-on or self::pull-off or self::slide or self::bend]")
+        thumb = technical&.xpath("./other-technical").any? do |node|
+          [ "TEF fingering T", "TEF fingering code 6" ].include?(node.text.strip)
+        end
+        technique = element.xpath("./notations/technical/*[self::hammer-on or self::pull-off or self::slide or self::bend]").find do |node|
+          node["type"] != "stop"
+        end
         effect1 = case technique&.name
         when "hammer-on" then 1
         when "pull-off" then 2
@@ -272,8 +320,30 @@ module Tef2
         root = harmony.at_xpath("./root/root-step")&.text.to_s
         alter = harmony.at_xpath("./root/root-alter")&.text.to_f
         accidental = alter == 1 ? "#" : alter == -1 ? "b" : ""
-        kind = harmony.at_xpath("./kind")&.text.to_s
-        root.empty? ? "" : "#{root}#{accidental}#{kind == 'major' ? '' : kind}"
+        kind_node = harmony.at_xpath("./kind")
+        display_kind = kind_node&.[]("text").to_s
+        kind = display_kind.empty? ? kind_node&.text.to_s.strip : display_kind
+        suffix = display_kind.empty? && %w[major maj].include?(kind.downcase) ? "" : kind
+        root.empty? ? "" : "#{root}#{accidental}#{suffix}"
+      end
+
+      def self.metadata_string(value)
+        return if value.nil?
+
+        parsed = value.to_i
+        parsed if parsed.between?(0, 4)
+      end
+
+      def self.chord_strings(value)
+        strings = value.to_s.split(",").map(&:to_i)
+        strings if strings.length == 5 && strings.all? { |fret| fret.between?(-1, 49) }
+      end
+
+      def self.metadata_first_fret(value)
+        return if value.nil?
+
+        parsed = value.to_i
+        parsed if parsed.positive?
       end
 
       def self.loss_warnings(xml, target_staff, notes, measures)
@@ -308,6 +378,14 @@ module Tef2
         bytes
       end
 
+      def info(title)
+        bytes = Array.new(200, 0)
+        encoded = title.to_s.encode(Encoding::UTF_8).bytes.first(198)
+        bytes[0, encoded.length] = encoded
+        bytes[encoded.length] = 0
+        bytes
+      end
+
       def duration_code(ticks, table)
         table.min_by { |code, value| (value - ticks.to_i).abs }.first
       end
@@ -315,6 +393,21 @@ module Tef2
 
     class LegacyWriter
       DURATION_CODES = (0..31).to_h { |code| [ code, FullParser.duration_ticks(code) ] }.freeze
+      FOOTER_SIZE = 480
+      DEFAULT_FOOTER_LAYOUT = "001111111000=0J1:@899<>700000024U00/0000\0" \
+        "00000001<D1.1101110::=I><0000000000000000000000\0" \
+        "0000000Page &p / &n"
+      DEFAULT_FOOTER_FIRST_HEADER = "&c&2&t &c&6&s &r&3&m "
+      DEFAULT_FOOTER_OTHER_HEADER = "&r&3&t - &3&s "
+      # These fields are not consumed by the TuxGuitar-compatible reader, but
+      # they are part of the legacy TEF2 header expected by TEF View. They
+      # describe the 4/4 layout and the single-track export produced here.
+      LEGACY_LAYOUT_MARKER = 3
+      LEGACY_POSITION_UNIT = 480
+      LEGACY_TRACK_MARKER = 2
+      LEGACY_HEADER_FLAGS = 1
+      LEGACY_HEADER_WIDTH = 632
+      LEGACY_HEADER_STYLE = 163
 
       def self.build(model)
         raise Invalid, "TEF2 export supports 4/4 measures only." unless model.measures.all? { |sig| sig == { numerator: 4, denominator: 4 } }
@@ -325,11 +418,18 @@ module Tef2
 
         components = components_for(model)
         bytes = Array.new(FullParser::HEADER_SIZE + components.length * FullParser::COMPONENT_SIZE, 0)
+        bytes[0, 200] = Binary.info(model.title)
         Binary.u16(bytes, 200, model.measures.length)
         bytes[202] = 4
         bytes[204] = 4
+        bytes[205] = LEGACY_LAYOUT_MARKER
         Binary.u16(bytes, 220, model.tempo.clamp(30, 240))
+        Binary.u16(bytes, 226, LEGACY_POSITION_UNIT)
+        Binary.u16(bytes, 230, LEGACY_TRACK_MARKER)
+        bytes[239] = LEGACY_HEADER_FLAGS
         Binary.u16(bytes, 256, components.length)
+        Binary.u16(bytes, 246, LEGACY_HEADER_WIDTH)
+        bytes[249] = LEGACY_HEADER_STYLE
         bytes[228] = model.texts.length
         bytes[236] = model.chords.length
         bytes[238] = model.lyrics ? 1 : 0
@@ -346,10 +446,51 @@ module Tef2
       end
 
       def self.components_for(model)
-        entries = model.notes.map { |note| [ candidate_position(note), note_component(note) ] }
-        model.texts.each_with_index { |text, index| entries << [ candidate_position(text), text_component(text, index) ] }
-        model.chords.each_with_index { |chord, index| entries << [ candidate_position(chord), chord_component(chord, index) ] }
+        entries = []
+        occupied = {}
+
+        model.notes.reverse_each do |note|
+          position = candidate_position(note)
+          next if occupied[position]
+
+          entries << [ position, note_component(note) ]
+          occupied[position] = true
+        end
+        add_marker_entries(entries, occupied, model.texts) { |item, index| text_component(item, index) }
+        add_marker_entries(entries, occupied, model.chords) { |item, index| chord_component(item, index) }
         entries.sort_by(&:first).map { |_position, component| component }
+      end
+
+      def self.add_marker_entries(entries, occupied, items)
+        seen = {}
+        items.each_with_index do |item, index|
+          key = [ item[:measure].to_i, item[:position].to_i, item[:text] || item[:name] ]
+          next if seen[key]
+
+          positioned, position = available_marker_position(item, occupied)
+          next unless positioned
+
+          entries << [ position, yield(positioned, index) ]
+          occupied[position] = true
+          seen[key] = true
+        end
+      end
+
+      def self.available_marker_position(item, occupied)
+        measure = item[:measure].to_i
+        base_units = item[:position].to_i / 4
+        preferred_string = item[:string].to_i.clamp(0, 4)
+        strings = [ preferred_string, 0, 1, 2, 3, 4 ].uniq
+        units = (base_units..255).to_a + (0...base_units).to_a
+        units.each do |position_units|
+          strings.each do |string|
+            position = (measure * 5 * 256) + (string * 256) + position_units
+            next if occupied[position]
+
+            return [ item.merge(string: string, position: position_units * 4), position ]
+          end
+        end
+        [ nil, nil ]
       end
 
       def self.candidate_position(item)
@@ -387,24 +528,36 @@ module Tef2
         bytes = []
         model.texts.each do |text|
           encoded = text[:text].to_s.encode(Encoding::UTF_8).bytes
-          bytes.concat([ encoded.length, *encoded, 0 ])
+          bytes.concat([ encoded.length + 1, 0, *encoded, 0 ])
         end
         model.chords.each do |chord|
           record = Array.new(32, 0xFF)
-          record[0, 14] = Array.new(14, 0xFF)
+          record[0, 5] = Exporter.chord_values(chord)
           record[14, 16] = Binary.text(chord[:name], 16)
           bytes.concat(record)
         end
         if model.lyrics
           encoded = model.lyrics.encode(Encoding::UTF_8).bytes
-          bytes.concat([ encoded.length & 0xFF, (encoded.length >> 8) & 0xFF, *encoded ])
+          length = encoded.length + 1
+          bytes.concat([ length & 0xFF, (length >> 8) & 0xFF, 0, *encoded ])
         end
         track = Array.new(50, 0)
         track[0] = 5
+        track[4] = 99
         track[8] = 105
+        track[16] = 16
+        track[17] = 7
         model.tuning.each_with_index { |pitch, index| track[20 + index] = 96 - pitch }
-        track[37, 16] = Binary.text(model.title, 16)
-        bytes + track
+        track[32, 16] = Binary.text(model.title, 16)
+        bytes + track + footer
+      end
+
+      def self.footer
+        bytes = Array.new(FOOTER_SIZE, 0)
+        bytes[0, DEFAULT_FOOTER_LAYOUT.bytes.length] = DEFAULT_FOOTER_LAYOUT.bytes
+        bytes[224, DEFAULT_FOOTER_FIRST_HEADER.bytes.length] = DEFAULT_FOOTER_FIRST_HEADER.bytes
+        bytes[352, DEFAULT_FOOTER_OTHER_HEADER.bytes.length] = DEFAULT_FOOTER_OTHER_HEADER.bytes
+        bytes
       end
     end
 
@@ -422,7 +575,8 @@ module Tef2
         header[0, 4] = [ 84, 69, 70, 51 ]
         header[0x38, 4] = "debt".bytes
         Binary.u16(header, 6, model.tempo.clamp(30, 240))
-        Binary.u16(header, 0xCC, 0x0A00)
+        Binary.u16(header, 0xCA, 4)
+        Binary.u16(header, 0xCC, 0x0A04)
 
         measures_offset = append_section(sections, measures_section(model))
         instruments_offset = append_section(sections, instrument_section(model))
@@ -481,9 +635,10 @@ module Tef2
         bytes = [ 32, 0, chords.length & 0xFF, (chords.length >> 8) & 0xFF ]
         chords.each do |chord|
           record = Array.new(32, 0)
-          record[0, 7] = Array.new(7, 0xFF)
+          record[0, 5] = Exporter.chord_values(chord)
+          record[5, 9] = Array.new(9, 0xFF)
           record[14, 17] = Binary.text(chord[:name], 17)
-          record[31] = 1
+          record[31] = chord[:first_fret].to_i.positive? ? chord[:first_fret].to_i.clamp(1, 255) : 1
           bytes.concat(record)
         end
         bytes

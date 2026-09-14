@@ -33,6 +33,14 @@ class Tef2FullMusicxmlCoverageTest < ActiveSupport::TestCase
     assert_includes document.xpath("//other-technical").map(&:text), "TEF fingering code 9"
     assert_includes document.xpath("//fingering").map(&:text), "2"
     assert_includes document.xpath("//other-technical").map(&:text), "TEF fingering T"
+
+    overlap = parsed.merge(
+      measures: 1,
+      notes: [ native_note(0, 0, 0, 0, 0, 0, 0, [], 0).merge(tef2_duration: 256), native_note(1, 0, 128, 1, 2, 0, 0, [], 0) ],
+      texts: [], chords: [], measure_signatures: [ { numerator: 4, denominator: 4 } ]
+    )
+    overlap_document = Nokogiri::XML(Tef2::FullMusicxmlBuilder.build(overlap))
+    assert_includes overlap_document.xpath("//backup/duration").map(&:text), "480"
   end
 
   test "covers full MusicXML scalar helpers and pair directions" do

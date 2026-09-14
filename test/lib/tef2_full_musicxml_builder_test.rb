@@ -19,9 +19,9 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
         }
       ],
     annotations: { 0 => 6 },
-      texts: [ { measure: 0, position: 0, text: "Verse" } ],
+      texts: [ { measure: 0, position: 64, string: 3, text: "Verse" } ],
       lyrics_text: "LYRICS & CHORDS\n\nVERSE\nCm\nThere once was a ship",
-      chords: [ { measure: 0, position: 0, name: "C min", strings: [ 0, 0, 0, 0, -1 ], first_fret: 1 } ],
+      chords: [ { measure: 0, position: 64, string: 2, name: "C min", strings: [ 0, 0, 0, 0, -1 ], first_fret: 1 } ],
       time_signature: { numerator: 4, denominator: 4 },
       tempo: 120,
       strings: 5,
@@ -38,7 +38,13 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "-1", document.at_xpath("//staff-details/staff-tuning[last()]/tuning-alter").text
     assert_equal "120", document.at_xpath("//direction/direction-type/metronome/per-minute").text
     assert_equal "Verse", document.at_xpath("//direction/direction-type/words").text
+    assert_equal [ "240", "240" ], document.xpath("//direction/offset").map(&:text)
+    assert_equal [ "3", "3" ], document.xpath("//direction/@data-playtab-string").map(&:value)
     assert_equal 2, document.xpath("//harmony").length
+    assert_equal [ "240", "240" ], document.xpath("//harmony/offset").map(&:text)
+    assert_equal [ "2", "2" ], document.xpath("//harmony/@data-playtab-string").map(&:value)
+    assert_equal [ "0,0,0,0,-1", "0,0,0,0,-1" ], document.xpath("//harmony/@data-playtab-strings").map(&:value)
+    assert_equal [ "1", "1" ], document.xpath("//harmony/@data-playtab-first-fret").map(&:value)
     assert_equal "C", document.at_xpath("//harmony/root/root-step").text
     assert_equal " min", document.at_xpath("//harmony/kind")[:text]
     assert_equal "TEF fingering code 6", document.at_xpath("//other-technical").text
