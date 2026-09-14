@@ -376,10 +376,51 @@ module Tef2
       end
 
       def self.components_for(model)
-        entries = model.notes.map { |note| [ candidate_position(note), note_component(note) ] }
-        model.texts.each_with_index { |text, index| entries << [ candidate_position(text), text_component(text, index) ] }
-        model.chords.each_with_index { |chord, index| entries << [ candidate_position(chord), chord_component(chord, index) ] }
+        entries = []
+        occupied = {}
+
+        model.notes.reverse_each do |note|
+          position = candidate_position(note)
+          next if occupied[position]
+
+          entries << [ position, note_component(note) ]
+          occupied[position] = true
+        end
+        add_marker_entries(entries, occupied, model.texts) { |item, index| text_component(item, index) }
+        add_marker_entries(entries, occupied, model.chords) { |item, index| chord_component(item, index) }
         entries.sort_by(&:first).map { |_position, component| component }
+      end
+
+      def self.add_marker_entries(entries, occupied, items)
+        seen = {}
+        items.each_with_index do |item, index|
+          key = [ item[:measure].to_i, item[:position].to_i, item[:text] || item[:name] ]
+          next if seen[key]
+
+          positioned, position = available_marker_position(item, occupied)
+          next unless positioned
+
+          entries << [ position, yield(positioned, index) ]
+          occupied[position] = true
+          seen[key] = true
+        end
+      end
+
+      def self.available_marker_position(item, occupied)
+        measure = item[:measure].to_i
+        base_units = item[:position].to_i / 4
+        preferred_string = item[:string].to_i.clamp(0, 4)
+        strings = [ preferred_string, 0, 1, 2, 3, 4 ].uniq
+        units = (base_units..255).to_a + (0...base_units).to_a
+        units.each do |position_units|
+          strings.each do |string|
+            position = (measure * 5 * 256) + (string * 256) + position_units
+            next if occupied[position]
+
+            return [ item.merge(string: string, position: position_units * 4), position ]
+          end
+        end
+        [ nil, nil ]
       end
 
       def self.candidate_position(item)
@@ -421,7 +462,7 @@ module Tef2
         end
         model.chords.each do |chord|
           record = Array.new(32, 0xFF)
-          record[0, 14] = Array.new(14, 0xFF)
+          record[0, 5] = Array.new(5, 0)
           record[14, 16] = Binary.text(chord[:name], 16)
           bytes.concat(record)
         end
@@ -464,7 +505,8 @@ module Tef2
         header[0, 4] = [ 84, 69, 70, 51 ]
         header[0x38, 4] = "debt".bytes
         Binary.u16(header, 6, model.tempo.clamp(30, 240))
-        Binary.u16(header, 0xCC, 0x0A00)
+        Binary.u16(header, 0xCA, 4)
+        Binary.u16(header, 0xCC, 0x0A04)
 
         measures_offset = append_section(sections, measures_section(model))
         instruments_offset = append_section(sections, instrument_section(model))
@@ -523,7 +565,8 @@ module Tef2
         bytes = [ 32, 0, chords.length & 0xFF, (chords.length >> 8) & 0xFF ]
         chords.each do |chord|
           record = Array.new(32, 0)
-          record[0, 7] = Array.new(7, 0xFF)
+          record[0, 5] = Array.new(5, 0)
+          record[5, 9] = Array.new(9, 0xFF)
           record[14, 17] = Binary.text(chord[:name], 17)
           record[31] = 1
           bytes.concat(record)

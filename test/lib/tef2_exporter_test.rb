@@ -33,12 +33,38 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert_equal 7, result[:bytes].getbyte(tail_offset + 17)
     assert_equal "Imported", result[:bytes].byteslice(tail_offset + 32, 16).delete("\0")
     assert_equal 480, result[:bytes].length - tail_offset - 50
+    chord_offset = Tef2::FullParser::HEADER_SIZE + parsed[:component_count] * Tef2::FullParser::COMPONENT_SIZE
+    parsed[:texts].each { |text| chord_offset += result[:bytes].getbyte(chord_offset) + 2 }
+    assert_equal [ 0, 0, 0, 0, 0, 255 ], result[:bytes].byteslice(chord_offset, 6).bytes
     assert_equal [ "Verse" ], parsed[:texts].map { |text| text[:text] }
     assert_equal [ "G" ], parsed[:chords].map { |chord| chord[:name] }
     assert_includes parsed[:lyrics_text], "LYRICS & CHORDS"
     assert_includes parsed[:lyrics_text], "Row one"
     assert_equal [ 1, 2, 3, 4 ], parsed[:notes].map { |note| note[:effect1] }
     assert_equal [ 2, 3, 6, 5 ], parsed[:notes].map { |note| note[:annotation] }
+
+    model = Tef2::Exporter::Model.new(
+      title: "Overlapping annotations", tempo: 120, tuning: [ 62, 59, 55, 50, 67 ],
+      measures: [ { numerator: 4, denominator: 4 } ],
+      notes: [
+        { measure: 0, position: 0, duration: 256, string: 0, fret: 0, effect1: 0, effect2: 0, effect3: 0, annotation: nil },
+        { measure: 0, position: 0, duration: 256, string: 0, fret: 3, effect1: 0, effect2: 0, effect3: 0, annotation: nil }
+      ],
+      texts: [ { measure: 0, position: 0, text: "Verse" }, { measure: 0, position: 0, text: "Verse" } ],
+      chords: [ { measure: 0, position: 0, name: "C" }, { measure: 0, position: 0, name: "C" } ],
+      lyrics: nil, warnings: []
+    )
+    bytes = Tef2::Exporter::LegacyWriter.build(model)
+    component_count = bytes.byteslice(256, 2).unpack1("v")
+    locations = component_count.times.map do |index|
+      bytes.byteslice(258 + index * 6, 2).unpack1("v")
+    end
+    assert_equal locations.uniq.sort, locations.sort
+    assert_equal 3, component_count
+    occupied = (0...(5 * 256)).to_h { |position| [ position, true ] }
+    assert_equal [ nil, nil ], Tef2::Exporter::LegacyWriter.available_marker_position(
+      { measure: 0, position: 0, string: 0 }, occupied
+    )
   end
 
   test "round trips TEF3 tuplets, grace notes, ties and thumb fingering" do
@@ -53,6 +79,7 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert_equal false, parsed[:notes].first[:tuplet]
 
     bytes = Tef2::Exporter::TableditWriter.build(model)
+    assert_equal [ 4, 0, 4, 10 ], bytes.byteslice(0xCA, 4).bytes
     note = Tef2::TableditV3Parser.parse(bytes)[:notes].first
     assert_equal [ "T" ], note[:fingerings]
     assert note[:grace]
