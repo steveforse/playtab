@@ -29,20 +29,24 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   expect(errors).toEqual([]);
 });
 
-test('renders a native thumb fingering below its tablature note', async ({ page }) => {
+test('renders a native thumb fingering below the tablature staff', async ({ page }) => {
   const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
-    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><hammer-on type="start">H</hammer-on>');
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><hammer-on type="start">H</hammer-on>')
+    .replace('<hammer-on type="stop"/></technical></notations></note>\n    <note>', '<hammer-on type="stop"/></technical></notations></note>\n    <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>5</string><fret>0</fret></technical></notations></note>\n    <note>');
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles({ name: 'thumb.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
   const readThumbPosition = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
-    const glyph = nodes.find(node => [...(node.textContent ?? '')].some(char => char.codePointAt(0) === 60696));
-    const beat = glyph?.parentElement?.parentElement;
-    const note = beat?.querySelector(':scope > text');
+    const glyph = nodes.find(node => node.textContent === 'T');
+    const fretYs = nodes.filter(node => /^\d+$/.test(node.textContent ?? ''))
+      .map(node => Number(node.getAttribute('y')))
+      .filter(Number.isFinite);
+    const directY = glyph?.getAttribute('y');
     const match = glyph?.parentElement?.getAttribute('transform')?.match(/translate\([^ ]+ ([^)]+)\)/);
-    return match && note ? { glyphY: Number(match[1]), noteY: Number(note.getAttribute('y')) } : null;
+    const glyphY = directY ? Number(directY) : match ? Number(match[1]) : NaN;
+    return Number.isFinite(glyphY) && fretYs.length ? { glyphY, bottomFretY: Math.max(...fretYs) } : null;
   });
   await expect.poll(async () => (await readThumbPosition())?.glyphY ?? -1).toBeGreaterThan(0);
   const position = await readThumbPosition();
-  expect(position?.glyphY).toBeGreaterThan(position?.noteY ?? Number.POSITIVE_INFINITY);
+  expect(position?.glyphY).toBeGreaterThan(position?.bottomFretY ?? Number.POSITIVE_INFINITY);
 });

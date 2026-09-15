@@ -1,5 +1,5 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..830bc18
+index b6203da..941f0fa
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 @@ -33251,7 +33251,11 @@ class JsonConverter {
@@ -269,12 +269,13 @@ index b6203da..830bc18
  				g.y += effectY;
  				g.x += this.width / 2;
  				g.renderer = this.renderer;
-@@ -63916,6 +63988,15 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63916,6 +63988,16 @@ class TabNoteChordGlyph extends Glyph {
  				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
  				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
  			}
 +			if (thumbFingering) {
-+				thumbFingering.y += this.getNoteY(this.maxStringNote, NoteYPosition.Bottom) + tabHeight / 2;
++				thumbFingering.font = this.renderer.resources.elementFonts.get(NotationElement.EffectFingering);
++				thumbFingering.y += this.renderer.getLineY(this.renderer.drawnLineCount - 1) + tabHeight / 2 + effectSpacing;
 +				thumbFingering.x += w / 2;
 +				thumbFingering.renderer = this.renderer;
 +				thumbFingering.doLayout();
@@ -285,12 +286,12 @@ index b6203da..830bc18
  			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
  		}
  		this.width = w;
-@@ -63923,6 +64004,11 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63923,6 +64005,11 @@ class TabNoteChordGlyph extends Glyph {
  	addNoteGlyph(noteGlyph, note) {
  		this._notes.push(noteGlyph);
  		this.notesPerString.set(note.string, noteGlyph);
 +		if (note.leftHandFinger === Fingers.Thumb && !this._thumbFingering) {
-+			this._thumbFingering = new MusicFontGlyph(0, 0, 1, MusicFontSymbol.FingeringTLower);
++			this._thumbFingering = new TextGlyph(0, 0, "T", null, TextAlign.Center, TextBaseline.Middle);
 +			this._thumbFingering.center = true;
 +			this.beatEffects.set("leftHandThumb", this._thumbFingering);
 +		}
