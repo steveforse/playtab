@@ -67,8 +67,10 @@ describe('notation player', () => {
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {
     const api = readyPlayer();
     expect(alphaTab.toAlphaTab).toHaveBeenCalledWith(demo);
-    expect((api.settings as any).player.soundFont).toBe('/notation/soundfont/musescore-general-lite.sf3');
+    expect((api.settings as any).player.soundFont).toBe(`/notation/soundfont/${availableSoundFonts[0].filename}`);
+    expect((api.settings as any).display.barsPerRow).toBe(4);
     if (availableSoundFonts.length > 1) expect(screen.getByLabelText('Sound bank')).toBeTruthy();
+    expect((screen.getByLabelText('Hide TAB labels') as HTMLInputElement).checked).toBe(false);
     expect(api.renderScore).toHaveBeenCalled();
     expect(screen.getAllByText('Ready when you are')).toHaveLength(2);
 
@@ -130,6 +132,8 @@ describe('notation player', () => {
 
   it('exports imported MusicXML, configures lyrics, and reports blocked print windows', () => {
     let api = readyPlayer(preview);
+    expect((screen.getByLabelText('Measures per line') as HTMLSelectElement).value).toBe('4');
+    expect((screen.getByLabelText('Lyrics columns') as HTMLSelectElement).value).toBe('2');
     const createObjectURL = vi.fn(() => 'blob:musicxml');
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
     fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '0.75' } });
@@ -160,6 +164,16 @@ describe('notation player', () => {
     expect((screen.getByLabelText('Show chord diagrams') as HTMLInputElement).checked).toBe(true);
     expect(alphaTab.FakeAlphaTabApi.latest).not.toBe(api);
     expect(alphaTab.FakeAlphaTabApi.latest.renderScore).toHaveBeenCalled();
+  });
+
+  it('can hide repeated TAB labels without using the worker renderer', () => {
+    const api = readyPlayer();
+    const toggle = screen.getByLabelText('Hide TAB labels');
+    fireEvent.click(toggle);
+    const updatedApi = alphaTab.FakeAlphaTabApi.latest;
+    expect(updatedApi).not.toBe(api);
+    expect((updatedApi.settings as any).core).toMatchObject({ useWorkers: false, enableLazyLoading: false });
+    expect(updatedApi.renderScore).toHaveBeenCalledWith(expect.objectContaining({ stylesheet: expect.objectContaining({ playtabHideTabClef: true }) }));
   });
 
   it('exports TEF2 and TEF3 downloads and shows server loss warnings', async () => {

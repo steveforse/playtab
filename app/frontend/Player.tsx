@@ -11,6 +11,7 @@ const bundledSoundFont: SoundFontOption = {
   id: 'musescore-general-lite', label: 'MuseScore General Lite', filename: 'musescore-general-lite.sf3', description: 'Bundled General MIDI baseline',
 };
 export const availableSoundFonts: SoundFontOption[] = typeof __PLAYTAB_SOUNDFONTS__ === 'undefined' ? [bundledSoundFont] : __PLAYTAB_SOUNDFONTS__;
+const preferredSoundFontId = 'philharmonia-banjo-f';
 
 export function download(text: string, filename: string, type = 'text/plain') {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -42,17 +43,18 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
   const [metronome, setMetronome] = useState(false);
   const [position, setPosition] = useState({ currentTime: 0, endTime: 0 });
   const [rendered, setRendered] = useState(false);
-  const [barsPerRow, setBarsPerRow] = useState(2);
-  const [lyricsColumns, setLyricsColumns] = useState(1);
+  const [barsPerRow, setBarsPerRow] = useState(4);
+  const [lyricsColumns, setLyricsColumns] = useState(2);
   const [showChordDiagrams, setShowChordDiagrams] = useState(false);
-  const [soundFontId, setSoundFontId] = useState(availableSoundFonts[0]?.id || 'musescore-general-lite');
-  const soundFont = availableSoundFonts.find(option => option.id === soundFontId) ?? availableSoundFonts[0];
+  const [hideTabClef, setHideTabClef] = useState(false);
+  const [soundFontId, setSoundFontId] = useState(availableSoundFonts.find(option => option.id === preferredSoundFontId)?.id || availableSoundFonts[0]?.id || 'musescore-general-lite');
+  const soundFont = availableSoundFonts.find(option => option.id === soundFontId) ?? availableSoundFonts[0] ?? bundledSoundFont;
   useEffect(() => {
     setReady(false); setPlaying(false); setRendered(false); setError(''); setExportNotice('');
     setSpeed(1); setLoop(false); setMetronome(false); setPosition({ currentTime: 0, endTime: 0 });
     const base = '/notation/';
     const instance = new AlphaTabApi(element.current!, {
-      core: { fontDirectory: `${base}font/`, useWorkers: !preview, enableLazyLoading: !preview },
+      core: { fontDirectory: `${base}font/`, useWorkers: !preview && !hideTabClef, enableLazyLoading: !preview && !hideTabClef },
       display: { scale: 1.1, barsPerRow },
       player: {
         enablePlayer: true, soundFont: `${base}soundfont/${soundFont.filename}`,
@@ -68,10 +70,13 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
     instance.playerPositionChanged.on(event => setPosition({ currentTime: event.currentTime, endTime: event.endTime }));
     instance.renderFinished.on(() => setRendered(true));
     instance.error.on(error => setError(error.message || 'Notation or audio could not load.'));
-    if (preview) configureChordDiagrams(preview.score, showChordDiagrams);
-    instance.renderScore(preview ? preview.score : toAlphaTab(score));
+    const renderedScore = preview ? preview.score : toAlphaTab(score);
+    if (preview) configureChordDiagrams(renderedScore, showChordDiagrams);
+    const stylesheet = renderedScore.stylesheet ?? (renderedScore.stylesheet = {} as typeof renderedScore.stylesheet);
+    (stylesheet as typeof stylesheet & { playtabHideTabClef?: boolean }).playtabHideTabClef = hideTabClef;
+    instance.renderScore(renderedScore);
     return () => { instance.destroy(); api.current = null; };
-  }, [score, preview, barsPerRow, showChordDiagrams, soundFont]);
+  }, [score, preview, barsPerRow, showChordDiagrams, hideTabClef, soundFont]);
   const transport = { ready, playing, ...position, onRestart: () => api.current?.stop(), onPlayPause: () => api.current?.playPause() };
   function printPreviewWithLyrics() {
     const paper = scorePaper.current!;
@@ -181,6 +186,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
           {availableSoundFonts.length > 1 && <label>Sound bank <select aria-label="Sound bank" value={soundFont.id} onChange={e => setSoundFontId(e.target.value)}>
             {availableSoundFonts.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select></label>}
+          <label className="layout-checkbox"><input aria-label="Hide TAB labels" type="checkbox" checked={hideTabClef} onChange={e => setHideTabClef(e.target.checked)} /> Hide TAB labels</label>
           {(preview?.chordDiagrams?.length ?? 0) > 0 && <label className="layout-checkbox"><input aria-label="Show chord diagrams" type="checkbox" checked={showChordDiagrams} onChange={e => setShowChordDiagrams(e.target.checked)} /> Chord diagrams</label>}
         </div>
         <label className="export-label">Export <select aria-label="Export score" value="" disabled={!rendered} onChange={e => exportFile(e.target.value)}>
