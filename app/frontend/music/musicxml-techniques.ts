@@ -76,8 +76,8 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       continue;
     }
     if (marker.kind === 'tef-fingering') {
-      const label = marker.number === '6' || marker.number === 'T' ? 'T' : `TEF ${marker.number}`;
-      note.beat.text = [note.beat.text, label].filter(Boolean).join(' ');
+      if (marker.number === '6' || marker.number === 'T') note.leftHandFinger = 0;
+      else note.beat.text = [note.beat.text, `TEF ${marker.number}`].filter(Boolean).join(' ');
       continue;
     }
     const key = `${marker.voice}:${marker.string}:${marker.kind}:${marker.number}`;

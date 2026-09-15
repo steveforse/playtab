@@ -1,5 +1,5 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..d9a994a
+index b6203da..830bc18
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 @@ -33251,7 +33251,11 @@ class JsonConverter {
@@ -251,3 +251,49 @@ index b6203da..d9a994a
  	_forSlide;
  	_labels = null;
  	constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
+@@ -63810,6 +63879,7 @@ class TabNoteChordGlyph extends Glyph {
+ 	_deadSlapped = null;
+ 	_isGrace;
+ 	beat;
++	_thumbFingering = null;
+ 	maxStringNote = null;
+ 	minStringNote = null;
+ 	beatEffects = /* @__PURE__ */ new Map();
+@@ -63907,7 +63977,9 @@ class TabNoteChordGlyph extends Glyph {
+ 			let maxEffectY = NaN;
+ 			let effectY = this.getNoteY(this.minStringNote, NoteYPosition.Center) + tabHeight / 2;
+ 			const effectSpacing = this.renderer.smuflMetrics.onNoteEffectPadding;
++			const thumbFingering = this._thumbFingering;
+ 			for (const g of this.beatEffects.values()) {
++				if (g === thumbFingering) continue;
+ 				g.y += effectY;
+ 				g.x += this.width / 2;
+ 				g.renderer = this.renderer;
+@@ -63916,6 +63988,15 @@ class TabNoteChordGlyph extends Glyph {
+ 				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
+ 				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
+ 			}
++			if (thumbFingering) {
++				thumbFingering.y += this.getNoteY(this.maxStringNote, NoteYPosition.Bottom) + tabHeight / 2;
++				thumbFingering.x += w / 2;
++				thumbFingering.renderer = this.renderer;
++				thumbFingering.doLayout();
++				const thumbBottom = thumbFingering.y + thumbFingering.height;
++				if (Number.isNaN(minEffectY) || minEffectY > thumbFingering.y) minEffectY = thumbFingering.y;
++				if (Number.isNaN(maxEffectY) || maxEffectY < thumbBottom) maxEffectY = thumbBottom;
++			}
+ 			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
+ 		}
+ 		this.width = w;
+@@ -63923,6 +64004,11 @@ class TabNoteChordGlyph extends Glyph {
+ 	addNoteGlyph(noteGlyph, note) {
+ 		this._notes.push(noteGlyph);
+ 		this.notesPerString.set(note.string, noteGlyph);
++		if (note.leftHandFinger === Fingers.Thumb && !this._thumbFingering) {
++			this._thumbFingering = new MusicFontGlyph(0, 0, 1, MusicFontSymbol.FingeringTLower);
++			this._thumbFingering.center = true;
++			this.beatEffects.set("leftHandThumb", this._thumbFingering);
++		}
+ 		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
+ 		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
+ 	}
