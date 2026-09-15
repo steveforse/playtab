@@ -1,5 +1,5 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..941f0fa
+index b6203da..1ccfac7
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 @@ -33251,7 +33251,11 @@ class JsonConverter {
@@ -275,7 +275,7 @@ index b6203da..941f0fa
  			}
 +			if (thumbFingering) {
 +				thumbFingering.font = this.renderer.resources.elementFonts.get(NotationElement.EffectFingering);
-+				thumbFingering.y += this.renderer.getLineY(this.renderer.drawnLineCount - 1) + tabHeight / 2 + effectSpacing;
++				thumbFingering.y += this.renderer.getLineY(this.renderer.drawnLineCount - 1) + tabHeight + effectSpacing + this.renderer.settings.notation.rhythmHeight;
 +				thumbFingering.x += w / 2;
 +				thumbFingering.renderer = this.renderer;
 +				thumbFingering.doLayout();
