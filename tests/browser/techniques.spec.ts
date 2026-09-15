@@ -41,12 +41,24 @@ test('renders a native thumb fingering below the tablature staff', async ({ page
     const fretYs = nodes.filter(node => /^\d+$/.test(node.textContent ?? ''))
       .map(node => Number(node.getAttribute('y')))
       .filter(Number.isFinite);
+    const svg = (nodes[0] as SVGTextElement | undefined)?.ownerSVGElement;
+    const stemBottomYs = [...(svg?.querySelectorAll('rect') ?? [])]
+      .filter(rect => rect.getAttribute('fill') === '#000000')
+      .map(rect => Number(rect.getAttribute('y')) + Number(rect.getAttribute('height')))
+      .filter(Number.isFinite);
+    const tieBottomYs = [...(svg?.querySelectorAll('path') ?? [])]
+      .map(path => {
+        const box = (path as SVGGraphicsElement).getBBox();
+        return box.y + box.height;
+      })
+      .filter(Number.isFinite);
     const directY = glyph?.getAttribute('y');
     const match = glyph?.parentElement?.getAttribute('transform')?.match(/translate\([^ ]+ ([^)]+)\)/);
     const glyphY = directY ? Number(directY) : match ? Number(match[1]) : NaN;
-    return Number.isFinite(glyphY) && fretYs.length ? { glyphY, bottomFretY: Math.max(...fretYs) } : null;
+    const lowerGeometryY = Math.max(...fretYs, ...stemBottomYs, ...tieBottomYs);
+    return Number.isFinite(glyphY) && Number.isFinite(lowerGeometryY) ? { glyphY, lowerGeometryY } : null;
   });
   await expect.poll(async () => (await readThumbPosition())?.glyphY ?? -1).toBeGreaterThan(0);
   const position = await readThumbPosition();
-  expect(position?.glyphY).toBeGreaterThan(position?.bottomFretY ?? Number.POSITIVE_INFINITY);
+  expect(position?.glyphY).toBeGreaterThan(position?.lowerGeometryY ?? Number.POSITIVE_INFINITY);
 });
