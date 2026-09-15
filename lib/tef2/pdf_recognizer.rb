@@ -532,7 +532,7 @@ module Tef2
       base = gaps.min
       return if base <= 0
 
-      multipliers = gaps.map { |gap| [ (gap / base).round, 1 ].max }
+      multipliers = gaps.map { |gap| (gap / base) >= 1.4 ? 2 : 1 }
       predicted = gaps.zip(multipliers).map { |gap, multiplier| (gap - base * multiplier).abs }
       return if predicted.sum / gaps.sum > 0.2
 
