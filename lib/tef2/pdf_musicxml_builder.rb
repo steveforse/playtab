@@ -220,6 +220,11 @@ module Tef2
           xml.octave(octave.to_s)
         end
         write_duration(xml, duration)
+        if source[:ghost]
+          xml.notehead(parentheses: "yes") { xml.text "normal" }
+        elsif source[:dead]
+          xml.notehead("x")
+        end
         xml.notations do
           xml.technical do
             xml.string((source[:string] + 1).to_s)
@@ -237,7 +242,6 @@ module Tef2
             end
           end
         end
-        xml.notehead("x") if source[:dead]
       end
     end
 

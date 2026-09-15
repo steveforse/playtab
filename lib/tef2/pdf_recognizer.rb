@@ -216,7 +216,8 @@ module Tef2
                 position: position,
                 string: note[:string],
                 fret: note[:fret],
-                dead: note[:dead]
+                dead: note[:dead],
+                ghost: note[:ghost]
               }
             end
           end
@@ -389,10 +390,11 @@ module Tef2
           nearest = (0...5).min_by { |index| (item[:y] - row_positions[index]).abs }
           next unless (item[:y] - row_positions[nearest] + 3.6).abs <= 5
 
-          if item[:text].match?(/\A\d{1,2}\z/)
-            { x: item[:x], y: item[:y], string: nearest, fret: item[:text].to_i, dead: false }
+          if item[:text].match?(/\A\(?\d{1,2}\)?\z/)
+            { x: item[:x], y: item[:y], string: nearest, fret: item[:text].delete("()").to_i, dead: false,
+              ghost: parenthesized_note?(item, texts) }
           elsif item[:text].upcase == "X"
-            { x: item[:x], y: item[:y], string: nearest, fret: 0, dead: true }
+            { x: item[:x], y: item[:y], string: nearest, fret: 0, dead: true, ghost: false }
           end
         end
 
@@ -411,6 +413,20 @@ module Tef2
         cursor += 5
       end
       result
+    end
+
+    def parenthesized_note?(item, texts)
+      return true if item[:text].start_with?("(") && item[:text].end_with?(")")
+
+      left = texts.any? do |candidate|
+        candidate[:text] == "(" && candidate[:x] < item[:x] && item[:x] - candidate[:x] <= 8 &&
+          (candidate[:y] - item[:y]).abs <= 1.5
+      end
+      right = texts.any? do |candidate|
+        candidate[:text] == ")" && candidate[:x] > item[:x] && candidate[:x] - item[:x] <= 8 &&
+          (candidate[:y] - item[:y]).abs <= 1.5
+      end
+      left && right
     end
 
     def repeat_barlines(raw_bars, curve_boxes, top, bottom, start, finish)

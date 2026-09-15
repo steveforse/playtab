@@ -201,6 +201,15 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_empty recognizer.send(:systems, [], narrow)
     assert_empty recognizer.send(:systems, [], horizontal)
 
+    ghost_texts = [
+      { x: 40, y: 636.4, text: "(" },
+      { x: 42.6, y: 636.4, text: "3" },
+      { x: 47, y: 636.4, text: ")" }
+    ]
+    ghost_result = recognizer.send(:systems, ghost_texts, horizontal + bars)
+    assert ghost_result.first[:events].first[:notes].first[:ghost]
+    assert recognizer.send(:parenthesized_note?, { x: 40, y: 636.4, text: "(3)" }, [])
+
     bad_receiver = Object.new
     bad_receiver.define_singleton_method(:segments) { [] }
     bad_receiver.define_singleton_method(:runs) { |**| raise Tef2::PdfRecognizer::Error, "bad page" }

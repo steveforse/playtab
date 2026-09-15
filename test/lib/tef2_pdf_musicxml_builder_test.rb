@@ -12,7 +12,7 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
       tempo: 120,
       notes: [
         { measure: 0, position: 0, string: 0, fret: 0, dead: false },
-        { measure: 0, position: 256, string: 0, fret: 2, dead: false },
+        { measure: 0, position: 256, string: 0, fret: 2, dead: false, ghost: true },
         { measure: 0, position: 512, string: 1, fret: 3, dead: true },
         { measure: 0, position: 512, string: 2, fret: 5, dead: false }
       ],
@@ -40,7 +40,8 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "2", document.xpath("//fingering").first.text
     assert_equal "TEF fingering T", document.at_xpath("//other-technical").text
     assert_equal "hammer-on", document.at_xpath("//hammer-on").name
-    assert_equal "x", document.at_xpath("//notehead").text
+    assert_equal "x", document.at_xpath("//notehead[text()='x']").text
+    assert_equal 1, document.xpath("//notehead[@parentheses='yes']").length
     assert_equal 4, document.xpath("//note").length
   end
 
