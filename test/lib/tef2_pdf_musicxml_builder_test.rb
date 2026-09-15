@@ -18,6 +18,7 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
       ],
       sections: [ { measure: 0, position: 0, text: "Verse" } ],
       chords: [ { measure: 0, position: 512, name: "C# min" }, { measure: 0, position: 768, name: "G7" }, { measure: 0, position: 896, name: "bad chord" } ],
+      repeats: [ { measure: 0, location: "left", direction: "forward" }, { measure: 0, location: "right", direction: "backward" } ],
       techniques: [
         { measure: 0, position: 0, string: 0, type: "hammer-on", label: "H" },
         { measure: 0, position: 512, string: 1, type: "thumb" }
@@ -34,6 +35,8 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "One line\nTwo lines", document.at_xpath("//miscellaneous-field[@name='playtab-lyrics']").text
     assert_equal 1, document.xpath("//measure").length
     assert_equal 2, document.xpath("//harmony").length
+    assert_equal "dominant", document.at_xpath("//harmony[root/root-step='G']/kind").text
+    assert_equal 2, document.xpath("//barline/repeat").length
     assert_equal "2", document.xpath("//fingering").first.text
     assert_equal "TEF fingering T", document.at_xpath("//other-technical").text
     assert_equal "hammer-on", document.at_xpath("//hammer-on").name
@@ -60,5 +63,17 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "4", document.at_xpath("//time/beat-type").text
     assert_equal "1920", document.at_xpath("//measure[1]/note/duration").text
     assert_equal "half", document.at_xpath("//measure[1]/note/type").text
+  end
+
+  test "maps common chord suffixes to MusicXML harmony kinds" do
+    builder = Tef2::PdfMusicxmlBuilder.new
+    expected = {
+      "" => "major", "maj" => "major", "major" => "major", "m" => "minor", "min" => "minor", "minor" => "minor",
+      "7" => "dominant", "maj7" => "major-seventh", "m7" => "minor-seventh", "min7" => "minor-seventh",
+      "dim" => "diminished", "dim7" => "diminished-seventh", "aug" => "augmented", "aug7" => "augmented-seventh",
+      "sus2" => "suspended-second", "sus" => "suspended-fourth", "sus4" => "suspended-fourth", "add9" => "other"
+    }
+
+    expected.each { |suffix, kind| assert_equal kind, builder.send(:chord_kind, suffix) }
   end
 end
