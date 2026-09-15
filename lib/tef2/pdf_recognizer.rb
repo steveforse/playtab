@@ -206,6 +206,7 @@ module Tef2
           layout = position_layout(left, right, event_xs, measure_ticks, step)
           system[:measure_layouts] << { step: step, layout: layout }
           rhythm_positions = beam_rhythm_positions(left, right, events, measure_ticks)
+          rhythm_positions ||= spacing_rhythm_positions(left, right, event_xs, measure_ticks, step)
           system[:measure_rhythm_positions] << rhythm_positions
           timing_steps << step
           events.each_with_index do |event, event_index|
@@ -514,6 +515,31 @@ module Tef2
         positions << cursor
         cursor += duration
       end
+      positions
+    end
+
+    # TablEdit's horizontal spacing is not perfectly linear. When a measure
+    # starts at the barline, the local gaps still preserve the rhythm pattern:
+    # a gap twice the smallest printed gap represents two grid steps. This
+    # handles compact endings where a global fit can move one onset by a step.
+    def spacing_rhythm_positions(left, right, event_xs, measure_ticks, step)
+      return if event_xs.length < 2
+
+      width = right - left
+      return if event_xs.first - left > width * 0.15
+
+      gaps = event_xs.each_cons(2).map { |first, second| second - first }
+      base = gaps.min
+      return if base <= 0
+
+      multipliers = gaps.map { |gap| [ (gap / base).round, 1 ].max }
+      predicted = gaps.zip(multipliers).map { |gap, multiplier| (gap - base * multiplier).abs }
+      return if predicted.sum / gaps.sum > 0.2
+
+      positions = [ 0 ]
+      multipliers.each { |multiplier| positions << positions.last + multiplier * step }
+      return if positions.last > measure_ticks - step
+
       positions
     end
 
