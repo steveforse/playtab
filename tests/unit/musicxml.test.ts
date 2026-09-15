@@ -111,6 +111,12 @@ describe('MusicXML preview', () => {
     const beats = score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
     expect(beats.find(beat => beat.lyrics)?.lyrics).toEqual(['There']);
   });
+  it('uses the banjo playback program for imported five-string scores', () => {
+    const preview = readMusicXml(fixture(), 'imported.xml');
+
+    expect(preview.score.tracks[0].playbackInfo.program).toBe(105);
+    expect(preview.score.tracks[0].playbackInfo.bank).toBe(0);
+  });
   it('extracts a separate Playtab lyrics section without attaching words to beats', () => {
     const annotated = fixture().replace(
       '<part-list>',
