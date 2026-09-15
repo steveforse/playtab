@@ -1,5 +1,5 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..1ccfac7
+index b6203da..a2b146d
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 @@ -33251,7 +33251,11 @@ class JsonConverter {
@@ -298,3 +298,21 @@ index b6203da..1ccfac7
  		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
  		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
  	}
+@@ -64923,7 +65010,7 @@ class Environment {
+ 			},
+ 			{
+ 				effect: new MarkerEffectInfo(),
+-				mode: EffectBandMode.SharedTop
++				mode: EffectBandMode.SharedBottom
+ 			},
+ 			{
+ 				effect: new DirectionsEffectInfo(),
+@@ -64935,7 +65022,7 @@ class Environment {
+ 			},
+ 			{
+ 				effect: new TextEffectInfo(),
+-				mode: EffectBandMode.SharedTop
++				mode: EffectBandMode.SharedBottom
+ 			},
+ 			{
+ 				effect: new BeatTimerEffectInfo(),
