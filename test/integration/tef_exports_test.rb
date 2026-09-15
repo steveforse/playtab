@@ -1,6 +1,8 @@
 require "test_helper"
 
 class TefExportsTest < ActionDispatch::IntegrationTest
+  setup { sign_in_as(User.first) }
+
   test "exports native scores as both supported TEF versions" do
     %w[tef2 tef3].each do |version|
       post api_tef_exports_url, params: { score: native_score("Morning / tune"), version: version }, as: :json

@@ -3,11 +3,11 @@ module Api
     MAX_SCORE_REQUEST_BYTES = 3_000_000
 
     def index
-      render json: Song.order(created_at: :desc).limit(100).select(:id, :title, :created_at)
+      render json: current_user.songs.order(created_at: :desc).limit(100).select(:id, :title, :created_at)
     end
 
     def show
-      render json: Song.find(params[:id]).as_json(only: [ :id, :title, :score, :source_text ])
+      render json: current_user.songs.find(params[:id]).as_json(only: [ :id, :title, :score, :source_text ])
     end
 
     def create
@@ -21,7 +21,7 @@ module Api
 
     def update
       return render_size_error if request_too_large?
-      song = Song.find(params[:id])
+      song = current_user.songs.find(params[:id])
       unless params[:score].is_a?(ActionController::Parameters)
         return render json: { error: "Score must be an object." }, status: :unprocessable_entity
       end
@@ -42,7 +42,7 @@ module Api
 
     def build_song
       document = params[:score].to_unsafe_h
-      Song.new(title: document["title"], score: document, source_text: params[:source_text])
+      current_user.songs.new(title: document["title"], score: document, source_text: params[:source_text])
     end
 
     def save_song(song, status)

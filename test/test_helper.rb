@@ -34,17 +34,22 @@ SimpleCov.start do
   minimum_coverage 100
   add_filter "/test/"
   add_filter "/config/"
+  add_filter "/script/"
   track_files "app/**/*.rb"
   track_files "lib/**/*.rb"
 end
 
 require_relative "../config/environment"
 require "rails/test_help"
+require_relative "test_helpers/session_test_helper"
 
 module ActiveSupport
   class TestCase
-    # Run tests in parallel with specified workers
-    parallelize(workers: :number_of_processors)
+    # SimpleCov cannot combine the independent reports produced by parallel
+    # test processes. Keep CI coverage deterministic while retaining faster
+    # parallel runs for local test-only invocations.
+    test_workers = ENV["CI"] ? 1 : :number_of_processors
+    parallelize(workers: test_workers)
 
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all

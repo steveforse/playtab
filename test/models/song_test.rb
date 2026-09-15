@@ -13,7 +13,7 @@ class SongTest < ActiveSupport::TestCase
   end
 
   test "persists a validated document and its source" do
-    song = Song.create!(title: "Test roll", score: score, source_text: "original")
+    song = Song.create!(user: users(:one), title: "Test roll", score: score, source_text: "original")
     assert_equal score, song.reload.score
     assert_equal "original", song.source_text
   end
@@ -26,7 +26,7 @@ class SongTest < ActiveSupport::TestCase
   end
 
   test "persists an imported MusicXML document" do
-    song = Song.create!(title: imported_score["title"], score: imported_score)
+    song = Song.create!(user: users(:one), title: imported_score["title"], score: imported_score)
     assert_equal imported_score, song.reload.score
   end
 

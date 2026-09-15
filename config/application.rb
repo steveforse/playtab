@@ -30,5 +30,9 @@ module Playtab
 
     # Don't generate system test files.
     config.generators.system_tests = nil
+    if Rails.env.production?
+      require_relative "../lib/request_size_limit"
+      config.middleware.insert_before 0, RequestSizeLimit
+    end
   end
 end

@@ -1,6 +1,8 @@
 require "test_helper"
 
 class SongsTest < ActionDispatch::IntegrationTest
+  setup { sign_in_as(User.first) }
+
   test "create, list and reopen a score" do
     document = { version: 1, title: "Integration roll", tempo: 100,
       tuning: [ 62, 59, 55, 50, 67 ], fretConvention: "relative-to-string-nut",
@@ -33,7 +35,7 @@ class SongsTest < ActionDispatch::IntegrationTest
   end
 
   test "rejects malformed score updates" do
-    song = Song.create!(title: "Existing", score: {
+    song = Song.create!(user: User.first, title: "Existing", score: {
       "version" => 1, "title" => "Existing", "tempo" => 96,
       "tuning" => [ 62, 59, 55, 50, 67 ], "fretConvention" => "relative-to-string-nut",
       "measures" => [ { "beats" => Array.new(4) { { "duration" => 4, "notes" => [] } } } ]
@@ -71,5 +73,27 @@ class SongsTest < ActionDispatch::IntegrationTest
     post api_songs_url, params: { score: { version: 1, title: "x" * 3_000_001 } }, as: :json
     assert_response :content_too_large
     assert_match(/3 MB/, response.parsed_body["error"])
+  end
+
+  test "requires authentication for the library API" do
+    sign_out
+
+    get api_songs_url, as: :json
+
+    assert_response :unauthorized
+    assert_equal "Authentication required.", response.parsed_body["error"]
+  end
+
+  test "does not expose another user's score" do
+    other_user = User.create!(email_address: "other@example.com", password: "password", password_confirmation: "password")
+    song = Song.create!(user: other_user, title: "Private", score: {
+      "version" => 1, "title" => "Private", "tempo" => 96,
+      "tuning" => [ 62, 59, 55, 50, 67 ], "fretConvention" => "relative-to-string-nut",
+      "measures" => [ { "beats" => Array.new(4) { { "duration" => 4, "notes" => [] } } } ]
+    })
+
+    get api_song_url(song.id), as: :json
+
+    assert_response :not_found
   end
 end
