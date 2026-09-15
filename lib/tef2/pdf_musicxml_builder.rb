@@ -66,7 +66,7 @@ module Tef2
             write_tempo(xml, score[:tempo]) if score[:tempo]
           end
 
-          write_repeat_barlines(xml, score[:repeats] || [], measure_index)
+          write_repeat_barlines(xml, score[:repeats] || [], score[:endings] || [], measure_index)
 
           sections.fetch(measure_index, []).each do |section|
             write_words(xml, section[:text].to_s, section[:position].to_i, pdf_measure_ticks, measure_ticks)
@@ -160,10 +160,28 @@ module Tef2
       end
     end
 
-    def write_repeat_barlines(xml, repeats, measure_index)
-      repeats.select { |repeat| repeat[:measure].to_i == measure_index }.each do |repeat|
-        xml.barline(location: repeat.fetch(:location)) do
-          xml.repeat(direction: repeat.fetch(:direction))
+    def write_repeat_barlines(xml, repeats, endings, measure_index)
+      starts = endings.select do |ending|
+        ending[:measure].to_i == measure_index && ending.fetch(:type, "start") == "start"
+      end
+      stops = endings.select { |ending| ending[:measure].to_i == measure_index && ending[:type] == "stop" }
+      starts.each do |ending|
+        stops << ending.merge(type: "stop", location: "right") if ending.fetch(:location, "left") == "left"
+      end
+
+      [ "left", "right" ].each do |location|
+        location_repeats = repeats.select do |repeat|
+          repeat[:measure].to_i == measure_index && repeat.fetch(:location) == location
+        end
+        location_endings = (starts + stops).select { |ending| ending.fetch(:location, location) == location }
+        location_endings = location_endings.uniq { |ending| [ ending[:number].to_s, ending[:type].to_s, location ] }
+        next if location_repeats.empty? && location_endings.empty?
+
+        xml.barline(location: location) do
+          location_endings.each do |ending|
+            xml.ending(number: ending.fetch(:number).to_s, type: ending.fetch(:type))
+          end
+          location_repeats.each { |repeat| xml.repeat(direction: repeat.fetch(:direction)) }
         end
       end
     end
@@ -188,8 +206,7 @@ module Tef2
     def write_rest(xml, duration)
       xml.note do
         xml.rest
-        xml.duration(duration.to_s)
-        xml.type(duration_type(duration))
+        write_duration(xml, duration)
       end
     end
 
@@ -202,8 +219,7 @@ module Tef2
           xml.alter(alter.to_s) unless alter.zero?
           xml.octave(octave.to_s)
         end
-        xml.duration(duration.to_s)
-        xml.type(duration_type(duration))
+        write_duration(xml, duration)
         xml.notations do
           xml.technical do
             xml.string((source[:string] + 1).to_s)
@@ -223,6 +239,13 @@ module Tef2
         end
         xml.notehead("x") if source[:dead]
       end
+    end
+
+    def write_duration(xml, duration)
+      xml.duration(duration.to_s)
+      type, dots = duration_components(duration)
+      xml.type(type)
+      dots.times { xml.dot }
     end
 
     def techniques_by_note(score, notes)
@@ -278,14 +301,23 @@ module Tef2
     end
 
     def duration_type(duration)
-      {
+      duration_components(duration).first
+    end
+
+    def duration_components(duration)
+      type = {
         120 => "32nd",
         240 => "16th",
+        360 => "16th",
         480 => "eighth",
+        720 => "eighth",
         960 => "quarter",
+        1440 => "quarter",
         1920 => "half",
+        2880 => "half",
         3840 => "whole"
       }.fetch(duration, "eighth")
+      [ type, [ 360, 720, 1440, 2880 ].include?(duration) ? 1 : 0 ]
     end
 
     def parse_tuning(label)

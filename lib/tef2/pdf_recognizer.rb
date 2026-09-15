@@ -197,15 +197,18 @@ module Tef2
         system[:measure_start] = measure_index
         system[:measure_ticks] = measure_ticks
         system[:measure_layouts] = []
+        system[:measure_rhythm_positions] = []
         system[:bars].each_cons(2).with_index do |(left, right), measure_offset|
           events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
           event_xs = events.map { |event| event[:x] }
           step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
           layout = position_layout(left, right, event_xs, measure_ticks, step)
           system[:measure_layouts] << { step: step, layout: layout }
+          rhythm_positions = beam_rhythm_positions(left, right, events, measure_ticks)
+          system[:measure_rhythm_positions] << rhythm_positions
           timing_steps << step
-          events.each do |event|
-            position = position(event[:x], left, right, step: step, measure_ticks: measure_ticks, layout: layout)
+          events.each_with_index do |event, event_index|
+            position = rhythm_positions&.fetch(event_index) || position(event[:x], left, right, step: step, measure_ticks: measure_ticks, layout: layout)
             event[:notes].each do |note|
               notes << {
                 measure: measure_index + measure_offset,
@@ -254,6 +257,7 @@ module Tef2
         tempo: metadata[:tempo],
         sections: metadata[:sections],
         chords: metadata[:chords],
+        endings: metadata[:endings],
         repeats: metadata[:repeats],
         lyrics: metadata[:lyrics],
         techniques: metadata[:techniques],
@@ -400,6 +404,7 @@ module Tef2
             events << { x: note[:x], notes: [ note ] }
           end
         end
+        events.each { |event| event[:beam_count] = beam_count_for_event(event[:x], segments, top) }
 
         result << { page: 0, top: top, bottom: bottom, bars: bars, repeat_barlines: repeat_barlines, events: events, texts: texts }
         cursor += 5
@@ -456,21 +461,60 @@ module Tef2
       end
     end
 
+    def beam_count_for_event(x, segments, top)
+      lines = segments.filter_map do |x1, y1, x2, y2|
+        next unless (y1 - y2).abs < 0.8
+        next unless [ x1, x2 ].min <= x + 4 && [ x1, x2 ].max >= x - 4
+        next unless (x2 - x1).abs >= 6
+
+        y = (y1 + y2) / 2.0
+        next unless y.between?(top - 28, top - 4)
+
+        y
+      end
+      return nil if lines.empty?
+
+      [ unique_sorted(lines, 1.5).length, 2 ].min
+    end
+
+    def beam_rhythm_positions(left, right, events, measure_ticks)
+      return if events.empty? || events.any? { |event| !event[:beam_count].to_i.positive? }
+
+      quarter_ticks = MEASURE_TICKS / 4
+      durations = events.map { |event| quarter_ticks / (2**event[:beam_count].to_i) }
+      total = durations.sum
+      return if total > measure_ticks
+
+      leading = events.first[:x] - left > (right - left) * 0.35 ? measure_ticks - total : 0
+      return if leading + total > measure_ticks
+
+      positions = []
+      cursor = leading
+      durations.each do |duration|
+        positions << cursor
+        cursor += duration
+      end
+      positions
+    end
+
     def metadata(pages, systems)
       sections = []
       chords = []
+      endings = []
       techniques = []
       fingerings = []
       systems.each do |system|
         page_texts = pages[system[:page]][:texts]
         sections.concat(sections_for_system(system, page_texts))
         chords.concat(chords_for_system(system, page_texts))
+        endings.concat(endings_for_system(system, page_texts))
         techniques.concat(techniques_for_system(system, page_texts))
         fingerings.concat(fingerings_for_system(system, page_texts))
       end
       {
         sections: deduplicate_metadata(sections),
         chords: deduplicate_metadata(chords),
+        endings: deduplicate_metadata(endings),
         repeats: repeat_metadata(systems),
         lyrics: lyrics(pages),
         techniques: deduplicate_metadata(techniques),
@@ -534,6 +578,34 @@ module Tef2
         target = metadata_system_for_overflow(system, item[:x])
         measure, position = measure_position(target, item[:x])
         { measure: measure, position: position, text: label, confidence: "high" }
+      end
+    end
+
+    def endings_for_system(system, texts)
+      return [] unless system[:bars].length >= 2
+
+      labels = texts.filter_map do |item|
+        value = item[:text].gsub(/\s+/, "").strip
+        match = value.match(/\A([12])\.D\z/i)
+        next [ item, match[1] ] if match
+        next unless value.match?(/\A[12]\.\z/)
+
+        d = texts.find do |candidate|
+          candidate[:text].strip.match?(/\AD(?:\s|\z)/i) &&
+            candidate[:x] >= item[:x] && candidate[:x] - item[:x] <= 16 &&
+            (candidate[:y] - item[:y]).abs <= 5
+        end
+        d ? [ item, value[0] ] : nil
+      end
+
+      labels.filter_map do |label, number|
+        next unless label[:y] > system[:bottom] && label[:y] - system[:bottom] <= 42
+
+        nearest_bar = system[:bars].min_by { |bar| (bar - label[:x]).abs }
+        next unless (nearest_bar - label[:x]).abs <= 8
+
+        measure, = measure_position(system, label[:x])
+        { measure: measure, location: "left", number: number, type: "start", confidence: "high" }
       end
     end
 
@@ -684,6 +756,15 @@ module Tef2
         step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
         layout = position_layout(left, right, event_xs, measure_ticks, step)
       end
+
+      matching_events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
+      nearest_event = matching_events.min_by { |event| (event[:x] - x).abs }
+      if nearest_event && (nearest_event[:x] - x).abs <= 3
+        rhythm_positions = system[:measure_rhythm_positions]&.[](measure_offset)
+        index = matching_events.index(nearest_event)
+        return [ system[:measure_start] + measure_offset, rhythm_positions[index] ] if rhythm_positions
+      end
+
       [ system[:measure_start] + measure_offset, position(x, left, right, step: step, measure_ticks: measure_ticks, layout: layout) ]
     end
 
@@ -850,13 +931,13 @@ module Tef2
     end
 
     def header(texts)
-      top = texts.select { |item| item[:y] > 735 }
+      top = texts.select { |item| item[:y] > 700 }
       title = top.sort_by { |item| -item[:y] }.find do |item|
         value = item[:text].downcase
         !value.include?("tuning") && !value.include?("arranged") && !value.include?("clawhammerbanjo")
       end
       header = top.sort_by { |item| item[:x] }.map { |item| item[:text] }.join(" ")
-      match = header.match(/([a-gA-G][a-gA-G#b♭]{4,})\s+tuning/i)
+      match = header.match(/([a-gA-G][a-gA-G#b♭]{4,})\s*\)?\s+tuning/i)
       [ title ? title[:text] : "", match ? match[1] : "" ]
     end
 

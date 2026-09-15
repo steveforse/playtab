@@ -112,7 +112,19 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_nil recognizer.send(:technique_type, "unknown")
     assert_equal "Demo", recognizer.send(:filename_without_extension, "C:\\tabs\\Demo.pdf")
     assert_equal [ "Demo", "gCGCD#" ], recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 740, text: "gCGCD# tuning" } ])
+    assert_equal [ "Demo", "aDADE" ], recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 720, text: "key of D (aDADE tuning)" } ])
     assert_nil recognizer.send(:tempo, [ { texts: [ { x: 10, y: 100, text: "unrelated" } ] } ])
+
+    assert_equal 2, recognizer.send(:beam_count_for_event, 50, [ [ 45, 80, 60, 80 ], [ 45, 82, 60, 82 ] ], 100)
+    assert_nil recognizer.send(:beam_count_for_event, 50, [ [ 45, 98, 60, 98 ] ], 100)
+    events = [ 2, 2, 1, 1, 1 ].each_with_index.map { |beam_count, index| { x: 10 + index * 10, beam_count: beam_count } }
+    assert_equal [ 0, 64, 128, 256, 384 ], recognizer.send(:beam_rhythm_positions, 0, 100, events, 512)
+
+    ending_system = { bars: [ 20, 100, 180 ], measure_start: 0, measure_layouts: [], events: [], bottom: 100 }
+    endings = recognizer.send(:endings_for_system, ending_system, [
+      { x: 101, y: 120, text: "1." }, { x: 105, y: 116, text: "D" }
+    ])
+    assert_equal [ { measure: 1, location: "left", number: "1", type: "start", confidence: "high" } ], endings
 
     system = { top: 600, bottom: 640, bars: [ 20, 300, 580 ], measure_start: 0, events: [ { x: 40, notes: [ { x: 40, string: 0, fret: 0 } ] } ] }
     assert recognizer.send(:section_label?, system, { y: 570 }, "A section")
