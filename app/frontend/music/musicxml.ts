@@ -112,6 +112,12 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   if (!tab) throw new Error('This file does not contain five-string tablature with explicit tuning.');
   if (score.masterBars.length > 256) throw new Error('Preview is limited to 256 measures.');
 
+  // Playtab previews are banjo arrangements. Imported files often omit a
+  // usable General MIDI instrument, while comparison banks may only contain
+  // their banjo preset at program 105.
+  track.playbackInfo.program = 105;
+  track.playbackInfo.bank = 0;
+
   // TuxGuitar exports standard notation and TAB as separate, duplicated staves.
   // Verify the duplication before removing the redundant staff from playback.
   const signature = (staff: model.Staff) => staff.bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats.flatMap(beat => beat.notes.map(note => `${bar.index}:${beat.absolutePlaybackStart}:${beat.playbackDuration}:${note.realValue}`)))).sort().join('|');
