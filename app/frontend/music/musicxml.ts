@@ -1,4 +1,4 @@
-import { importer, type model } from '@coderline/alphatab';
+import { importer, model } from '@coderline/alphatab';
 import { extractTechniques, applyTechniques } from './musicxml-techniques';
 import type { ImportedScoreDocument } from './score';
 
@@ -99,6 +99,23 @@ export function configureChordDiagrams(score: model.Score, enabled: boolean) {
   }
 }
 
+function configureImportedPlayback(track: model.Track) {
+  const program = 105;
+  track.playbackInfo.program = program;
+  track.playbackInfo.bank = 0;
+
+  // alphaTab creates an initial instrument automation while importing the
+  // MusicXML part. It uses the MusicXML one-based program value after
+  // converting it to zero-based form, so changing playbackInfo alone does not
+  // change the MIDI program emitted for the first beat.
+  const firstBeat = track.staves[0]?.bars[0]?.voices[0]?.beats[0];
+  if (firstBeat) {
+    const instrument = firstBeat.getAutomation(model.AutomationType.Instrument);
+    if (instrument) instrument.value = program;
+    else firstBeat.automations.push(model.Automation.buildInstrumentAutomation(false, 0, program));
+  }
+}
+
 // Preview keeps the imported model separate from the deliberately limited v1 document.
 export function readMusicXml(source: string, filename: string, sourceFormat: MusicXmlSourceFormat = 'musicxml'): MusicXmlPreview {
   if (new TextEncoder().encode(source).length > 2_000_000) throw new Error('MusicXML preview is limited to 2 MB.');
@@ -112,12 +129,6 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   if (!tab) throw new Error('This file does not contain five-string tablature with explicit tuning.');
   if (score.masterBars.length > 256) throw new Error('Preview is limited to 256 measures.');
 
-  // Playtab previews are banjo arrangements. Imported files often omit a
-  // usable General MIDI instrument, while comparison banks may only contain
-  // their banjo preset at program 105.
-  track.playbackInfo.program = 105;
-  track.playbackInfo.bank = 0;
-
   // TuxGuitar exports standard notation and TAB as separate, duplicated staves.
   // Verify the duplication before removing the redundant staff from playback.
   const signature = (staff: model.Staff) => staff.bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats.flatMap(beat => beat.notes.map(note => `${bar.index}:${beat.absolutePlaybackStart}:${beat.playbackDuration}:${note.realValue}`)))).sort().join('|');
@@ -129,6 +140,10 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   tab.index = 0;
   tab.showStandardNotation = false;
   tab.showTablature = true;
+  // Playtab previews are banjo arrangements. Imported files often omit a
+  // usable General MIDI instrument, while comparison banks may only contain
+  // their banjo preset at program 105.
+  configureImportedPlayback(track);
   score.title = (score.title.trim() || filename.replace(/\.(musicxml|xml)$/i, '')).slice(0, 160);
   applyTechniques(score, tab, originalStaffIndex, techniques.markers);
   applyChordMetadata(tab, chordMetadata(source));
