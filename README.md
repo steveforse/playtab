@@ -118,6 +118,6 @@ On this WSL machine, Chromium's missing ALSA library was extracted under `/tmp/p
 
 The schema is intentionally versioned. Expand it before attempting general TEF/MusicXML conversion; reject unsupported features rather than simplifying them silently.
 
-Playback uses alphaTab's Web Audio AudioWorklet output, with synthesis running in a worker. The bundled MuseScore General Lite SF3 bank is selected as General MIDI program 105 (banjo); dedicated banjo samples and realistic legato articulations remain follow-up work.
+Playback uses alphaTab's Web Audio AudioWorklet output, with synthesis running in a worker. The bundled MuseScore General Lite SF3 bank is selected as General MIDI program 105 (banjo); dedicated banjo samples and realistic legato articulations remain follow-up work. When optional comparison banks are present under ignored `tmp/soundfonts/extracted/`, the **Sound bank** selector makes them available in the local player; only the MuseScore bank is committed.
 
 See [THIRD_PARTY.md](THIRD_PARTY.md) for asset attribution. The production Dockerfile includes a frontend build stage, but this prototype has not been deployed publicly.

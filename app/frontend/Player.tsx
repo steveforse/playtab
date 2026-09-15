@@ -6,6 +6,12 @@ import type { Score } from './music/score';
 import { configureChordDiagrams, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { PlaybackTransport } from './PlaybackTransport';
 
+export type SoundFontOption = PlaytabSoundFontOption;
+const bundledSoundFont: SoundFontOption = {
+  id: 'musescore-general-lite', label: 'MuseScore General Lite', filename: 'musescore-general-lite.sf3', description: 'Bundled General MIDI baseline',
+};
+export const availableSoundFonts: SoundFontOption[] = typeof __PLAYTAB_SOUNDFONTS__ === 'undefined' ? [bundledSoundFont] : __PLAYTAB_SOUNDFONTS__;
+
 export function download(text: string, filename: string, type = 'text/plain') {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const anchor = document.createElement('a');
@@ -39,6 +45,8 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
   const [barsPerRow, setBarsPerRow] = useState(2);
   const [lyricsColumns, setLyricsColumns] = useState(1);
   const [showChordDiagrams, setShowChordDiagrams] = useState(false);
+  const [soundFontId, setSoundFontId] = useState(availableSoundFonts[0]?.id || 'musescore-general-lite');
+  const soundFont = availableSoundFonts.find(option => option.id === soundFontId) ?? availableSoundFonts[0];
   useEffect(() => {
     setReady(false); setPlaying(false); setRendered(false); setError(''); setExportNotice('');
     setSpeed(1); setLoop(false); setMetronome(false); setPosition({ currentTime: 0, endTime: 0 });
@@ -47,7 +55,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
       core: { fontDirectory: `${base}font/`, useWorkers: !preview, enableLazyLoading: !preview },
       display: { scale: 1.1, barsPerRow },
       player: {
-        enablePlayer: true, soundFont: `${base}soundfont/musescore-general-lite.sf3`,
+        enablePlayer: true, soundFont: `${base}soundfont/${soundFont.filename}`,
         // alphaTab's AudioWorklet output now passes the start/pause smoke
         // tests and avoids the legacy ScriptProcessor scheduling path.
         outputMode: PlayerOutputMode.WebAudioAudioWorklets,
@@ -63,7 +71,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
     if (preview) configureChordDiagrams(preview.score, showChordDiagrams);
     instance.renderScore(preview ? preview.score : toAlphaTab(score));
     return () => { instance.destroy(); api.current = null; };
-  }, [score, preview, barsPerRow, showChordDiagrams]);
+  }, [score, preview, barsPerRow, showChordDiagrams, soundFont]);
   const transport = { ready, playing, ...position, onRestart: () => api.current?.stop(), onPlayPause: () => api.current?.playPause() };
   function printPreviewWithLyrics() {
     const paper = scorePaper.current!;
@@ -169,6 +177,9 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
           </select></label>
           {preview?.lyricsSection && <label>Lyrics columns <select aria-label="Lyrics columns" value={lyricsColumns} onChange={e => setLyricsColumns(Number(e.target.value))}>
             {[1, 2, 3].map(value => <option key={value} value={value}>{value}</option>)}
+          </select></label>}
+          {availableSoundFonts.length > 1 && <label>Sound bank <select aria-label="Sound bank" value={soundFont.id} onChange={e => setSoundFontId(e.target.value)}>
+            {availableSoundFonts.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select></label>}
           {(preview?.chordDiagrams?.length ?? 0) > 0 && <label className="layout-checkbox"><input aria-label="Show chord diagrams" type="checkbox" checked={showChordDiagrams} onChange={e => setShowChordDiagrams(e.target.checked)} /> Chord diagrams</label>}
         </div>
