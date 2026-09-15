@@ -1,8 +1,173 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..1d20005
+index b6203da..d9a994a
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-@@ -43390,7 +43390,7 @@ class MidiFileGenerator {
+@@ -33251,7 +33251,11 @@ class JsonConverter {
+ 				tempo.beatsPerMinute = JsonHelper.getValue(midiEvent, "beatsPerMinute");
+ 				return tempo;
+ 			case MidiEventType.PitchBend: return new PitchBendEvent(track, tick, JsonHelper.getValue(midiEvent, "channel"), JsonHelper.getValue(midiEvent, "value"));
+-			case MidiEventType.PerNotePitchBend: return new NoteBendEvent(track, tick, JsonHelper.getValue(midiEvent, "channel"), JsonHelper.getValue(midiEvent, "noteKey"), JsonHelper.getValue(midiEvent, "value"));
++			case MidiEventType.PerNotePitchBend: {
++				const noteBend = new NoteBendEvent(track, tick, JsonHelper.getValue(midiEvent, "channel"), JsonHelper.getValue(midiEvent, "noteKey"), JsonHelper.getValue(midiEvent, "value"));
++				noteBend.isHammerPull = JsonHelper.getValue(midiEvent, "isHammerPull") === true;
++				return noteBend;
++			}
+ 			case MidiEventType.EndOfTrack: return new EndOfTrackEvent(track, tick);
+ 		}
+ 		throw new AlphaTabError(AlphaTabErrorType.Format, `Unknown Midi Event type: ${type}`);
+@@ -33328,6 +33332,7 @@ class JsonConverter {
+ 				o.set("channel", midiEvent.channel);
+ 				o.set("noteKey", midiEvent.noteKey);
+ 				o.set("value", midiEvent.value);
++				if (midiEvent.isHammerPull === true) o.set("isHammerPull", true);
+ 				break;
+ 			case MidiEventType.EndOfTrack: break;
+ 		}
+@@ -37962,6 +37967,11 @@ class Channel {
+ 	tuning = 0;
+ 	mixVolume = 0;
+ 	mute = false;
++	// A hammer-on/pull-off contact uses the bank's own attack sample as a
++	// short, quiet transient. It must not steal the held legato voice.
++	articulationOnly = false;
++	articulationSamplesRemaining = 0;
++	articulationFadeSamples = 0;
+ 	solo = false;
+ }
+ //#endregion
+@@ -38696,8 +38706,9 @@ class Voice {
+ 			let gainMono;
+ 			let gainLeft;
+ 			let gainRight = 0;
+-			let blockSamples = numSamples > Voice.renderEffectSampleBlock ? Voice.renderEffectSampleBlock : numSamples;
+-			numSamples -= blockSamples;
++			const blockSampleCount = numSamples > Voice.renderEffectSampleBlock ? Voice.renderEffectSampleBlock : numSamples;
++			let blockSamples = blockSampleCount;
++			numSamples -= blockSampleCount;
+ 			if (dynamicLowpass) {
+ 				const fres = tmpInitialFilterFc + this.modLfo.level * tmpModLfoToFilterFc + this.modEnv.level * tmpModEnvToFilterFc;
+ 				tmpLowpass.active = fres <= 13500;
+@@ -38710,6 +38721,9 @@ class Voice {
+ 			gainMono = noteGain * this.ampEnv.level;
+ 			if (isMuted) gainMono = 0;
+ 			else gainMono *= this.mixVolume;
++			if (this.articulationOnly && this.articulationSamplesRemaining <= this.articulationFadeSamples) {
++				gainMono *= Math.max(0, this.articulationSamplesRemaining / this.articulationFadeSamples);
++			}
+ 			if (updateModLFO) this.modLfo.process(blockSamples);
+ 			if (updateVibLFO) this.vibLfo.process(blockSamples);
+ 			switch (f.outputMode) {
+@@ -38762,6 +38776,13 @@ class Voice {
+ 					break;
+ 			}
+ 			const inaudible = this.ampEnv.segment === VoiceEnvelopeSegment.Release && Math.abs(gainMono) < SynthConstants.AudibleLevelThreshold;
++			if (this.articulationOnly) {
++				this.articulationSamplesRemaining -= blockSampleCount;
++				if (this.articulationSamplesRemaining <= 0) {
++					this.kill();
++					return;
++				}
++			}
+ 			if (tmpSourceSamplePosition >= tmpSampleEndDbl || this.ampEnv.segment === VoiceEnvelopeSegment.Done || inaudible) {
+ 				this.kill();
+ 				return;
+@@ -38994,9 +39015,14 @@ class TinySoundFont {
+ 				break;
+ 			case MidiEventType.PerNotePitchBend:
+ 				const noteBend = e;
++				// H/PO pitch steps carry a private flag so the Web Audio synth can
++				// add a short bank-native contact without changing MIDI note keys.
++				const isHammerPull = noteBend.isHammerPull === true;
++				const noteKey = noteBend.noteKey;
+ 				let perNotePitchWheel = noteBend.value;
+ 				perNotePitchWheel = perNotePitchWheel * SynthConstants.MaxPitchWheel / SynthConstants.MaxPitchWheel20;
+-				this.channelSetPerNotePitchWheel(noteBend.channel, noteBend.noteKey, perNotePitchWheel);
++				this.channelSetPerNotePitchWheel(noteBend.channel, noteKey, perNotePitchWheel);
++				if (isHammerPull) this.channelNoteOn(noteBend.channel, noteKey, .12, true);
+ 				break;
+ 		}
+ 	}
+@@ -39086,10 +39112,11 @@ class TinySoundFont {
+ 	/**
+ 	* Start playing a note
+ 	* @param presetIndex preset index >= 0 and < {@link presetCount}
+-	* @param key note value between 0 and 127 (60 being middle C)
+-	* @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
+-	*/
+-	noteOn(presetIndex, key, vel) {
++	 * @param key note value between 0 and 127 (60 being middle C)
++	 * @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
++	 * @param articulationOnly whether to play a short bank-native contact transient
++	 */
++	noteOn(presetIndex, key, vel, articulationOnly = false) {
+ 		if (!this.presets) return;
+ 		const midiVelocity = vel * 127 | 0;
+ 		if (presetIndex < 0 || presetIndex >= this.presets.length) return;
+@@ -39102,9 +39129,10 @@ class TinySoundFont {
+ 			if (key < region.loKey || key > region.hiKey || midiVelocity < region.loVel || midiVelocity > region.hiVel) continue;
+ 			let voice = null;
+ 			if (region.group !== 0) {
+-				for (const v of this._voices) if (v.playingPreset === presetIndex && v.region.group === region.group) v.endQuick(this.outSampleRate);
+-				else if (v.playingPreset === -1 && !voice) voice = v;
++				if (!articulationOnly) for (const v of this._voices) if (v.playingPreset === presetIndex && v.region.group === region.group) v.endQuick(this.outSampleRate);
++				for (const v of this._voices) if (v.playingPreset === -1 && !voice) voice = v;
+ 			} else for (const v of this._voices) if (v.playingPreset === -1) voice = v;
++			if (!voice && articulationOnly) continue;
+ 			if (!voice) {
+ 				for (let i = 0; i < 4; i++) {
+ 					const newVoice = new Voice();
+@@ -39116,6 +39144,9 @@ class TinySoundFont {
+ 			voice.region = region;
+ 			voice.playingPreset = presetIndex;
+ 			voice.playingKey = key;
++			voice.articulationOnly = articulationOnly;
++			voice.articulationSamplesRemaining = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .018)) : 0;
++			voice.articulationFadeSamples = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .005)) : 0;
+ 			voice.playIndex = voicePlayIndex;
+ 			voice.noteGainDb = this.globalGainDb - region.attenuation - SynthHelper.gainToDecibels(1 / vel);
+ 			if (this._channels) this._channels.setupVoice(this, voice);
+@@ -39251,16 +39282,17 @@ class TinySoundFont {
+ 	}
+ 	/**
+ 	* Start playing a note on a channel
+-	* @param channel channel number
+-	* @param key note value between 0 and 127 (60 being middle C)
+-	* @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
+-	*/
+-	channelNoteOn(channel, key, vel) {
++	 * @param channel channel number
++	 * @param key note value between 0 and 127 (60 being middle C)
++	 * @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
++	 * @param articulationOnly whether to play a short bank-native contact transient
++	 */
++	channelNoteOn(channel, key, vel, articulationOnly = false) {
+ 		if (!this._channels || channel > this._channels.channelList.length) return;
+ 		if (this._transpositionPitches.has(channel)) key += this._transpositionPitches.get(channel);
+ 		if (this._liveTranspositionPitches.has(channel)) key += this._liveTranspositionPitches.get(channel);
+ 		this._channels.activeChannel = channel;
+-		this.noteOn(this._channels.channelList[channel].presetIndex, key, vel);
++		this.noteOn(this._channels.channelList[channel].presetIndex, key, vel, articulationOnly);
+ 	}
+ 	/**
+ 	* Stop playing notes on a channel
+@@ -41923,12 +41955,14 @@ class AlphaSynthMidiFileHandler {
+ 		else value = Math.floor(value);
+ 		this._midiFile.addEvent(new PitchBendEvent(track, tick, channel, value));
+ 	}
+-	addNoteBend(track, tick, channel, key, value) {
++	addNoteBend(track, tick, channel, key, value, isHammerPull = false) {
+ 		tick += this.tickShift;
+ 		if (this._smf1Mode) this.addBend(track, tick, channel, value);
+ 		else {
+ 			value = value * SynthConstants.MaxPitchWheel20 / SynthConstants.MaxPitchWheel;
+-			this._midiFile.addEvent(new NoteBendEvent(track, tick, channel, key, value));
++			const noteBend = new NoteBendEvent(track, tick, channel, key, value);
++			noteBend.isHammerPull = isHammerPull;
++			this._midiFile.addEvent(noteBend);
+ 		}
+ 	}
+ 	finishTrack(track, tick) {
+@@ -43390,7 +43424,7 @@ class MidiFileGenerator {
  		if (staff.tuning.length > 0) for (const t of staff.tuning) this._handler.addNote(staff.track.index, beatStart, deadSlapDuration, t, MidiUtils.dynamicToVelocity(DynamicValue.F), staff.track.playbackInfo.primaryChannel);
  	}
  	_needsSecondaryChannel(note) {
@@ -11,7 +176,7 @@ index b6203da..1d20005
  	}
  	_determineChannel(track, note) {
  		if (this._needsSecondaryChannel(note)) return track.playbackInfo.secondaryChannel;
-@@ -43422,6 +43422,13 @@ class MidiFileGenerator {
+@@ -43422,6 +43456,13 @@ class MidiFileGenerator {
  		noteDuration.letRingEnd -= brushOffset;
  		const velocity = MidiFileGenerator._getNoteVelocity(note);
  		const channel = this._determineChannel(track, note);
@@ -25,7 +190,7 @@ index b6203da..1d20005
  		let initialBend = 0;
  		const noteSoundDuration = Math.max(noteDuration.untilTieOrSlideEnd, noteDuration.letRingEnd);
  		if (note.hasBend) initialBend = MidiFileGenerator.getPitchWheel(note.bendPoints[0].value);
-@@ -43446,10 +43453,11 @@ class MidiFileGenerator {
+@@ -43446,10 +43487,11 @@ class MidiFileGenerator {
  			return;
  		}
  		if (note.hasBend) this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
@@ -38,7 +203,7 @@ index b6203da..1d20005
  	}
  	/**
  	* For every note within the octave, the number of keys to go up when playing ornaments.
-@@ -43576,6 +43584,14 @@ class MidiFileGenerator {
+@@ -43576,6 +43618,14 @@ class MidiFileGenerator {
  				const tieDestinationDuration = this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart);
  				durationWithEffects.untilTieOrSlideEnd = endNote.beat.absolutePlaybackStart + tieDestinationDuration.untilTieOrSlideEnd - startTick;
  			} else durationWithEffects.untilTieOrSlideEnd = beatPlayDuration + this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart).untilTieOrSlideEnd;
@@ -53,7 +218,7 @@ index b6203da..1d20005
  		} else if (note.slideOutType === SlideOutType.Legato) {
  			const endNote = note.slideTarget;
  			if (endNote) {
-@@ -43716,6 +43732,19 @@ class MidiFileGenerator {
+@@ -43716,6 +43766,21 @@ class MidiFileGenerator {
  	static getPitchWheel(bendValue) {
  		return SynthConstants.DefaultPitchWheel + bendValue / 2 * MidiFileGenerator._pitchValuePerSemitone;
  	}
@@ -67,13 +232,15 @@ index b6203da..1d20005
 +		const bendValue = MidiFileGenerator.getPitchWheel((destinationKey - originKey) * 2);
 +		const track = note.beat.voice.bar.staff.track;
 +		// An H/PO changes pitch at the destination onset. This is an immediate
-+		// per-note pitch step, unlike a legato slide's interpolated glide.
-+		this._handler.addNoteBend(track.index, destination.beat.absolutePlaybackStart, channel, originKey, bendValue);
++		// per-note pitch step, unlike a legato slide's interpolated glide. The
++		// private event flag lets alphaTab's own synth add a short bank-native
++		// fret contact without creating another picked attack in the generated MIDI.
++		this._handler.addNoteBend(track.index, destination.beat.absolutePlaybackStart, channel, originKey, bendValue, true);
 +	}
  	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
  		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
  		const playedBendPoints = [];
-@@ -59240,6 +59269,10 @@ class TieGlyphLabels {
+@@ -59240,6 +59305,10 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {

@@ -26,6 +26,7 @@ describe('technique playback contract', () => {
       [960, picked[0].noteKey], [2880, picked[2].noteKey],
     ]);
     const transitions = bends.filter(b => b.value !== 2_147_483_648);
+    expect(transitions.map(b => (b as midi.NoteBendEvent & { isHammerPull?: boolean }).isHammerPull)).toEqual([true, true]);
     expect(transitions[0].value).toBeGreaterThan(2_147_483_648);
     expect(transitions[1].value).toBeLessThan(2_147_483_648);
   });
@@ -39,5 +40,6 @@ describe('technique playback contract', () => {
     const slide = plain.replace(/<\/notations>/g, end => ++index === 1 ? '<slide type="start" number="1"/>' + end : index === 2 ? '<slide type="stop" number="1"/>' + end : end);
     const pitch = events(slide).filter((e): e is midi.NoteBendEvent => e instanceof midi.NoteBendEvent);
     expect(new Set(pitch.map(e => e.value)).size).toBeGreaterThan(2);
+    expect(pitch.some(e => (e as midi.NoteBendEvent & { isHammerPull?: boolean }).isHammerPull)).toBe(false);
   });
 });
