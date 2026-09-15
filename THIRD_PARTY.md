@@ -14,6 +14,6 @@ Dependencies remain under their respective licenses; this repository does not re
 | SONiVOX starter SoundFont | Bundled license states Apache-2.0, Copyright Sonic Network Inc.; see bundled `soundfont/LICENSE` and `soundfont/README.md` for provenance |
 | DM Sans / Libre Baskerville | Served through Google Fonts; see https://fonts.google.com/specimen/DM+Sans/license and https://fonts.google.com/specimen/Libre+Baskerville/license |
 
-The alphaTab plugin copies the font and SoundFont license files, together with the assets, into `public/notation/` during development and builds. Keep those notices with redistributed assets. The alphaTab ESM renderer has a small MPL-2.0 upward-slur patch in `patches/`; retain it with distributions. No MuseScore or TuxGuitar code has been copied into this application.
+The alphaTab plugin copies the font and SoundFont license files, together with the assets, into `public/notation/` during development and builds. Keep those notices with redistributed assets. The alphaTab ESM renderer has a small MPL-2.0 upward-slur patch in `patches/`; retain it with distributions.
 
 The included four-measure practice roll is an original demo constructed for this project.
