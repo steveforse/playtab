@@ -12,8 +12,12 @@ test('private Wellerman conversion renders and plays with its imported tuning', 
   await expect(page.locator('.subtitle')).toContainText('34 measures');
   await expect(page.getByRole('heading', { name: 'Lyrics & chords' })).toBeVisible();
   await expect(page.locator('.lyrics-section')).toContainText('There once was a ship that put to sea');
-  await expect(page.getByLabel('Measures per line')).toHaveValue('2');
-  await page.getByLabel('Measures per line').selectOption('4');
+  const tabClefs = page.getByTestId('notation').locator('svg g.at');
+  if (await tabClefs.count() > 0) {
+    await page.getByLabel('Hide TAB labels').check();
+    await expect(tabClefs).toHaveCount(0);
+  }
+  await expect(page.getByLabel('Measures per line')).toHaveValue('4');
   await page.getByLabel('Lyrics columns').selectOption('2');
   await expect(page.getByLabel('Measures per line')).toHaveValue('4');
   await expect(page.getByLabel('Lyrics columns')).toHaveValue('2');

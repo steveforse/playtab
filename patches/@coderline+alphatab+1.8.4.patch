@@ -1,5 +1,5 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..a2b146d
+index b6203da..eef3e85 100644
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 @@ -33251,7 +33251,11 @@ class JsonConverter {
@@ -240,7 +240,76 @@ index b6203da..a2b146d
  	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
  		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
  		const playedBendPoints = [];
-@@ -59240,6 +59305,10 @@ class TieGlyphLabels {
+@@ -51996,7 +52061,9 @@ class MarkerEffectInfo extends EffectInfo {
+ 		return beat.voice.bar.staff.index === 0 && beat.voice.index === 0 && beat.index === 0 && beat.voice.bar.masterBar.isSectionStart;
+ 	}
+ 	createNewGlyph(renderer, beat) {
+-		return new TextGlyph(0, 0, !beat.voice.bar.masterBar.section.marker ? beat.voice.bar.masterBar.section.text : `[${beat.voice.bar.masterBar.section.marker}] ${beat.voice.bar.masterBar.section.text}`, renderer.resources.elementFonts.get(NotationElement.EffectMarker), TextAlign.Left);
++		const glyph = new TextGlyph(0, 0, !beat.voice.bar.masterBar.section.marker ? beat.voice.bar.masterBar.section.text : `[${beat.voice.bar.masterBar.section.marker}] ${beat.voice.bar.masterBar.section.text}`, renderer.resources.elementFonts.get(NotationElement.EffectMarker), TextAlign.Left);
++		glyph.playtabSectionAnnotation = true;
++		return glyph;
+ 	}
+ 	canExpand(_from, _to) {
+ 		return true;
+@@ -52641,13 +52708,45 @@ class EffectBand extends Glyph {
+ 				const g = v[k];
+ 				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
+ 				try {
+-					g.paint(cx + this.x, cy + this.y, canvas);
++					const sectionOffset = this._getPlaytabSectionAnnotationOffset(g);
++					g.paint(cx + this.x, cy + this.y - sectionOffset, canvas);
+ 				} finally {
+ 					_?.[Symbol.dispose]?.();
+ 				}
+ 			}
+ 		}
+ 	}
++	_getPlaytabSectionAnnotationOffset(g) {
++		if (g.playtabSectionAnnotation !== true) return 0;
++		const sectionLeft = this.renderer.x + this.x + g.x;
++		const sectionRight = sectionLeft + g.width;
++		const sectionY = this.renderer.y + this.renderer.height + this.renderer.staff.bottomOverflow - this.renderer.bottomEffects.height + this.y + g.y;
++		const thumbs = [];
++		for (const barRenderer of this.renderer.staff.barRenderers) {
++			for (const beatGlyphs of barRenderer.voiceContainer.beatGlyphs.values()) {
++				for (const beatGlyph of beatGlyphs) {
++					const tabBeatGlyph = beatGlyph.onNotes;
++					const noteNumbers = tabBeatGlyph?.noteNumbers;
++					const thumbFingering = noteNumbers?._thumbFingering;
++					if (!thumbFingering) continue;
++					thumbs.push({
++						left: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x - thumbFingering.width / 2,
++						right: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x + thumbFingering.width / 2,
++						y: barRenderer.y + barRenderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + noteNumbers.y + thumbFingering.y,
++						height: thumbFingering.height,
++					});
++				}
++			}
++		}
++		if (thumbs.length === 0) return 0;
++		let targetY = thumbs[0].y;
++		for (const thumb of thumbs) {
++			if (sectionLeft < thumb.right && sectionRight > thumb.left) {
++				targetY = Math.max(targetY, thumb.y + thumb.height + this.renderer.settings.display.effectBandPaddingBottom);
++			}
++		}
++		return sectionY - targetY;
++	}
+ 	alignGlyphs() {
+ 		for (let v = 0; v < this._effectGlyphs.length; v++) for (const beatIndex of this._effectGlyphs[v].keys()) {
+ 			const g = this.renderer.bar.voices[v].beats[beatIndex];
+@@ -55698,7 +55797,9 @@ class TextEffectInfo extends EffectInfo {
+ 		return !!beat.text;
+ 	}
+ 	createNewGlyph(renderer, beat) {
+-		return new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
++		const glyph = new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
++		glyph.playtabSectionAnnotation = true;
++		return glyph;
+ 	}
+ 	canExpand(_from, _to) {
+ 		return true;
+@@ -59240,6 +59341,10 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {
@@ -251,7 +320,7 @@ index b6203da..a2b146d
  	_forSlide;
  	_labels = null;
  	constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
-@@ -63810,6 +63879,7 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63810,6 +63915,7 @@ class TabNoteChordGlyph extends Glyph {
  	_deadSlapped = null;
  	_isGrace;
  	beat;
@@ -259,7 +328,7 @@ index b6203da..a2b146d
  	maxStringNote = null;
  	minStringNote = null;
  	beatEffects = /* @__PURE__ */ new Map();
-@@ -63907,7 +63977,9 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63907,7 +64013,9 @@ class TabNoteChordGlyph extends Glyph {
  			let maxEffectY = NaN;
  			let effectY = this.getNoteY(this.minStringNote, NoteYPosition.Center) + tabHeight / 2;
  			const effectSpacing = this.renderer.smuflMetrics.onNoteEffectPadding;
@@ -269,7 +338,7 @@ index b6203da..a2b146d
  				g.y += effectY;
  				g.x += this.width / 2;
  				g.renderer = this.renderer;
-@@ -63916,6 +63988,16 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63916,6 +64024,16 @@ class TabNoteChordGlyph extends Glyph {
  				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
  				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
  			}
@@ -286,7 +355,7 @@ index b6203da..a2b146d
  			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
  		}
  		this.width = w;
-@@ -63923,6 +64005,11 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63923,6 +64041,11 @@ class TabNoteChordGlyph extends Glyph {
  	addNoteGlyph(noteGlyph, note) {
  		this._notes.push(noteGlyph);
  		this.notesPerString.set(note.string, noteGlyph);
@@ -298,7 +367,20 @@ index b6203da..a2b146d
  		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
  		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
  	}
-@@ -64923,7 +65010,7 @@ class Environment {
+@@ -64530,8 +64653,10 @@ class TabBarRenderer extends LineBarRenderer {
+ 	createLinePreBeatGlyphs() {
+ 		if (this.isFirstOfStaff) {
+ 			const center = (this.bar.staff.tuning.length - 1) / 2;
+-			this.createStartSpacing();
+-			this.addPreBeatGlyph(new TabClefGlyph(0, this.getLineY(center)));
++			if (this.bar.staff.track.score.stylesheet.playtabHideTabClef !== true) {
++				this.createStartSpacing();
++				this.addPreBeatGlyph(new TabClefGlyph(0, this.getLineY(center)));
++			}
+ 		}
+ 		if (this.showTimeSignature && (!this.bar.previousBar || this.bar.previousBar && this.bar.masterBar.timeSignatureNumerator !== this.bar.previousBar.masterBar.timeSignatureNumerator || this.bar.previousBar && this.bar.masterBar.timeSignatureDenominator !== this.bar.previousBar.masterBar.timeSignatureDenominator || this.bar.previousBar && this.bar.masterBar.isFreeTime && this.bar.masterBar.isFreeTime !== this.bar.previousBar.masterBar.isFreeTime)) {
+ 			this.createStartSpacing();
+@@ -64923,7 +65048,7 @@ class Environment {
  			},
  			{
  				effect: new MarkerEffectInfo(),
@@ -307,7 +389,7 @@ index b6203da..a2b146d
  			},
  			{
  				effect: new DirectionsEffectInfo(),
-@@ -64935,7 +65022,7 @@ class Environment {
+@@ -64935,7 +65060,7 @@ class Environment {
  			},
  			{
  				effect: new TextEffectInfo(),

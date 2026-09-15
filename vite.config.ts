@@ -30,10 +30,12 @@ function copyPlaytabSoundfont() {
         const files = await readdir(sourceDir);
         await Promise.all(files.map(file => copyFile(join(sourceDir, file), join(outputDir, file))));
       }));
-      await Promise.all(availableSoundFonts().slice(1).map(async font => {
-        const source = soundFontCatalog.find(candidate => candidate.id === font.id)!.source;
-        await copyFile(fileURLToPath(new URL(`./${source}`, import.meta.url)), join(outputRoot, 'soundfont', font.filename));
-      }));
+      await Promise.all(soundFontCatalog
+        .filter(font => !font.source.startsWith('app/frontend/public/'))
+        .filter(font => availableSoundFonts().some(available => available.id === font.id))
+        .map(async font => {
+          await copyFile(fileURLToPath(new URL(`./${font.source}`, import.meta.url)), join(outputRoot, 'soundfont', font.filename));
+        }));
     },
   };
 }

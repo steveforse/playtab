@@ -7,6 +7,7 @@ test('loads and plays every locally available comparison sound bank', async ({ p
 
   const options = await selector.locator('option').evaluateAll(elements => elements.map(option => ({ id: (option as HTMLOptionElement).value, label: option.textContent })));
   expect(options.length).toBeGreaterThan(1);
+  if (options.some(option => option.id === 'philharmonia-banjo-f')) expect(options[0].id).toBe('philharmonia-banjo-f');
   for (const option of options) {
     await selector.selectOption(option.id);
     await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled({ timeout: 60000 });
