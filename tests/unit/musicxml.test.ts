@@ -101,9 +101,14 @@ describe('MusicXML preview', () => {
     expect(preview.chordDiagrams).toEqual([{ name: 'Cm', strings: [0, 2, 0, 1, 0], firstFret: 1, barreFrets: [] }]);
     expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(false);
     configureChordDiagrams(preview.score, true);
-    expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(true);
+    expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(false);
     expect(preview.score.stylesheet.globalDisplayChordDiagramsOnTop).toBe(true);
     expect(chord?.showDiagram).toBe(true);
+  });
+  it('applies voicings when alphaTab attaches an offset chord to the measure start', () => {
+    const harmony = '<harmony offset="99" data-playtab-strings="4,0,0,0,-1" data-playtab-first-fret="1"><root><root-step>A</root-step></root><kind>major</kind></harmony>';
+    const preview = readMusicXml(fixture().replace('</backup>', `</backup>${harmony}`), 'offset-chord.xml');
+    expect(preview.chordDiagrams).toContainEqual({ name: 'A', strings: [4, 0, 0, 0, -1], firstFret: 1, barreFrets: [] });
   });
   it('imports MusicXML subtitle and arranger credits', () => {
     const annotated = fixture().replace(

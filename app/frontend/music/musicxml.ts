@@ -17,7 +17,7 @@ export type MusicXmlPreview = {
   chordDiagrams: ChordDiagramPreview[];
 };
 
-type ChordMetadata = { measure: number; position: number; strings: number[]; firstFret: number };
+type ChordMetadata = { measure: number; position: number; name: string; strings: number[]; firstFret: number };
 
 const elementChildren = (node: Element) => Array.from(node.childNodes).filter((child): child is Element => child.nodeType === 1);
 const firstChild = (node: Element, name: string) => elementChildren(node).find(child => child.localName === name);
@@ -46,6 +46,7 @@ function chordMetadata(source: string): ChordMetadata[] {
         if (strings.length === 5) metadata.push({
           measure: measureIndex,
           position: position + Number(childText(item, 'offset')) * 960 / divisions,
+          name: chordName(item),
           strings,
           firstFret: Number(item.getAttribute('data-playtab-first-fret')) || 1,
         });
@@ -58,11 +59,31 @@ function chordMetadata(source: string): ChordMetadata[] {
   return metadata;
 }
 
+function chordName(harmony: Element): string {
+  const root = firstChild(harmony, 'root');
+  const step = childText(root ?? harmony, 'root-step').trim();
+  const alter = Number(childText(root ?? harmony, 'root-alter'));
+  const accidental = alter > 0 ? '#'.repeat(alter) : alter < 0 ? 'b'.repeat(-alter) : '';
+  const suffixes: Record<string, string> = {
+    major: '', minor: 'm', dominant: '7', 'major-seventh': 'maj7', 'minor-seventh': 'm7',
+    diminished: 'dim', 'diminished-seventh': 'dim7', augmented: 'aug', 'augmented-seventh': 'aug7',
+    'suspended-second': 'sus2', 'suspended-fourth': 'sus4',
+  };
+  const kind = childText(harmony, 'kind').trim().toLowerCase();
+  return step ? `${step}${accidental}${suffixes[kind] ?? (kind === 'other' ? '' : kind)}` : '';
+}
+
 function applyChordMetadata(tab: model.Staff, metadata: ChordMetadata[]) {
   for (const entry of metadata) {
     const beats = (tab.bars[entry.measure]?.voices ?? []).flatMap(voice => voice.beats);
     const barStart = Math.min(...beats.map(beat => beat.playbackStart));
-    const matches = beats.filter(beat => Math.abs(beat.playbackStart - barStart - entry.position) < 0.01 && beat.chord);
+    const positioned: typeof beats = [];
+    const named: typeof beats = [];
+    for (const beat of beats) {
+      if (beat.chord?.name === entry.name) named.push(beat);
+      if (Math.abs(beat.playbackStart - barStart - entry.position) < 0.01 && beat.chord) positioned.push(beat);
+    }
+    const matches = positioned.length > 0 ? positioned : named;
     for (const beat of matches) {
       beat.chord!.strings = [...entry.strings];
       beat.chord!.firstFret = entry.firstFret;
@@ -92,7 +113,7 @@ function chordDiagrams(tab: model.Staff): ChordDiagramPreview[] {
 
 export function configureChordDiagrams(score: model.Score, enabled: boolean) {
   if (!score.stylesheet) return;
-  score.stylesheet.globalDisplayChordDiagramsInScore = enabled;
+  score.stylesheet.globalDisplayChordDiagramsInScore = false;
   score.stylesheet.globalDisplayChordDiagramsOnTop = enabled;
   for (const staff of score.tracks?.[0]?.staves ?? []) {
     for (const chord of staff.chords?.values() ?? []) chord.showDiagram = enabled && chord.strings.length === staff.tuning.length && chord.strings.some(fret => fret >= 0);
