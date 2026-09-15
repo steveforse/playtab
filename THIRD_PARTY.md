@@ -9,7 +9,6 @@ Dependencies remain under their respective licenses; this repository does not re
 | Vite / Vite Ruby | MIT; https://vite.dev / https://vite-ruby.netlify.app |
 | alphaTab and its Vite plugin | MPL-2.0; https://github.com/CoderLine/alphaTab |
 | @xmldom/xmldom (test-only XML DOM) | MIT; https://github.com/xmldom/xmldom |
-| TuxGuitar 2.1.0 (separate converter image) | LGPL-2.1; unmodified release archive, license and attribution retained in `/opt/converter/tux/doc/`; https://github.com/helge17/tuxguitar/releases/tag/2.1.0 |
 | pdf-reader 2.16.0 (native vector PDF recognition) | MIT; https://github.com/yob/pdf-reader |
 | Bravura notation font | SIL Open Font License; bundled `Bravura-OFL.txt` |
 | SONiVOX starter SoundFont | Bundled license states Apache-2.0, Copyright Sonic Network Inc.; see bundled `soundfont/LICENSE` and `soundfont/README.md` for provenance |

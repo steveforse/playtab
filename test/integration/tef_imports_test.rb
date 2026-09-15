@@ -40,7 +40,7 @@ class TefImportsTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "rejects the wrong extension and reports an unavailable converter" do
+  test "rejects the wrong extension and reports an unavailable TEF conversion" do
     Tempfile.create([ "text", ".txt" ]) do |file|
       file.write("x" * 300)
       file.flush

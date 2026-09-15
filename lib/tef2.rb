@@ -6,29 +6,21 @@ require_relative "tef2/musicxml_builder"
 require_relative "tef2/full_parser"
 require_relative "tef2/full_musicxml_builder"
 require_relative "tef2/tabledit_v3_parser"
-require_relative "tef2/converter_client"
 require_relative "tef2/exporter"
 
 module Tef2
   class Error < StandardError; end
   class Invalid < Error; end
-  class Unavailable < Error; end
 
   # High-level conversion from TEF2 bytes to MusicXML
-  # Uses full native parser for complete TEF2 support
-  # Falls back to Python/Java converter only if native parser fails
+  # Uses the full native parser for TEF2 and TablEdit 3.00 files.
   def self.convert(bytes)
-    # Try full native parser first (handles real TEF2 files)
     result = try_full_parse(bytes)
     return result if result
 
-    # Fall back to Python/Java converter
-    try_converter_service(bytes)
+    try_native_parse(bytes)
   rescue Parser::Invalid, FullParser::Invalid, TableditV3Parser::Invalid => e
     raise Invalid, e.message
-  rescue Unavailable
-    # Converter unavailable - try simple native parser
-    try_native_parse(bytes)
   end
 
   # Full native TEF2 parser (complete implementation)
@@ -91,17 +83,5 @@ module Tef2
     { musicxml: musicxml, warnings: [ "Native Ruby TEF2 conversion (fallback - limited)" ] }
   rescue Parser::Invalid => e
     raise Invalid, e.message
-  end
-
-  # Try Python/Java converter service (child process)
-  def self.try_converter_service(bytes)
-    client = ConverterClient.new
-    client.convert(bytes)
-  rescue ConverterClient::Invalid => e
-    raise Invalid, e.message
-  rescue ConverterClient::Unavailable => e
-    raise Unavailable, e.message
-  ensure
-    client&.stop!
   end
 end

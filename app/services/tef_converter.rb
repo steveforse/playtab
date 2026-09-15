@@ -18,8 +18,6 @@ class TefConverter
     { "musicxml" => musicxml, "warnings" => warnings }
   rescue Tef2::Invalid => e
     raise Invalid, e.message
-  rescue Tef2::Unavailable => e
-    raise Unavailable, e.message
   rescue Tef2::Error => e
     raise Unavailable, "TEF conversion failed: #{e.message}"
   end

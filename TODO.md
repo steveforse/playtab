@@ -60,13 +60,13 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
 
 ## Already completed
 
-- Native Ruby TEF2 and TablEdit TEF3 import with bounded Docker/TuxGuitar fallback.
+- Native Ruby TEF2 and TablEdit TEF3 import with bounded validation and explicit unsupported-feature warnings.
 - Imported TEF and MusicXML previews saved as version-2 library documents and reconstructed on reopen.
 - Full private Brainjo corpus validation: 375 unique files parsed and loaded by alphaTab.
 - TEF chords, sections, fingering, thumb markers, hammer-ons, pull-offs, bends, and standalone lyrics preservation.
 - Configurable measures per line, lyric columns, and PDF layout fixes.
 - TEF2 and TablEdit TEF3 export with explicit loss warnings.
-- Public GitHub repository with passing Rails, frontend, converter, lint, and security CI.
+- Public GitHub repository with passing Rails, frontend, lint, and security CI.
 
 ## Project rules
 
