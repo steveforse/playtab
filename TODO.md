@@ -44,9 +44,11 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Untimed lyrics remain in their standalone section with configurable columns and compact print spacing.
   - Imported TEF and MusicXML chord voicings can be shown as diagrams through an explicit control; chord names alone do not enable diagrams.
 
-- [ ] **8. Improve banjo audio assets** — `feature/banjo-audio-assets`
-  - Evaluate and integrate a higher-quality banjo soundfont or dedicated samples.
-  - Preserve attribution and licensing information for every bundled asset.
+- [x] **8. Improve banjo audio assets** — `feature/banjo-audio-assets`
+  - Replaced the former SONiVOX starter bank with MuseScore General Lite 0.2.1 SF3 for General MIDI program 105 (banjo).
+  - Preserved the Debian source attribution and complete MIT/public-domain/CC0 notices beside the bundled asset.
+  - Added asset-integrity and player-configuration tests; browser playback exercises the bank through alphaTab.
+  - Dedicated sampled banjo articulations remain a separate future audio-quality project.
 
 - [ ] **9. Productize the workspace** — `feature/productize-workspace`
   - Add authentication, multi-user libraries, synchronization, and deployment hardening.

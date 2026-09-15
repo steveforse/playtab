@@ -34,7 +34,7 @@ test('unsupported uploads give an honest message and mobile layout fits', async 
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles({ name: 'test.pdf', mimeType: 'application/pdf', buffer: Buffer.from('PDF') });
-  await expect(page.getByRole('alert')).toContainText('PDF recognition is not available');
+  await expect(page.getByRole('alert')).toContainText('This file is not a PDF.');
   await page.getByRole('button', { name: 'Close import' }).click();
   await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
