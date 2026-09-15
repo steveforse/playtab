@@ -52,6 +52,7 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "whole", document.at_xpath("//measure[1]//type").text
     assert_equal "C", Tef2::PdfMusicxmlBuilder.new.send(:midi_pitch, 60).first
     assert_equal "eighth", Tef2::PdfMusicxmlBuilder.new.send(:duration_type, 100)
+    assert_equal "quarter", Tef2::PdfMusicxmlBuilder.new.send(:duration_type, 1440)
     assert_equal [ 67, 50, 55, 59, 62 ], Tef2::PdfMusicxmlBuilder::DEFAULT_TUNING
   end
 
@@ -63,6 +64,35 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "4", document.at_xpath("//time/beat-type").text
     assert_equal "1920", document.at_xpath("//measure[1]/note/duration").text
     assert_equal "half", document.at_xpath("//measure[1]/note/type").text
+  end
+
+  test "writes dotted durations and first and second endings" do
+    dotted = Tef2::PdfMusicxmlBuilder.build(
+      title: "Dotted",
+      measures: 1,
+      time_signature: { numerator: 2, denominator: 4 },
+      notes: [ { measure: 0, position: 384, string: 0, fret: 0 } ]
+    )
+    dotted_document = Nokogiri::XML(dotted)
+    rest = dotted_document.at_xpath("//measure[1]/note[rest]")
+    assert_equal "1440", rest.at_xpath("./duration").text
+    assert_equal "quarter", rest.at_xpath("./type").text
+    assert_equal 1, rest.xpath("./dot").length
+
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Endings",
+      measures: 2,
+      notes: [],
+      endings: [
+        { measure: 0, location: "left", number: "1", type: "start" },
+        { measure: 1, location: "left", number: "2", type: "start" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+    assert_equal "start", document.at_xpath("//measure[1]/barline[@location='left']/ending")["type"]
+    assert_equal "1", document.at_xpath("//measure[1]/barline[@location='right']/ending")["number"]
+    assert_equal "2", document.at_xpath("//measure[2]/barline[@location='left']/ending")["number"]
+    assert_equal "stop", document.at_xpath("//measure[2]/barline[@location='right']/ending")["type"]
   end
 
   test "maps common chord suffixes to MusicXML harmony kinds" do
