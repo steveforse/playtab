@@ -125,6 +125,8 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_nil recognizer.send(:beam_count_for_event, 50, [ [ 45, 98, 60, 98 ] ], 100)
     events = [ 2, 2, 1, 1, 1 ].each_with_index.map { |beam_count, index| { x: 10 + index * 10, beam_count: beam_count } }
     assert_equal [ 0, 64, 128, 256, 384 ], recognizer.send(:beam_rhythm_positions, 0, 100, events, 512)
+    assert_equal [ 0, 64, 128, 192, 256, 384 ], recognizer.send(:spacing_rhythm_positions, 308, 395, [ 318.03, 328.43, 340.34, 350.74, 361.53, 378.8 ], 512, 64)
+    assert_equal [ 0, 128, 192, 256 ], recognizer.send(:spacing_rhythm_positions, 132, 205, [ 141.74, 158.29, 169.08, 179.88 ], 512, 64)
 
     ending_system = { bars: [ 20, 100, 180 ], measure_start: 0, measure_layouts: [], events: [], bottom: 100 }
     endings = recognizer.send(:endings_for_system, ending_system, [
