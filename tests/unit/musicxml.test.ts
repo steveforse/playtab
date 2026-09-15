@@ -102,7 +102,18 @@ describe('MusicXML preview', () => {
     expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(false);
     configureChordDiagrams(preview.score, true);
     expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(true);
+    expect(preview.score.stylesheet.globalDisplayChordDiagramsOnTop).toBe(true);
     expect(chord?.showDiagram).toBe(true);
+  });
+  it('imports MusicXML subtitle and arranger credits', () => {
+    const annotated = fixture().replace(
+      '<part-list>',
+      '<credit page="1"><credit-type>subtitle</credit-type><credit-words>gCGCD# (capo 2), Brainjo level 3</credit-words></credit>' +
+      '<credit page="1"><credit-type>arranger</credit-type><credit-words>arranged by Josh Turknett CLAWHAMMERBANJO.NET</credit-words></credit><part-list>'
+    );
+    const preview = readMusicXml(annotated, 'credits.xml');
+    expect(preview.score.subTitle.replaceAll('\u00a0', ' ')).toBe('gCGCD# (capo 2), Brainjo level 3');
+    expect(preview.score.artist.replaceAll('\u00a0', ' ')).toBe('arranged by Josh Turknett CLAWHAMMERBANJO.NET');
   });
   it('imports MusicXML lyrics onto the retained tab staff', () => {
     const annotated = fixture().replace(

@@ -227,21 +227,21 @@ module Tef2
 
       raise Error, "No tablature notes were recognized." if notes.empty?
 
-      title, tuning = header(pages.first[:texts])
+      header_data = header(pages.first[:texts])
       metadata = metadata(pages, systems)
       timing_name = timing_steps.any? { |step| step <= 64 } ? "sixteenth-note" : "eighth-note"
       warnings = [
         "PDF note timing is inferred from horizontal layout and rounded to the nearest #{timing_name} position.",
         "PDF recognition cannot guarantee hidden TEF duration, voice, repeat, or source metadata fidelity."
       ]
-      warnings << "The PDF tuning label was not recognized; review the imported tuning." if tuning.empty?
+      warnings << "The PDF tuning label was not recognized; review the imported tuning." if header_data[:tuning].empty?
       warnings << "No section labels were confidently associated with tablature measures." if metadata[:sections].empty?
       warnings << "No chord names were confidently associated with tablature measures." if metadata[:chords].empty?
       warnings << "No standalone lyric page was recognized." unless metadata[:lyrics]
       warnings << "No printed technique labels were confidently associated with notes." if metadata[:techniques].empty?
       warnings << "No printed fingering annotations were confidently associated with notes." if metadata[:fingerings].empty?
       warnings << "No printed tempo was found as selectable PDF text; review the imported tempo." unless metadata[:tempo]
-      warnings << "PDF chord names are preserved without chord voicings or diagrams." unless metadata[:chords].empty?
+      warnings << "PDF chord names are preserved without chord voicings or diagrams." if metadata[:chord_diagrams].empty? && !metadata[:chords].empty?
 
       skipped_techniques = metadata[:techniques].count do |technique|
         %w[hammer-on pull-off].include?(technique[:type]) && !technique_pair_valid?(technique, notes)
@@ -251,14 +251,17 @@ module Tef2
       end
 
       {
-        title: title.empty? ? filename_without_extension(filename) : title,
-        tuning_label: tuning,
+        title: header_data[:title].empty? ? filename_without_extension(filename) : header_data[:title],
+        subtitle: header_data[:subtitle],
+        arranger: header_data[:arranger],
+        tuning_label: header_data[:tuning],
         measures: measure_index,
         time_signature: time_signature,
         notes: notes,
         tempo: metadata[:tempo],
         sections: metadata[:sections],
         chords: metadata[:chords],
+        chord_diagrams: metadata[:chord_diagrams],
         endings: metadata[:endings],
         repeats: metadata[:repeats],
         lyrics: metadata[:lyrics],
@@ -324,7 +327,7 @@ module Tef2
       detected_time_signature = receiver.respond_to?(:time_signature) ? receiver.time_signature : nil
       symbols = receiver.respond_to?(:time_signature_symbols) ? receiver.time_signature_symbols : []
       detected_time_signature = infer_time_signature_from_spacing(detected_time_signature, symbols, page_systems)
-      { texts: texts, systems: page_systems, time_signature: detected_time_signature }
+      { texts: texts, systems: page_systems, time_signature: detected_time_signature, segments: segments, curve_boxes: curve_boxes }
     rescue Error
       raise
     rescue StandardError => e
@@ -531,6 +534,7 @@ module Tef2
       {
         sections: deduplicate_metadata(sections),
         chords: deduplicate_metadata(chords),
+        chord_diagrams: chord_diagrams_for_pages(pages),
         endings: deduplicate_metadata(endings),
         repeats: repeat_metadata(systems),
         lyrics: lyrics(pages),
@@ -538,6 +542,113 @@ module Tef2
         fingerings: deduplicate_metadata(fingerings),
         tempo: tempo(pages)
       }
+    end
+
+    def chord_diagrams_for_pages(pages)
+      diagrams = []
+      pages.each do |page|
+        diagrams.concat(chord_diagrams_for_page(page[:texts], page[:segments] || [], page[:curve_boxes] || []))
+      end
+      diagrams.uniq { |diagram| diagram[:name] }
+    end
+
+    def chord_diagrams_for_page(texts, segments, curve_boxes)
+      chord_diagram_grids(segments).filter_map do |grid|
+        label = texts.filter_map do |item|
+          next unless item[:x].between?(grid[:left] - 12, grid[:right] + 12)
+          next unless item[:y].between?(grid[:top] + 3, grid[:top] + 14)
+
+          name = normalize_chord(item[:text])
+          next if name.empty?
+
+          [ (item[:x] - (grid[:left] + grid[:right]) / 2.0).abs, name ]
+        end.min_by(&:first)&.last
+        next unless label
+
+        markers = chord_marker_centers(grid, curve_boxes)
+        next unless markers.length == grid[:columns].length && markers.all?
+
+        frets = markers.map { |marker| chord_marker_fret(marker, grid) }
+        next unless frets.all?
+
+        {
+          name: label,
+          strings: frets.reverse + [ -1 ],
+          first_fret: 1,
+          confidence: "high"
+        }
+      end
+    end
+
+    def chord_diagram_grids(segments)
+      verticals = segments.filter_map do |x1, y1, x2, y2|
+        next unless (x1 - x2).abs < 0.8 && (y1 - y2).abs.between?(18, 30)
+
+        { x: (x1 + x2) / 2.0, top: [ y1, y2 ].max, bottom: [ y1, y2 ].min }
+      end.sort_by { |line| line[:x] }
+      horizontals = segments.filter_map do |x1, y1, x2, y2|
+        next unless (y1 - y2).abs < 0.8 && (x1 - x2).abs.between?(8, 24)
+
+        { left: [ x1, x2 ].min, right: [ x1, x2 ].max, y: (y1 + y2) / 2.0 }
+      end
+
+      grids = []
+      verticals.each do |anchor|
+        compatible = verticals.select do |line|
+          (line[:top] - anchor[:top]).abs <= 1 && (line[:bottom] - anchor[:bottom]).abs <= 1
+        end
+        (3..6).each do |column_count|
+          compatible.each_cons(column_count) do |columns|
+            next unless columns.each_cons(2).all? { |first, second| (second[:x] - first[:x]).between?(3, 8) }
+
+            left = columns.first[:x]
+            right = columns.last[:x]
+            top = columns.map { |line| line[:top] }.sum / columns.length
+            bottom = columns.map { |line| line[:bottom] }.sum / columns.length
+            grid_lines = horizontals.select do |line|
+              line[:left].between?(left - 1.2, left + 1.2) && line[:right].between?(right - 1.2, right + 1.2) &&
+                line[:y].between?(bottom - 1.2, top + 1.2)
+            end
+            next if grid_lines.length < 3
+
+            grids << { columns: columns.map { |line| line[:x] }, left: left, right: right, top: top, bottom: bottom,
+                       boundaries: (grid_lines.map { |line| line[:y] } + [ top, bottom ]).uniq.sort.reverse }
+          end
+        end
+      end
+      grids.uniq { |grid| grid.values_at(:left, :right, :top, :bottom).map { |value| value.round(1) } }
+    end
+
+    def chord_marker_centers(grid, curve_boxes)
+      grid[:columns].map do |column|
+        boxes = curve_boxes.select do |box|
+          next false unless (box[:x] - column).abs <= 2.5
+
+          box[:y].between?(grid[:bottom] - 2, grid[:top] + 10) && box[:width] <= 4 && box[:height] <= 4
+        end.sort_by { |box| box[:y] }
+        groups = []
+        boxes.each do |box|
+          if groups.empty? || box[:y] - groups.last.last[:y] > 2.5
+            groups << [ box ]
+          else
+            groups.last << box
+          end
+        end
+        group = groups.select { |candidate| candidate.length >= 3 }.max_by(&:length)
+        next unless group
+
+        { x: group.sum { |box| box[:x] } / group.length, y: group.sum { |box| box[:y] } / group.length }
+      end
+    end
+
+    def chord_marker_fret(marker, grid)
+      return 0 if marker[:y] > grid[:top] + 1
+      return unless marker[:y].between?(grid[:bottom] - 1, grid[:top] + 1)
+
+      grid[:boundaries].each_cons(2).with_index do |(upper, lower), index|
+        return index + 1 if marker[:y].between?(lower - 1, upper + 1)
+      end
+      nil
     end
 
     def repeat_metadata(systems)
@@ -960,11 +1071,17 @@ module Tef2
       top = texts.select { |item| item[:y] > 700 }
       title = top.sort_by { |item| -item[:y] }.find do |item|
         value = item[:text].downcase
-        !value.include?("tuning") && !value.include?("arranged") && !value.include?("clawhammerbanjo")
+        !value.match?(/\A\d+\z/) && !value.include?("tuning") && !value.include?("capo") &&
+          !value.include?("brainjo") && !value.include?("arranged") && !value.include?("clawhammerbanjo")
       end
       header = top.sort_by { |item| item[:x] }.map { |item| item[:text] }.join(" ")
-      match = header.match(/([a-gA-G][a-gA-G#b♭]{4,})\s*\)?\s+tuning/i)
-      [ title ? title[:text] : "", match ? match[1] : "" ]
+      match = header.match(/(?:\A|[\s(])([a-gA-G][a-gA-G#b♭]{4,})(?=\s|\)|,|\z)/)
+      subtitle = top.sort_by { |item| -item[:y] }.find do |item|
+        item != title && item[:x] < 500 && item[:text].match?(/\b(?:tuning|capo|brainjo|level)\b/i)
+      end
+      arranger = top.select { |item| item[:text].match?(/arranged|clawhammerbanjo|\.net/i) }
+        .sort_by { |item| -item[:y] }.map { |item| item[:text] }.join(" ")
+      { title: title ? title[:text] : "", tuning: match ? match[1] : "", subtitle: subtitle ? subtitle[:text] : "", arranger: arranger }
     end
 
     def filename_without_extension(filename)

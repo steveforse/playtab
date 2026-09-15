@@ -6,6 +6,8 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     score = {
       title: "Builder demo",
       lyrics: "One line\nTwo lines",
+      subtitle: "gCGCD# (capo 2), Brainjo level 3",
+      arranger: "arranged by Josh Turknett CLAWHAMMERBANJO.NET",
       tuning_label: "gCGCD#",
       measures: 1,
       time_signature: { numerator: 3, denominator: 4 },
@@ -18,6 +20,7 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
       ],
       sections: [ { measure: 0, position: 0, text: "Verse" } ],
       chords: [ { measure: 0, position: 512, name: "C# min" }, { measure: 0, position: 768, name: "G7" }, { measure: 0, position: 896, name: "bad chord" } ],
+      chord_diagrams: [ { name: "C# min", strings: [ 0, 2, 0, 1, 0 ], first_fret: 1 } ],
       repeats: [ { measure: 0, location: "left", direction: "forward" }, { measure: 0, location: "right", direction: "backward" } ],
       techniques: [
         { measure: 0, position: 0, string: 0, type: "hammer-on", label: "H" },
@@ -33,9 +36,12 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "gCGCD#", score[:tuning_label]
     assert_equal "120", document.at_xpath("//per-minute").text
     assert_equal "One line\nTwo lines", document.at_xpath("//miscellaneous-field[@name='playtab-lyrics']").text
+    assert_equal "gCGCD# (capo 2), Brainjo level 3", document.at_xpath("//credit[credit-type='subtitle']/credit-words").text
+    assert_equal "arranged by Josh Turknett CLAWHAMMERBANJO.NET", document.at_xpath("//credit[credit-type='arranger']/credit-words").text
     assert_equal 1, document.xpath("//measure").length
     assert_equal 2, document.xpath("//harmony").length
     assert_equal "dominant", document.at_xpath("//harmony[root/root-step='G']/kind").text
+    assert_equal "0,2,0,1,0", document.at_xpath("//harmony[root/root-step='C'][root/root-alter='1']")["data-playtab-strings"]
     assert_equal 2, document.xpath("//barline/repeat").length
     assert_equal "2", document.xpath("//fingering").first.text
     assert_equal "TEF fingering T", document.at_xpath("//other-technical").text

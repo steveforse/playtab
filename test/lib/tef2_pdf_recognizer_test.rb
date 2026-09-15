@@ -111,8 +111,14 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal "pull-off", recognizer.send(:technique_type, "p_o")
     assert_nil recognizer.send(:technique_type, "unknown")
     assert_equal "Demo", recognizer.send(:filename_without_extension, "C:\\tabs\\Demo.pdf")
-    assert_equal [ "Demo", "gCGCD#" ], recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 740, text: "gCGCD# tuning" } ])
-    assert_equal [ "Demo", "aDADE" ], recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 720, text: "key of D (aDADE tuning)" } ])
+    assert_equal({ title: "Demo", tuning: "gCGCD#", subtitle: "gCGCD# tuning", arranger: "" }, recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 740, text: "gCGCD# tuning" } ]))
+    assert_equal({ title: "Demo", tuning: "aDADE", subtitle: "key of D (aDADE tuning)", arranger: "" }, recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 720, text: "key of D (aDADE tuning)" } ]))
+    assert_equal({ title: "Drunken Sailor", tuning: "gCGCD#", subtitle: "gCGCD# (capo 2), Brainjo level 3", arranger: "arranged by Josh Turknett CLAWHAMMERBANJO.NET" }, recognizer.send(:header, [
+      { x: 256, y: 752, text: "Drunken Sailor" },
+      { x: 222, y: 740, text: "gCGCD# (capo 2), Brainjo level 3" },
+      { x: 491, y: 731, text: "arranged by Josh Turknett" },
+      { x: 479, y: 723, text: "CLAWHAMMERBANJO.NET" }
+    ]))
     assert_nil recognizer.send(:tempo, [ { texts: [ { x: 10, y: 100, text: "unrelated" } ] } ])
 
     assert_equal 2, recognizer.send(:beam_count_for_event, 50, [ [ 45, 80, 60, 80 ], [ 45, 82, 60, 82 ] ], 100)
@@ -142,6 +148,23 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert Tef2::PdfRecognizer::PageReceiver.new.send(:respond_to_missing?, :anything, false)
     chord_system = { bottom: 640, bars: [ 20, 300, 580 ], measure_start: 0, events: [] }
     assert_equal 1, recognizer.send(:chords_for_system, chord_system, [ { x: 40, y: 650, text: "C" }, { x: 50, y: 650, text: "min" } ]).length
+
+    grid_segments = [
+      [ 248, 695, 263, 695 ], [ 248, 690, 263, 690 ], [ 248, 684, 263, 684 ], [ 248, 678, 263, 678 ], [ 248, 673, 263, 673 ],
+      [ 248, 695, 248, 673 ], [ 253, 695, 253, 673 ], [ 258, 695, 258, 673 ], [ 263, 695, 263, 673 ]
+    ]
+    grid_curves = [
+      { x: 248, y: 700, width: 2, height: 2 }, { x: 248, y: 701, width: 2, height: 2 }, { x: 248, y: 702, width: 2, height: 2 },
+      { x: 253, y: 700, width: 2, height: 2 }, { x: 253, y: 701, width: 2, height: 2 }, { x: 253, y: 702, width: 2, height: 2 },
+      { x: 258, y: 700, width: 2, height: 2 }, { x: 258, y: 701, width: 2, height: 2 }, { x: 258, y: 702, width: 2, height: 2 },
+      { x: 263, y: 700, width: 2, height: 2 }, { x: 263, y: 701, width: 2, height: 2 }, { x: 263, y: 702, width: 2, height: 2 }
+    ]
+    diagram = recognizer.send(:chord_diagrams_for_page, [ { x: 244, y: 702, text: "D min" } ], grid_segments, grid_curves)
+    assert_equal [ { name: "D min", strings: [ 0, 0, 0, 0, -1 ], first_fret: 1, confidence: "high" } ], diagram
+    assert_equal 2, recognizer.send(:chord_marker_fret, { y: 686 }, { top: 695, bottom: 673, boundaries: [ 695, 690, 684, 678, 673 ] })
+    assert_nil recognizer.send(:chord_marker_fret, { y: 674 }, { top: 695, bottom: 673, boundaries: [ 695, 690, 684, 678 ] })
+    metadata = recognizer.send(:metadata, [ { texts: [], segments: [], curve_boxes: [], systems: [] } ], [])
+    assert_empty metadata[:chord_diagrams]
 
     lyric_pages = [
       { systems: [ :tab ], texts: [ { x: 30, y: 500, text: "LYRICS & CHORDS" }, { x: 30, y: 490, text: "Cm" }, { x: 30, y: 480, text: "First line" } ] },
