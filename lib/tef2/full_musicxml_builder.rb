@@ -599,16 +599,16 @@ module Tef2
           dest = ordered_notes[(i + 1)..].find { |n| n[:tef2_duration] > 0 }
           next unless dest
 
-          # TEF2 uses both effect1 values for the same legato marker.  The
-          # direction is determined by the destination fret, as TuxGuitar
-          # does when it rewrites its shared hammer flag.
-          kind = if note[:modern_tabledit] && [ 1, 2 ].include?(note[:effect1].to_i)
-            note[:effect1].to_i == 1 ? "hammer-on" : "pull-off"
-          elsif note[:modern_tabledit] && [ 1, 2 ].include?(note[:effect3].to_i)
-            note[:effect3].to_i == 1 ? "hammer-on" : "pull-off"
-          else
-            dest[:fret] > note[:fret] ? "hammer-on" : "pull-off"
+          # TEF2 and modern TablEdit use the legato effect values for a
+          # shared hammer/pull marker. The effect value is not a reliable
+          # direction field across files, so use the written fret movement.
+          # Same-fret markers are ambiguous and are not emitted as H/PO.
+          kind = if dest[:fret].to_i > note[:fret].to_i
+            "hammer-on"
+          elsif dest[:fret].to_i < note[:fret].to_i
+            "pull-off"
           end
+          next unless kind
           pair_num = note[:component_index]
 
           pairs[[ string, note[:component_index] ]] = {

@@ -59,4 +59,16 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "3", note_pitch.at_xpath("octave").text
     assert_equal "0", note_pitch.at_xpath("alter").text
   end
+
+  test "uses fret direction for modern legato markers" do
+    notes = [
+      { component_index: 0, measure: 0, position: 0, absolute_position: 0, string: 2, fret: 0, effect1: 2, effect3: 0, effect2: 0, tef2_duration: 64, modern_tabledit: true },
+      { component_index: 1, measure: 0, position: 64, absolute_position: 64, string: 2, fret: 4, effect1: 0, effect3: 0, effect2: 0, tef2_duration: 64, modern_tabledit: true }
+    ]
+
+    pairs = Tef2::FullMusicxmlBuilder.send(:build_technique_pairs, { 2 => notes })
+
+    assert_equal "hammer-on", pairs.fetch([ 2, 0 ])[:kind]
+    assert_equal false, pairs.fetch([ 2, 1 ])[:is_start]
+  end
 end
