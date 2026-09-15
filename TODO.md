@@ -48,7 +48,8 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Replaced the former SONiVOX starter bank with MuseScore General Lite 0.2.1 SF3 for General MIDI program 105 (banjo).
   - Preserved the Debian source attribution and complete MIT/public-domain/CC0 notices beside the bundled asset.
   - Added asset-integrity and player-configuration tests; browser playback exercises the bank through alphaTab.
-  - Dedicated sampled banjo articulations remain a separate future audio-quality project.
+  - Follow-up on `feature/realistic-banjo-articulation` holds the picked H/PO origin voice, applies an immediate destination pitch step, and adds a short quiet attack transient from the selected bank without a second picked attack.
+  - Dedicated sampled banjo articulations and bank-specific legato samples remain future audio-quality work.
 
 - [x] **9. Productize the workspace** — `feature/productize-workspace`
   - Add authentication, multi-user libraries, synchronization, and deployment hardening.

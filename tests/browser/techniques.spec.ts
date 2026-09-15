@@ -10,6 +10,11 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   await expect(notation.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(1);
   await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
   await expect(notation.locator('svg text').filter({ hasText: /^sl\.?$/i })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled({ timeout: 60000 });
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await page.setViewportSize({ width: 900, height: 1000 });
   await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
   await page.screenshot({ path: 'tmp/techniques.png', fullPage: true });
