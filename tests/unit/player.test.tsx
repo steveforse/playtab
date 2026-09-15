@@ -38,7 +38,7 @@ vi.mock('@coderline/alphatab', () => ({
 }));
 vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlphaTab }));
 
-import { Player, downloadBytes } from '../../app/frontend/Player';
+import { availableSoundFonts, Player, downloadBytes } from '../../app/frontend/Player';
 
 Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
 
@@ -68,6 +68,7 @@ describe('notation player', () => {
     const api = readyPlayer();
     expect(alphaTab.toAlphaTab).toHaveBeenCalledWith(demo);
     expect((api.settings as any).player.soundFont).toBe('/notation/soundfont/musescore-general-lite.sf3');
+    if (availableSoundFonts.length > 1) expect(screen.getByLabelText('Sound bank')).toBeTruthy();
     expect(api.renderScore).toHaveBeenCalled();
     expect(screen.getAllByText('Ready when you are')).toHaveLength(2);
 
@@ -91,6 +92,20 @@ describe('notation player', () => {
 
     act(() => api.error.emit({ message: '' }));
     expect(screen.getByRole('alert').textContent).toContain('Notation or audio could not load.');
+  });
+
+  it('switches between available comparison sound banks', async () => {
+    const injected = availableSoundFonts.length < 2;
+    if (injected) availableSoundFonts.push({ id: 'test-bank', label: 'Test bank', filename: 'test-bank.sf2', description: 'Unit test bank' });
+    try {
+      readyPlayer();
+      const option = availableSoundFonts[1];
+      const select = screen.getByLabelText('Sound bank');
+      fireEvent.change(select, { target: { value: option.id } });
+      await waitFor(() => expect(alphaTab.FakeAlphaTabApi.latest.settings).toMatchObject({ player: { soundFont: `/notation/soundfont/${option.filename}` } }));
+    } finally {
+      if (injected) availableSoundFonts.pop();
+    }
   });
 
   it('exports native files and prints a native score', () => {

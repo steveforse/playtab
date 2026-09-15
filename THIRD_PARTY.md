@@ -14,6 +14,6 @@ Dependencies remain under their respective licenses; this repository does not re
 | MuseScore General Lite SoundFont | Bundled attribution and MIT/public-domain/CC0 notices are in `soundfont/MuseScore_General_Lite.copyright`; source package: https://packages.debian.org/bookworm/all/musescore-general-soundfont-small |
 | DM Sans / Libre Baskerville | Served through Google Fonts; see https://fonts.google.com/specimen/DM+Sans/license and https://fonts.google.com/specimen/Libre+Baskerville/license |
 
-The Vite build copies the alphaTab font and the selected SoundFont plus its attribution files into `public/notation/` during development and builds. Keep those notices with redistributed assets. The alphaTab ESM renderer has a small MPL-2.0 upward-slur patch in `patches/`; retain it with distributions.
+The Vite build copies the alphaTab font and the selected SoundFont plus its attribution files into `public/notation/` during development and builds. The optional banks described in `soundfont-catalog.json` are local comparison assets under ignored `tmp/` and are not redistributed by this repository. Keep those notices with redistributed assets. The alphaTab ESM renderer has a small MPL-2.0 upward-slur patch in `patches/`; retain it with distributions.
 
 The included four-measure practice roll is an original demo constructed for this project.
