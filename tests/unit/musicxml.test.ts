@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readMusicXml, toImportedScoreDocument } from '../../app/frontend/music/musicxml';
+import { configureChordDiagrams, readMusicXml, toImportedScoreDocument } from '../../app/frontend/music/musicxml';
 import { applyTechniques, extractTechniques } from '../../app/frontend/music/musicxml-techniques';
 import { importer, model } from '@coderline/alphatab';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
@@ -81,10 +81,26 @@ describe('MusicXML preview', () => {
     const annotated = fixture()
       .replace('<note><pitch', `${direction}${harmony}<note><pitch`)
       .replace('<backup><duration>4</duration></backup>', `<backup><duration>4</duration></backup>${tabDirection}${tabHarmony}`);
-    const { score } = readMusicXml(annotated, 'annotations.xml');
+    const { score, chordDiagrams } = readMusicXml(annotated, 'annotations.xml');
     const beats = score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
     expect(beats.find(beat => beat.text)?.text).toBe('Verse');
     expect(beats.find(beat => beat.chord)?.chord?.name).toBe('Cm');
+    expect(chordDiagrams).toEqual([]);
+  });
+  it('keeps timed lyrics aligned and imports TEF chord voicings without enabling diagrams', () => {
+    const harmony = '<harmony data-playtab-strings="0,2,0,1,0" data-playtab-first-fret="1"><root><root-step>C</root-step></root><kind>minor</kind><staff>2</staff></harmony>';
+    const annotated = fixture()
+      .replace('<backup><duration>4</duration></backup>', `<forward><duration>0</duration></forward><backup><duration>4</duration></backup>${harmony}`)
+      .replace('</notations></note>', '</notations><lyric number="1"><syllabic>single</syllabic><text>There</text></lyric></note>');
+    const preview = readMusicXml(annotated, 'presentation.xml');
+    const chord = preview.score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats).find(beat => beat.chord)?.chord;
+    expect(preview.timedLyrics).toEqual([{ measure: 1, beat: 1, text: 'There' }]);
+    expect(chord?.strings).toEqual([0, 2, 0, 1, 0]);
+    expect(preview.chordDiagrams).toEqual([{ name: 'Cm', strings: [0, 2, 0, 1, 0], firstFret: 1, barreFrets: [] }]);
+    expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(false);
+    configureChordDiagrams(preview.score, true);
+    expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(true);
+    expect(chord?.showDiagram).toBe(true);
   });
   it('imports MusicXML lyrics onto the retained tab staff', () => {
     const annotated = fixture().replace(

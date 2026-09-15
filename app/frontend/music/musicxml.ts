@@ -3,7 +3,101 @@ import { extractTechniques, applyTechniques } from './musicxml-techniques';
 import type { ImportedScoreDocument } from './score';
 
 export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
-export type MusicXmlPreview = { id: string; source: string; filename: string; sourceFormat: MusicXmlSourceFormat; score: model.Score; tuningLabel: string; lyricsSection: string | null };
+export type TimedLyric = { measure: number; beat: number; text: string };
+export type ChordDiagramPreview = { name: string; strings: number[]; firstFret: number; barreFrets: number[] };
+export type MusicXmlPreview = {
+  id: string;
+  source: string;
+  filename: string;
+  sourceFormat: MusicXmlSourceFormat;
+  score: model.Score;
+  tuningLabel: string;
+  lyricsSection: string | null;
+  timedLyrics: TimedLyric[];
+  chordDiagrams: ChordDiagramPreview[];
+};
+
+type ChordMetadata = { measure: number; position: number; strings: number[]; firstFret: number };
+
+const elementChildren = (node: Element) => Array.from(node.childNodes).filter((child): child is Element => child.nodeType === 1);
+const firstChild = (node: Element, name: string) => elementChildren(node).find(child => child.localName === name);
+const childText = (node: Element, name: string) => firstChild(node, name)?.textContent ?? '';
+
+function chordMetadata(source: string): ChordMetadata[] {
+  const doc = new DOMParser().parseFromString(source, 'application/xml');
+  const part = firstChild(doc.documentElement, 'part')!;
+  const metadata: ChordMetadata[] = [];
+  let divisions = 1;
+  elementChildren(part).filter(node => node.localName === 'measure').forEach((measure, measureIndex) => {
+    let position = 0;
+    for (const item of elementChildren(measure)) {
+      if (item.localName === 'attributes') divisions = Number(childText(item, 'divisions')) || divisions;
+      if (item.localName === 'backup') {
+        position -= Number(childText(item, 'duration')) * 960 / divisions;
+        continue;
+      }
+      if (item.localName === 'forward') {
+        position += Number(childText(item, 'duration')) * 960 / divisions;
+        continue;
+      }
+      if (item.localName === 'harmony') {
+        const strings = (item.getAttribute('data-playtab-strings') ?? '').split(',')
+          .map(value => Number(value.trim())).filter(value => Number.isInteger(value));
+        if (strings.length === 5) metadata.push({
+          measure: measureIndex,
+          position: position + Number(childText(item, 'offset')) * 960 / divisions,
+          strings,
+          firstFret: Number(item.getAttribute('data-playtab-first-fret')) || 1,
+        });
+        continue;
+      }
+      if (item.localName !== 'note' || firstChild(item, 'chord')) continue;
+      position += Number(childText(item, 'duration')) * 960 / divisions;
+    }
+  });
+  return metadata;
+}
+
+function applyChordMetadata(tab: model.Staff, metadata: ChordMetadata[]) {
+  for (const entry of metadata) {
+    const beats = (tab.bars[entry.measure]?.voices ?? []).flatMap(voice => voice.beats);
+    const barStart = Math.min(...beats.map(beat => beat.playbackStart));
+    const matches = beats.filter(beat => Math.abs(beat.playbackStart - barStart - entry.position) < 0.01 && beat.chord);
+    for (const beat of matches) {
+      beat.chord!.strings = [...entry.strings];
+      beat.chord!.firstFret = entry.firstFret;
+    }
+  }
+}
+
+function timedLyrics(tab: model.Staff): TimedLyric[] {
+  const lyrics = new Map<string, TimedLyric>();
+  for (const bar of tab.bars) {
+    for (const beat of bar.voices.flatMap(voice => voice.beats)) {
+      for (const value of (beat.lyrics ?? []).map(text => text.trim()).filter(Boolean)) {
+        const key = `${beat.playbackStart}:${value}`;
+        lyrics.set(key, { measure: bar.index + 1, beat: beat.index + 1, text: value });
+      }
+    }
+  }
+  return [...lyrics.values()];
+}
+
+function chordDiagrams(tab: model.Staff): ChordDiagramPreview[] {
+  return [...(tab.chords?.values() ?? [])].filter(chord => {
+    if (chord.strings.length !== 5 || !chord.strings.some(fret => fret >= 0)) return false;
+    return true;
+  }).map(chord => ({ name: chord.name, strings: [...chord.strings], firstFret: chord.firstFret, barreFrets: [...chord.barreFrets] }));
+}
+
+export function configureChordDiagrams(score: model.Score, enabled: boolean) {
+  if (!score.stylesheet) return;
+  score.stylesheet.globalDisplayChordDiagramsInScore = enabled;
+  score.stylesheet.globalDisplayChordDiagramsOnTop = false;
+  for (const staff of score.tracks?.[0]?.staves ?? []) {
+    for (const chord of staff.chords?.values() ?? []) chord.showDiagram = enabled && chord.strings.length === staff.tuning.length && chord.strings.some(fret => fret >= 0);
+  }
+}
 
 // Preview keeps the imported model separate from the deliberately limited v1 document.
 export function readMusicXml(source: string, filename: string, sourceFormat: MusicXmlSourceFormat = 'musicxml'): MusicXmlPreview {
@@ -31,9 +125,16 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   tab.showTablature = true;
   score.title = (score.title.trim() || filename.replace(/\.(musicxml|xml)$/i, '')).slice(0, 160);
   applyTechniques(score, tab, originalStaffIndex, techniques.markers);
+  applyChordMetadata(tab, chordMetadata(source));
+  const timedLyricEntries = timedLyrics(tab);
+  const diagramEntries = chordDiagrams(tab);
+  configureChordDiagrams(score, false);
   const names = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
   const tuningLabel = [...tab.tuning].reverse().map((n, i) => i === 0 ? names[n % 12].toLowerCase() : names[n % 12]).join(' ');
-  return { id: crypto.randomUUID(), source, filename, sourceFormat, score, tuningLabel, lyricsSection: techniques.lyricsSection };
+  return {
+    id: crypto.randomUUID(), source, filename, sourceFormat, score, tuningLabel,
+    lyricsSection: techniques.lyricsSection, timedLyrics: timedLyricEntries, chordDiagrams: diagramEntries,
+  };
 }
 
 export function toImportedScoreDocument(preview: MusicXmlPreview, warnings: string[]): ImportedScoreDocument {
