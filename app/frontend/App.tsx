@@ -133,7 +133,7 @@ export function App() {
         <ScoreEditor score={score} preview={preview} onApplyNative={applyNativeEdits} onApplyImported={applyImportedEdits} />
         <div className="practice-note"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span></div>
         <Player key={preview?.id ?? JSON.stringify(score)} score={score} preview={preview} />
-        <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · SONiVOX</span></div>
+        <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
     </main>
     <dialog ref={dialog} className="import-dialog">

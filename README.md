@@ -55,7 +55,7 @@ Play/pause and restart are available above and below the score, synchronized to 
 - The stored version-1 score format remains intentionally limited. Imported MusicXML/TEF previews additionally preserve explicit alternate tunings, chords, section text, fingering, hammer-ons, pull-offs, bends, and selected other techniques where the source format provides enough information.
 - The score editor can change native notes and measures, and can edit imported title, tempo, tuning, note strings and frets, measure count, lyrics, chord names, section text, annotations, and supported techniques. Imported edits are applied to the source MusicXML before the score is saved, so untouched source metadata remains available when the score is reopened.
 
-Vector PDF uploads are supported as a reviewable MusicXML preview. The recognizer preserves visible tablature, section labels, chord names, standalone lyrics, and nearby technique/fingering marks where the PDF geometry is clear. It warns when timing, tempo, chord voicings, diagrams, repeats, or other source-only metadata cannot be recovered. Scanned image PDFs are not supported yet. The bundled SoundFont is a starter sound, not an auditioned premium banjo library.
+Vector PDF uploads are supported as a reviewable MusicXML preview. The recognizer preserves visible tablature, section labels, chord names, standalone lyrics, and nearby technique/fingering marks where the PDF geometry is clear. It warns when timing, tempo, chord voicings, diagrams, repeats, or other source-only metadata cannot be recovered. Scanned image PDFs are not supported yet. The bundled MuseScore General Lite SF3 bank provides a fuller General MIDI baseline; it is still not a dedicated sampled banjo library.
 
 ### Direct TEF uploads
 
@@ -118,6 +118,6 @@ On this WSL machine, Chromium's missing ALSA library was extracted under `/tmp/p
 
 The schema is intentionally versioned. Expand it before attempting general TEF/MusicXML conversion; reject unsupported features rather than simplifying them silently.
 
-Playback currently selects alphaTab's supported ScriptProcessor output: 1.8.4's AudioWorklet output has a start/pause race that surfaced in browser testing. Synthesis still runs in a worker. Revisit AudioWorklet output when upgrading alphaTab.
+Playback uses alphaTab's Web Audio AudioWorklet output, with synthesis running in a worker. The bundled MuseScore General Lite SF3 bank is selected as General MIDI program 105 (banjo); dedicated banjo samples and realistic legato articulations remain follow-up work.
 
 See [THIRD_PARTY.md](THIRD_PARTY.md) for asset attribution. The production Dockerfile includes a frontend build stage, but this prototype has not been deployed publicly.

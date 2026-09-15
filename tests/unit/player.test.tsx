@@ -12,6 +12,7 @@ const alphaTab = vi.hoisted(() => {
   }
   class FakeAlphaTabApi {
     static latest: FakeAlphaTabApi;
+    settings: unknown;
     playerReady = new EventBus<void>();
     playerStateChanged = new EventBus<{ state: number }>();
     playerPositionChanged = new EventBus<{ currentTime: number; endTime: number }>();
@@ -26,7 +27,7 @@ const alphaTab = vi.hoisted(() => {
     playPause = vi.fn();
     downloadMidi = vi.fn();
     print = vi.fn();
-    constructor() { FakeAlphaTabApi.latest = this; }
+    constructor(_element: unknown, settings: unknown) { this.settings = settings; FakeAlphaTabApi.latest = this; }
   }
   return { FakeAlphaTabApi, toAlphaTab: vi.fn(() => ({ tracks: [] })) };
 });
@@ -66,6 +67,7 @@ describe('notation player', () => {
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {
     const api = readyPlayer();
     expect(alphaTab.toAlphaTab).toHaveBeenCalledWith(demo);
+    expect((api.settings as any).player.soundFont).toBe('/notation/soundfont/musescore-general-lite.sf3');
     expect(api.renderScore).toHaveBeenCalled();
     expect(screen.getAllByText('Ready when you are')).toHaveLength(2);
 

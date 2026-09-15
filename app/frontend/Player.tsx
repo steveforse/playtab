@@ -47,7 +47,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
       core: { fontDirectory: `${base}font/`, useWorkers: !preview, enableLazyLoading: !preview },
       display: { scale: 1.1, barsPerRow },
       player: {
-        enablePlayer: true, soundFont: `${base}soundfont/sonivox.sf2`,
+        enablePlayer: true, soundFont: `${base}soundfont/musescore-general-lite.sf3`,
         // alphaTab's AudioWorklet output now passes the start/pause smoke
         // tests and avoids the legacy ScriptProcessor scheduling path.
         outputMode: PlayerOutputMode.WebAudioAudioWorklets,
