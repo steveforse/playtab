@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { importer } from '@coderline/alphatab';
 
-test('unavailable converter errors allow retry without losing the score', async ({ page }) => {
+test('unavailable TEF errors allow retry without losing the score', async ({ page }) => {
   await page.route('**/api/tef_imports', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'TEF converter is unavailable or timed out. Please try again.' }) }));
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
