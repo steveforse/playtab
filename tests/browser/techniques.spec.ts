@@ -62,3 +62,24 @@ test('renders a native thumb fingering below the tablature staff', async ({ page
   const position = await readThumbPosition();
   expect(position?.glyphY).toBeGreaterThan(position?.lowerGeometryY ?? Number.POSITIVE_INFINITY);
 });
+
+test('renders section words below the tablature staff', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<note><pitch', '<direction><direction-type><words>Banjo Solo</words></direction-type></direction><note><pitch');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'section.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readSectionPosition = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const label = nodes.find(node => node.textContent === 'Banjo Solo');
+    const svg = (label as SVGTextElement | undefined)?.ownerSVGElement;
+    const stems = [...(svg?.querySelectorAll('rect') ?? [])]
+      .filter(rect => rect.getAttribute('fill') === '#000000')
+      .map(rect => Number(rect.getAttribute('y')) + Number(rect.getAttribute('height')))
+      .filter(Number.isFinite);
+    const labelY = Number(label?.getAttribute('y'));
+    return Number.isFinite(labelY) && stems.length ? { labelY, stemBottomY: Math.max(...stems) } : null;
+  });
+  await expect.poll(async () => (await readSectionPosition())?.labelY ?? -1).toBeGreaterThan(0);
+  const position = await readSectionPosition();
+  expect((position?.labelY ?? Number.NEGATIVE_INFINITY) + 0.1).toBeGreaterThanOrEqual(position?.stemBottomY ?? Number.POSITIVE_INFINITY);
+});
