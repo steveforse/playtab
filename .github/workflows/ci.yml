@@ -94,5 +94,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck && npm run test:coverage && npm run build
-      - run: python3 -m pip install --user --break-system-packages -r converter/requirements.txt
       - run: python3 -m unittest discover -s converter -p 'test_*.py'
