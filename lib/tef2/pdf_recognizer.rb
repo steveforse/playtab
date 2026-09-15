@@ -61,7 +61,7 @@ module Tef2
         if string == "!"
           @flat_symbols << { x: origin.x, y: origin.y, text: string }
         end
-        if [ "!", '"' ].include?(string) && state.respond_to?(:current_font)
+        if string.length == 1 && string.ord.between?(33, 35) && state.respond_to?(:current_font)
           @time_signature_symbols << {
             x: origin.x,
             y: origin.y,
@@ -73,14 +73,15 @@ module Tef2
       end
 
       def time_signature
-        numerator = time_signature_symbols.find do |symbol|
-          symbol[:code] == 33 && time_signature_symbols.any? do |other|
-            other[:code] == 34 && (other[:x] - symbol[:x]).abs <= 2 && (other[:y] - symbol[:y]).abs.between?(8, 16)
-          end
+        pair = time_signature_symbols.sort_by { |symbol| [ symbol[:y], symbol[:x] ] }.each_cons(2).find do |numerator, denominator|
+          (denominator[:x] - numerator[:x]).abs <= 2 &&
+            (denominator[:y] - numerator[:y]).between?(8, 16)
         end
-        return unless numerator
+        return unless pair
 
-        value = numerator_value(numerator)
+        numerator, denominator = pair
+
+        value = numerator[:code] == denominator[:code] ? 4 : numerator_value(numerator)
         value && { numerator: value, denominator: 4 }
       rescue StandardError
         nil
