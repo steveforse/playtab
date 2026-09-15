@@ -8,6 +8,7 @@ class RegistrationsController < ApplicationController
   def create
     @user = User.new(user_params)
     if @user.save
+      Song.where(user_id: nil).update_all(user_id: @user.id)
       start_new_session_for @user
       redirect_to after_authentication_url
     else

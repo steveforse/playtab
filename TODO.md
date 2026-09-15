@@ -55,6 +55,7 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Reassess upload limits and service isolation before public hosting.
   - Added password authentication, account registration, password reset, secure production sessions, and sign-out.
   - Scoped every saved score and import/export API operation to the signed-in account; database persistence provides cross-session library synchronization.
+  - Existing unowned prototype scores are claimed by the first newly registered account during the local-to-account transition.
   - Protected upload endpoints with CSRF, production host authorization, HTTPS enforcement, secure cookies, and a pre-parse 12 MB request cap. Native parsers remain in-process with endpoint-specific limits and no converter service.
 
 - [ ] **10. Add scanned PDF recognition/import** — `feature/scanned-pdf-recognition`
