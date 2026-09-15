@@ -19,6 +19,21 @@ class RegistrationsControllerTest < ActionDispatch::IntegrationTest
     assert cookies[:session_id]
   end
 
+  test "assigns legacy local scores to the new account" do
+    Song.insert_all([ {
+      title: "Legacy score", score: { "title" => "Legacy score" },
+      created_at: Time.current, updated_at: Time.current
+    } ])
+    legacy_song = Song.order(:id).last
+
+    post registration_path, params: {
+      user: { email_address: "legacy@example.com", password: "password", password_confirmation: "password" }
+    }
+
+    assert_redirected_to root_path
+    assert_equal User.order(:id).last.id, legacy_song.reload.user_id
+  end
+
   test "rejects mismatched passwords" do
     assert_no_difference "User.count" do
       post registration_path, params: {
