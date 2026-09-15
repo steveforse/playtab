@@ -924,7 +924,16 @@ module Tef2
         end
       end
 
-      { left_margin: best[2], right_margin: best[3], usable: best[4] }
+      # If the first event is visibly close to the barline and the best fit
+      # chooses no left margin, the quantizer can turn that event into a false
+      # leading rest. Anchor the first event to the barline and use the rest
+      # of the printed measure for the timing grid.
+      first_offset = event_xs.min - left
+      if best[2] <= 1.0 && first_offset <= width * 0.15
+        { left_margin: first_offset, right_margin: 0.0, usable: width - first_offset }
+      else
+        { left_margin: best[2], right_margin: best[3], usable: best[4] }
+      end
     end
 
     def pdf_measure_ticks(time_signature)
