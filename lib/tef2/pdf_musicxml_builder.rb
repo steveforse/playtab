@@ -66,6 +66,8 @@ module Tef2
             write_tempo(xml, score[:tempo]) if score[:tempo]
           end
 
+          write_repeat_barlines(xml, score[:repeats] || [], measure_index)
+
           sections.fetch(measure_index, []).each do |section|
             write_words(xml, section[:text].to_s, section[:position].to_i, pdf_measure_ticks, measure_ticks)
           end
@@ -153,11 +155,34 @@ module Tef2
           xml.send("root-step", match[1])
           xml.send("root-alter", match[2] == "#" ? "1" : "-1") unless match[2].empty?
         end
-        suffix = (match[3] || "").downcase
-        kind = %w[min m].include?(suffix) ? "minor" : %w[maj major].include?(suffix) ? "major" : "other"
-        xml.kind(kind)
+        xml.kind(chord_kind(match[3]))
         xml.offset(pdf_position_to_xml(position, pdf_measure_ticks, measure_ticks).to_s) if position.positive?
       end
+    end
+
+    def write_repeat_barlines(xml, repeats, measure_index)
+      repeats.select { |repeat| repeat[:measure].to_i == measure_index }.each do |repeat|
+        xml.barline(location: repeat.fetch(:location)) do
+          xml.repeat(direction: repeat.fetch(:direction))
+        end
+      end
+    end
+
+    def chord_kind(value)
+      suffix = value.to_s.strip.downcase
+      return "minor" if %w[min m minor].include?(suffix)
+      return "major" if suffix.empty? || %w[maj major].include?(suffix)
+      return "dominant" if suffix == "7"
+      return "major-seventh" if suffix == "maj7"
+      return "minor-seventh" if %w[min7 m7 minor7].include?(suffix)
+      return "diminished" if suffix == "dim"
+      return "diminished-seventh" if suffix == "dim7"
+      return "augmented" if suffix == "aug"
+      return "augmented-seventh" if suffix == "aug7"
+      return "suspended-second" if suffix == "sus2"
+      return "suspended-fourth" if %w[sus sus4].include?(suffix)
+
+      "other"
     end
 
     def write_rest(xml, duration)

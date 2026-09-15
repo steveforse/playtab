@@ -43,13 +43,14 @@ module Tef2
     }.freeze
 
     class PageReceiver < PDF::Reader::PageTextReceiver
-      attr_reader :segments, :time_signature_symbols
+      attr_reader :segments, :time_signature_symbols, :curve_boxes
 
       def initialize
         super
         @segments = []
         @flat_symbols = []
         @time_signature_symbols = []
+        @curve_boxes = []
         @pending = nil
       end
 
@@ -128,6 +129,32 @@ module Tef2
       def fill_stroke(*); @pending = nil; end
       def fill_stroke_with_even_odd(*); @pending = nil; end
       def end_path(*); @pending = nil; end
+
+      def append_curved_segment(*args); record_curve_box(args); end
+      def append_curved_segment_initial_point_replicated(*args); record_curve_box(args); end
+      def append_curved_segment_final_point_replicated(*args); record_curve_box(args); end
+
+      private
+
+      def record_curve_box(args)
+        points = args.each_slice(2).filter_map do |x, y|
+          next unless x.is_a?(Numeric) && y.is_a?(Numeric)
+
+          state.ctm_transform_point(x, y)
+        end
+        return if points.empty?
+
+        xs = points.map(&:x)
+        ys = points.map(&:y)
+        @curve_boxes << {
+          x: (xs.min + xs.max) / 2.0,
+          y: (ys.min + ys.max) / 2.0,
+          width: xs.max - xs.min,
+          height: ys.max - ys.min
+        }
+      end
+
+      public
 
       def method_missing(name, *args)
         state.public_send(name, *args) if state&.respond_to?(name)
@@ -227,6 +254,7 @@ module Tef2
         tempo: metadata[:tempo],
         sections: metadata[:sections],
         chords: metadata[:chords],
+        repeats: metadata[:repeats],
         lyrics: metadata[:lyrics],
         techniques: metadata[:techniques],
         fingerings: metadata[:fingerings],
@@ -285,7 +313,8 @@ module Tef2
       segments = receiver.segments.select do |x1, y1, x2, y2|
         [ x1, x2 ].min >= 5 && [ x1, x2 ].max <= 607 && [ y1, y2 ].min >= 10 && [ y1, y2 ].max <= 782
       end
-      page_systems = systems(note_texts, segments)
+      curve_boxes = receiver.respond_to?(:curve_boxes) ? receiver.curve_boxes : []
+      page_systems = systems(note_texts, segments, curve_boxes)
       detected_time_signature = receiver.respond_to?(:time_signature) ? receiver.time_signature : nil
       symbols = receiver.respond_to?(:time_signature_symbols) ? receiver.time_signature_symbols : []
       detected_time_signature = infer_time_signature_from_spacing(detected_time_signature, symbols, page_systems)
@@ -296,7 +325,7 @@ module Tef2
       raise Error, "A PDF page could not be read safely.", cause: e
     end
 
-    def systems(texts, segments)
+    def systems(texts, segments, curve_boxes = [])
       horizontal = segments.filter_map do |x1, y1, x2, y2|
         next unless (y1 - y2).abs < 0.8 && (x2 - x1).abs >= 100
 
@@ -332,16 +361,17 @@ module Tef2
 
         top = candidate.first[0]
         bottom = candidate.last[0]
-        bars = segments.filter_map do |x1, y1, x2, y2|
+        raw_bars = segments.filter_map do |x1, y1, x2, y2|
           next unless (x1 - x2).abs < 0.8 && [ y1, y2 ].min <= top + 1 && [ y1, y2 ].max >= bottom - 1
 
           x = (x1 + x2) / 2.0
           x if x.between?(start - 2, finish + 2)
         end
+        repeat_barlines = repeat_barlines(raw_bars, curve_boxes, top, bottom, start, finish)
         # TablEdit commonly draws a barline as two very close vertical
         # strokes. Treat that pair as one boundary or it becomes a phantom
         # measure and shifts every following note.
-        bars = unique_sorted(bars, 4.0)
+        bars = unique_sorted(raw_bars, 4.0)
         if bars.length < 2
           cursor += 5
           next
@@ -371,10 +401,59 @@ module Tef2
           end
         end
 
-        result << { page: 0, top: top, bottom: bottom, bars: bars, events: events, texts: texts }
+        result << { page: 0, top: top, bottom: bottom, bars: bars, repeat_barlines: repeat_barlines, events: events, texts: texts }
         cursor += 5
       end
       result
+    end
+
+    def repeat_barlines(raw_bars, curve_boxes, top, bottom, start, finish)
+      bars = raw_bars.sort.uniq
+      circles = circle_centers(curve_boxes).select do |x, y|
+        x.between?(start - 20, finish + 20) && y.between?(top - 2, bottom + 2)
+      end
+      bars.each_cons(2).filter_map do |left, right|
+        next unless (right - left).between?(1.0, 4.5)
+
+        pair = [ left, right ]
+        direction = if repeat_dots?(circles, pair, side: :right)
+          "forward"
+        elsif repeat_dots?(circles, pair, side: :left)
+          "backward"
+        end
+        next unless direction
+
+        { boundary: pair.sum / 2.0, direction: direction }
+      end.uniq
+    end
+
+    def circle_centers(curve_boxes)
+      points = curve_boxes.filter_map do |box|
+        next unless box[:width] <= 4 && box[:height] <= 4
+
+        [ box[:x], box[:y] ]
+      end
+      groups = []
+      points.sort_by { |x, y| [ y, x ] }.each do |point|
+        group = groups.find { |candidate| candidate.any? { |x, y| (x - point[0]).abs <= 4 && (y - point[1]).abs <= 4 } }
+        group ? group << point : groups << [ point ]
+      end
+      groups.filter_map do |group|
+        next if group.length < 3
+
+        [ group.sum { |x, _y| x } / group.length, group.sum { |_x, y| y } / group.length ]
+      end
+    end
+
+    def repeat_dots?(circles, pair, side:)
+      left, right = pair
+      candidates = circles.select do |x, _y|
+        distance = side == :right ? x - right : left - x
+        distance.between?(0.5, 18)
+      end
+      candidates.combination(2).any? do |first, second|
+        (first[0] - second[0]).abs <= 3 && (first[1] - second[1]).abs.between?(6, 14)
+      end
     end
 
     def metadata(pages, systems)
@@ -392,11 +471,27 @@ module Tef2
       {
         sections: deduplicate_metadata(sections),
         chords: deduplicate_metadata(chords),
+        repeats: repeat_metadata(systems),
         lyrics: lyrics(pages),
         techniques: deduplicate_metadata(techniques),
         fingerings: deduplicate_metadata(fingerings),
         tempo: tempo(pages)
       }
+    end
+
+    def repeat_metadata(systems)
+      systems.flat_map do |system|
+        system.fetch(:repeat_barlines, []).filter_map do |repeat|
+          boundary = system[:bars].index { |bar| (bar - repeat[:boundary]).abs <= 4.5 }
+          next unless boundary
+
+          if repeat[:direction] == "forward"
+            { measure: system.fetch(:measure_start, 0) + boundary, location: "left", direction: "forward", confidence: "high" }
+          elsif boundary.positive? || system.fetch(:measure_start, 0).positive?
+            { measure: system.fetch(:measure_start, 0) + boundary - 1, location: "right", direction: "backward", confidence: "high" }
+          end
+        end
+      end
     end
 
     def infer_time_signature_from_spacing(time_signature, symbols, page_systems)

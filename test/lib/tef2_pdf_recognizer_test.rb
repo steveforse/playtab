@@ -3,7 +3,7 @@ require "tef2/pdf_recognizer"
 
 class Tef2PdfRecognizerTest < ActiveSupport::TestCase
   FakeRun = Struct.new(:x, :y, :text, :width)
-  FakePage = Struct.new(:runs_data, :segments, :width, :height, :flat_symbols_data) do
+  FakePage = Struct.new(:runs_data, :segments, :width, :height, :flat_symbols_data, :curve_boxes_data) do
     def walk(receiver)
       receiver.configure(self)
     end
@@ -14,12 +14,13 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
   FakeReceiver = Class.new do
-    attr_reader :segments, :flat_symbols
+    attr_reader :segments, :flat_symbols, :curve_boxes
 
     def configure(page)
       @runs = page.runs_data
       @segments = page.segments
       @flat_symbols = page.flat_symbols_data || []
+      @curve_boxes = page.curve_boxes_data || []
     end
 
     def runs(**)
@@ -140,6 +141,20 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal [ 0, 64, 128, 192, 256 ], [ 401.1, 411.9, 422.7, 433.5, 444.3 ].map { |x| recognizer.send(:position, x, 391.5, 477.8, step: 64, measure_ticks: 512, layout: layout) }
     assert_equal 512, recognizer.send(:pdf_measure_ticks, numerator: 2, denominator: 4)
 
+    curves = [ 110, 95, 110, 95, 110, 95, 110, 95, 110, 105, 110, 105, 110, 105, 110, 105,
+      92, 95, 92, 95, 92, 95, 92, 95, 92, 105, 92, 105, 92, 105, 92, 105 ].each_slice(2).map do |x, y|
+      { x: x, y: y, width: 2, height: 2 }
+    end
+    assert_equal [ { boundary: 101.0, direction: "forward" } ], recognizer.send(:repeat_barlines, [ 100, 102 ], curves, 90, 110, 20, 200)
+    assert_equal [ { boundary: 101.0, direction: "backward" } ], recognizer.send(:repeat_barlines, [ 100, 102 ], curves.drop(8), 90, 110, 20, 200)
+    assert_equal [
+      { measure: 3, location: "left", direction: "forward", confidence: "high" },
+      { measure: 6, location: "right", direction: "backward", confidence: "high" }
+    ], recognizer.send(:repeat_metadata, [
+      { measure_start: 3, bars: [ 100, 102 ], repeat_barlines: [ { boundary: 101, direction: "forward" } ] },
+      { measure_start: 6, bars: [ 90, 101, 200 ], repeat_barlines: [ { boundary: 101, direction: "backward" } ] }
+    ])
+
     assert_equal({ numerator: 3, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 2, denominator: 4 }, [ { code: 33, y: 100 } ], [ { top: 90, bottom: 130, bars: [ 20, 100, 180 ], events: [ { x: 40 }, { x: 60 }, { x: 120 }, { x: 140 } ] } ]))
     assert_equal({ numerator: 2, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 2, denominator: 4 }, [ { code: 33, y: 100 } ], [ { top: 90, bottom: 130, bars: [ 20, 100, 180 ], events: [ { x: 40 }, { x: 50 }, { x: 120 }, { x: 130 } ] } ]))
     assert_equal({ numerator: 2, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 2, denominator: 4 }, [], []))
@@ -220,6 +235,10 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     receiver.stroke_path
     receiver.append_line(2, 2)
     assert_equal 1, receiver.segments.length
+    receiver.append_curved_segment(10, 20, 30, 40, 50, 60)
+    receiver.append_curved_segment_initial_point_replicated(10, 20, 30, 40, 50, 60)
+    receiver.append_curved_segment_final_point_replicated(10, 20, 30, 40, 50, 60)
+    assert_equal 3, receiver.curve_boxes.length
   end
 
   test "page receiver recognizes embedded time-signature glyph widths" do
