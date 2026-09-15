@@ -126,6 +126,9 @@ describe('MusicXML preview', () => {
     const beats = score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
     expect(lyricsSection).toBe('VERSE\nThere once was a ship');
     expect(beats.every(beat => beat.lyrics === null)).toBe(true);
+
+    const reversedHeading = annotated.replace('LYRICS &amp; CHORDS', 'CHORDS &amp; LYRICS');
+    expect(readMusicXml(reversedHeading, 'reversed-lyrics-heading.xml').lyricsSection).toBe('VERSE\nThere once was a ship');
   });
   it.skipIf(!process.env.PLAYTAB_REVIEWED_XML)('preserves reviewed measure-eight fret and separate third-finger annotation', () => {
     const preview = readMusicXml(fs.readFileSync(process.env.PLAYTAB_REVIEWED_XML!, 'utf8'), 'reviewed.xml');
