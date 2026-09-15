@@ -114,10 +114,16 @@ describe('MusicXML preview', () => {
     expect(beats.find(beat => beat.lyrics)?.lyrics).toEqual(['There']);
   });
   it('uses the banjo playback program for imported five-string scores', () => {
-    const preview = readMusicXml(fixture(), 'imported.xml');
+    const source = fixture().replace(
+      '<part-name>Banjo</part-name>',
+      '<part-name>Banjo</part-name><score-instrument id="P1-I1"><instrument-name>Banjo</instrument-name></score-instrument><midi-instrument id="P1-I1"><midi-program>1</midi-program></midi-instrument>'
+    );
+    const preview = readMusicXml(source, 'imported.xml');
+    const firstBeat = preview.score.tracks[0].staves[0].bars[0].voices[0].beats[0];
 
     expect(preview.score.tracks[0].playbackInfo.program).toBe(105);
     expect(preview.score.tracks[0].playbackInfo.bank).toBe(0);
+    expect(firstBeat.getAutomation(model.AutomationType.Instrument)?.value).toBe(105);
   });
   it('extracts a separate Playtab lyrics section without attaching words to beats', () => {
     const annotated = fixture().replace(
