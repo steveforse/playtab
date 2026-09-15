@@ -5,11 +5,7 @@ import json
 import subprocess
 import tempfile
 
-from pdf_musicxml import build_musicxml
-from pdf_recognizer import PdfRecognitionError, recognize
-
 MAX_INPUT = 100_000
-MAX_PDF_INPUT = 10_000_000
 MAX_OUTPUT = 2_000_000
 
 
@@ -34,39 +30,19 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200 if self.path == '/health' else 404, {'status': 'ready'})
 
     def do_POST(self):
-        if self.path not in {'/convert', '/pdf'}:
+        if self.path != '/convert':
             return self.reply(404, {'error': 'Not found.'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
         except ValueError:
             length = 0
-        limit = MAX_PDF_INPUT if self.path == '/pdf' else MAX_INPUT
-        minimum = 1 if self.path == '/pdf' else 258
+        limit = MAX_INPUT
+        minimum = 258
         if not minimum <= length <= limit:
-            message = 'Choose a valid PDF, up to 10 MB.' if self.path == '/pdf' else 'Choose a valid TEF2 file, up to 100 KB.'
-            return self.reply(413 if length > limit else 422, {'error': message})
+            return self.reply(413 if length > limit else 422, {'error': 'Choose a valid TEF2 file, up to 100 KB.'})
         data = self.rfile.read(length)
         if len(data) != length:
             return self.reply(422, {'error': 'Incomplete TEF upload.'})
-        if self.path == '/pdf':
-            try:
-                recognized = recognize(data)
-                musicxml = build_musicxml(recognized)
-            except PdfRecognitionError as error:
-                return self.reply(422, {'error': str(error)})
-            if not 0 < len(musicxml.encode()) <= MAX_OUTPUT:
-                return self.reply(422, {'error': 'Recognized score exceeds the preview size limit.'})
-            return self.reply(200, {
-                'musicxml': musicxml,
-                'warnings': recognized['warnings'],
-                'recognition': {
-                    'sections': len(recognized['sections']),
-                    'chords': len(recognized['chords']),
-                    'techniques': len(recognized['techniques']),
-                    'fingerings': len(recognized['fingerings']),
-                    'lyrics': bool(recognized['lyrics']),
-                },
-            })
         # TEF2 has a fixed header, unlike newer compressed TEF formats.
         measures = int.from_bytes(data[200:202], 'little')
         count = int.from_bytes(data[256:258], 'little')
