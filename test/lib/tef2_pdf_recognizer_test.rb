@@ -238,7 +238,9 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     receiver.instance_variable_set(:@page, page)
     assert_equal :delegated, receiver.delegated_value
     receiver.show_text("!")
+    receiver.show_text("#")
     assert_equal [ { x: 2, y: 3, text: "!" } ], receiver.flat_symbols
+    assert_equal [ 33, 35 ], receiver.time_signature_symbols.map { |symbol| symbol[:code] }
     receiver.begin_new_subpath(10, 20)
     receiver.append_line(30, 40)
     receiver.append_line(50, 60)
@@ -278,6 +280,26 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       end
     end
 
+    receiver.instance_variable_set(:@time_signature_symbols, [
+      { x: 10, y: 10, code: 34, font: font },
+      { x: 10, y: 20, code: 35, font: font }
+    ])
+    Zlib::Inflate.stub(:inflate, "ttf") do
+      TTFunk::File.stub(:open, ->(*) { ttf }) do
+        assert_equal({ numerator: 2, denominator: 4 }, receiver.time_signature)
+      end
+    end
+
+    receiver.instance_variable_set(:@time_signature_symbols, [
+      { x: 10, y: 10, code: 34, font: font },
+      { x: 10, y: 20, code: 34, font: font }
+    ])
+    assert_equal({ numerator: 4, denominator: 4 }, receiver.time_signature)
+
+    receiver.instance_variable_set(:@time_signature_symbols, [
+      { x: 10, y: 10, code: 33, font: font },
+      { x: 10, y: 20, code: 34, font: font }
+    ])
     [ [ 200, 4 ], [ 300, 3 ], [ 400, 2 ] ].each do |width, expected|
       ttf.define_singleton_method(:find_glyph) { |_index| Struct.new(:x_min, :x_max).new(0, width) }
       Zlib::Inflate.stub(:inflate, "ttf") do
