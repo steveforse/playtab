@@ -355,6 +355,7 @@ DEPENDENCIES
   ruby-vips (~> 2.0)
   simplecov (~> 0.22)
   thruster
+  ttfunk (~> 1.7)
   tzinfo-data
   vite_rails
   web-console
