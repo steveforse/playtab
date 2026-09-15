@@ -8,6 +8,7 @@ import { applyMusicXmlEdits, type MusicXmlEditorState } from './music/musicxml-e
 
 type LibraryItem = { id: number; title: string };
 const initialText = exportAscii(demo);
+const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
 async function apiRequest(path: string, options?: RequestInit) {
   const response = await fetch(path, { ...options, headers: {
     ...(options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
@@ -38,6 +39,15 @@ export function App() {
   const [duration, setDuration] = useState<4 | 8 | 16>(8);
   const [importError, setImportError] = useState('');
   const [reading, setReading] = useState(false);
+
+  async function signOut() {
+    const response = await fetch('/session', {
+      method: 'DELETE',
+      headers: { 'X-CSRF-Token': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '' },
+    });
+    if (!response.ok) throw new Error('Could not sign out.');
+    window.location.assign('/session/new');
+  }
 
   useEffect(() => { apiRequest('/api/songs').then(setLibrary).catch(e => setError(e.message)); }, []);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null) {
@@ -123,7 +133,7 @@ export function App() {
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
     </aside>
     <main>
-      <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></header>
+      <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={() => { void signOut().catch(e => setError(e.message)); }}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
       <div className="workspace">
         <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
         <div className="title-row"><div><h1>{preview?.score.title ?? score.title}</h1><p className="subtitle">5-string banjo <span>·</span> {preview ? preview.tuningLabel : 'Open G tuning'} <span>·</span> {preview?.score.masterBars.length ?? score.measures.length} measures</p></div><button className="save-button" disabled={saving || !dirty} onClick={save}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button></div>

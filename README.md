@@ -2,7 +2,7 @@
 
 A Rails 8.1 + React/TypeScript practice room for five-string banjo, using alphaTab for notation and SoundFont playback.
 
-This is the first playable prototype: a local, single-user workspace. Authentication and production deployment hardening are not implemented. Compose binds the app to localhost.
+The workspace supports account sign-in, private libraries, native TEF/PDF imports, and synchronized database-backed scores. Compose is a local development setup; production deployments must set the host and mailer environment variables described below.
 
 See [TODO.md](TODO.md) for the ordered feature roadmap.
 
@@ -40,7 +40,7 @@ bin/setup
 1. Play the original open-G practice exercise. Adjust speed, switch the metronome on, and loop a selected range.
 2. Choose **Import a tab** to use the included plaintext example or load a `.txt` file.
 3. Choose a note duration. Read the import assumptions before trusting playback.
-4. Save to the library; reopen the score after a page reload.
+4. Create an account or sign in, save to the library, and reopen the score after a page reload.
 5. Export plaintext, MIDI, Playtab JSON, TEF2, TablEdit TEF3, or use the browser print dialog to save a PDF.
 
 Play/pause and restart are available above and below the score, synchronized to one player.
@@ -63,7 +63,11 @@ Choose **Import a tab → Open a file** and select the original `.tef` or a vect
 
 The native path supports legacy TEF2 and modern TablEdit TEF 3.00 files with one five-string track, bounded file size and measure count, source time signatures, alternate tunings, fingering, verified note effects, tuplets, grace notes, ties, voices, tempo changes, and alternate endings. Unsupported or malformed files return an error without replacing the current score. Values without a verified MusicXML equivalent remain explicit technical metadata and conversion warnings remain visible. Raw TEF2 repeat maps and source-only layout records are retained as bounded warnings until their playback semantics are verified. Save an imported TEF or PDF preview to the library to preserve its generated MusicXML document, then reopen it with the imported tuning, rhythm, techniques, chords, sections, and lyrics intact. TEF2 and TablEdit TEF3 export is available with explicit loss warnings.
 
-`docker compose up -d` starts the Rails app, Vite, and PostgreSQL. Rails handles both native TEF parsing and vector PDF recognition in-process; PDF and TEF uploads do not require a separate converter service. The Ruby PDF path uses the MIT-licensed `pdf-reader` gem and Nokogiri. This remains a local single-user prototype, not a hardened public upload service.
+`docker compose up -d` starts the Rails app, Vite, and PostgreSQL. Rails handles both native TEF parsing and vector PDF recognition in-process; PDF and TEF uploads do not require a separate converter service. The Ruby PDF path uses the MIT-licensed `pdf-reader` gem and Nokogiri. Production requests are capped before Rails parameter parsing at 12 MB, with smaller limits for score, TEF, and PDF endpoints.
+
+### Production configuration
+
+Set `PLAYTAB_ALLOWED_HOSTS` to a comma-separated list of public hostnames, `PLAYTAB_HOST` to the hostname used in password-reset links, and `PLAYTAB_PROTOCOL=https`. Configure the production mail delivery adapter before enabling password resets. Rails forces HTTPS and uses secure, HttpOnly, same-site session cookies in production. `/up` remains available for health checks.
 
 Set `PLAYTAB_TEFSOURCE` to a private `.tef` path to enable the real browser upload/conversion/playback regression. Never commit private arrangements as fixtures.
 
@@ -96,7 +100,7 @@ npm ci
 npm run typecheck
 npm test
 npm run build
-docker compose -f compose.yml exec -T web bash -c 'RAILS_ENV=test bundle exec rails db:prepare && bundle exec rails test'
+docker compose -f compose.yml exec -T web bash -c 'CI=1 RAILS_ENV=test bundle exec rails db:prepare && CI=1 RAILS_ENV=test bundle exec rails test'
 docker compose -f compose.yml exec -T web bundle exec rubocop
 docker compose -f compose.yml exec -T web bundle exec brakeman --no-pager
 npx playwright install --with-deps chromium

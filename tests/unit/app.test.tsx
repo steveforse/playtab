@@ -166,4 +166,43 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save to library/ }));
     await waitFor(() => expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toContain('Request failed (500).'));
   });
+
+  it('signs out the current account', async () => {
+    const root = document.createElement('div');
+    root.id = 'playtab-root';
+    root.dataset.userEmail = 'user@example.com';
+    document.body.append(root);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const originalLocation = window.location;
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...originalLocation, assign } });
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText('user@example.com')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/session', expect.objectContaining({ method: 'DELETE' })));
+    expect(assign).toHaveBeenCalledWith('/session/new');
+    Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+    root.remove();
+  });
+
+  it('reports a failed sign out request', async () => {
+    const root = document.createElement('div');
+    root.id = 'playtab-root';
+    root.dataset.userEmail = 'user@example.com';
+    document.body.append(root);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response({ error: 'no' }, false, 500));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText('user@example.com')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not sign out.'));
+    root.remove();
+  });
 });

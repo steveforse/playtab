@@ -50,9 +50,12 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Added asset-integrity and player-configuration tests; browser playback exercises the bank through alphaTab.
   - Dedicated sampled banjo articulations remain a separate future audio-quality project.
 
-- [ ] **9. Productize the workspace** — `feature/productize-workspace`
+- [x] **9. Productize the workspace** — `feature/productize-workspace`
   - Add authentication, multi-user libraries, synchronization, and deployment hardening.
   - Reassess upload limits and service isolation before public hosting.
+  - Added password authentication, account registration, password reset, secure production sessions, and sign-out.
+  - Scoped every saved score and import/export API operation to the signed-in account; database persistence provides cross-session library synchronization.
+  - Protected upload endpoints with CSRF, production host authorization, HTTPS enforcement, secure cookies, and a pre-parse 12 MB request cap. Native parsers remain in-process with endpoint-specific limits and no converter service.
 
 - [ ] **10. Add scanned PDF recognition/import** — `feature/scanned-pdf-recognition`
   - Detect image-only PDFs and route them to a separate recognition pipeline.

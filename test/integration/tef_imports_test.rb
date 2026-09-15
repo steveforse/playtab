@@ -1,6 +1,8 @@
 require "test_helper"
 
 class TefImportsTest < ActionDispatch::IntegrationTest
+  setup { sign_in_as(User.first) }
+
   test "missing and invalid TEF uploads are rejected without saving songs" do
     assert_no_difference("Song.count") do
       post api_tef_imports_url, params: {}, as: :json
