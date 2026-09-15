@@ -179,6 +179,9 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal [ 512, 640 ], [ 70, 87 ].map { |x| recognizer.send(:position, x, 20, 100, step: 128, measure_ticks: 768, layout: inferred_layout) }
     anchored_layout = recognizer.send(:position_layout, 20, 100, [ 30, 47 ], 768, 128)
     assert_equal [ 0, 128 ], [ 30, 47 ].map { |x| recognizer.send(:position, x, 20, 100, step: 128, measure_ticks: 768, layout: anchored_layout) }
+
+    near_barline_layout = recognizer.send(:position_layout, 128.8196, 216.6118, [ 138.45, 155.72, 166.52, 178.43, 188.82, 200.34 ], 512, 64)
+    assert_equal [ 0, 128, 192, 256, 320, 384 ], [ 138.45, 155.72, 166.52, 178.43, 188.82, 200.34 ].map { |x| recognizer.send(:position, x, 128.8196, 216.6118, step: 64, measure_ticks: 512, layout: near_barline_layout) }
   end
 
   test "handles line grouping, dead notes, and malformed pages" do
