@@ -55,16 +55,18 @@ describe('MusicXML preview', () => {
     const { score } = readMusicXml(annotated, 'unknown-finger.xml');
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
     const baseline = readMusicXml(techniques, 'baseline.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
-    expect([note.fret, note.realValue, note.leftHandFinger]).toEqual([3, 51, baseline.leftHandFinger]);
-    expect(note.beat.text).toBe('T');
+    expect([note.fret, note.realValue, note.leftHandFinger]).toEqual([3, 51, 0]);
+    expect(note.leftHandFinger).not.toBe(baseline.leftHandFinger);
+    expect(note.beat.text).toBeNull();
   });
   it('shows a native TEF3 thumb fingering without changing the note', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><other-technical>TEF fingering T</other-technical>');
     const { score } = readMusicXml(annotated, 'native-thumb.xml');
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
     const baseline = readMusicXml(techniques, 'baseline-native-thumb.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
-    expect([note.fret, note.realValue, note.leftHandFinger]).toEqual([3, 51, baseline.leftHandFinger]);
-    expect(note.beat.text).toContain('T');
+    expect([note.fret, note.realValue, note.leftHandFinger]).toEqual([3, 51, 0]);
+    expect(note.leftHandFinger).not.toBe(baseline.leftHandFinger);
+    expect(note.beat.text).toBeNull();
   });
   it('maps the TEF code for finger 1 to a circled fingering', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><fingering enclosure="circle">1</fingering>');

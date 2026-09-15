@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import fs from 'node:fs';
 
 test('renders H and PO on technique slurs and retains them after resize and printing', async ({ page, context }) => {
   const errors: string[] = [];
@@ -26,4 +27,22 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   await expect(printPreview.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
   await printPreview.close();
   expect(errors).toEqual([]);
+});
+
+test('renders a native thumb fingering below its tablature note', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><hammer-on type="start">H</hammer-on>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'thumb.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readThumbPosition = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const glyph = nodes.find(node => [...(node.textContent ?? '')].some(char => char.codePointAt(0) === 60696));
+    const beat = glyph?.parentElement?.parentElement;
+    const note = beat?.querySelector(':scope > text');
+    const match = glyph?.parentElement?.getAttribute('transform')?.match(/translate\([^ ]+ ([^)]+)\)/);
+    return match && note ? { glyphY: Number(match[1]), noteY: Number(note.getAttribute('y')) } : null;
+  });
+  await expect.poll(async () => (await readThumbPosition())?.glyphY ?? -1).toBeGreaterThan(0);
+  const position = await readThumbPosition();
+  expect(position?.glyphY).toBeGreaterThan(position?.noteY ?? Number.POSITIVE_INFINITY);
 });
