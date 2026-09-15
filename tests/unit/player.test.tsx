@@ -49,7 +49,7 @@ afterEach(() => {
 
 const preview = {
   id: 'preview-1', source: '<score-partwise/>', filename: 'tune.musicxml', sourceFormat: 'musicxml',
-  score: { title: 'Imported tune', masterBars: [], tempo: 100 }, tuningLabel: 'g C G C D', lyricsSection: 'VERSE\nThere once was a ship',
+  score: { title: 'Imported tune', masterBars: [], tempo: 100 }, tuningLabel: 'g C G C D', lyricsSection: 'VERSE\nThere once was a ship', timedLyrics: [], chordDiagrams: [],
 } as any;
 
 function readyPlayer(nextPreview: any = null) {
@@ -132,6 +132,17 @@ describe('notation player', () => {
     vi.spyOn(window, 'open').mockReturnValue(null);
     fireEvent.change(select, { target: { value: 'pdf' } });
     expect(screen.getByRole('alert').textContent).toContain('print preview window was blocked');
+  });
+
+  it('offers chord diagrams separately from imported chord names', () => {
+    const chordPreview = { ...preview, chordDiagrams: [{ name: 'C', strings: [0, 0, 0, 2, 0], firstFret: 1, barreFrets: [] }] };
+    const api = readyPlayer(chordPreview);
+    const toggle = screen.getByLabelText('Show chord diagrams');
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(toggle);
+    expect((screen.getByLabelText('Show chord diagrams') as HTMLInputElement).checked).toBe(true);
+    expect(alphaTab.FakeAlphaTabApi.latest).not.toBe(api);
+    expect(alphaTab.FakeAlphaTabApi.latest.renderScore).toHaveBeenCalled();
   });
 
   it('exports TEF2 and TEF3 downloads and shows server loss warnings', async () => {

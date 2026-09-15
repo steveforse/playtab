@@ -3,7 +3,7 @@ import { AlphaTabApi, PlayerOutputMode } from '@coderline/alphatab';
 import { toAlphaTab } from './music/alphatab';
 import { exportAscii } from './music/ascii';
 import type { Score } from './music/score';
-import { toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
+import { configureChordDiagrams, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { PlaybackTransport } from './PlaybackTransport';
 
 export function download(text: string, filename: string, type = 'text/plain') {
@@ -38,6 +38,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
   const [rendered, setRendered] = useState(false);
   const [barsPerRow, setBarsPerRow] = useState(2);
   const [lyricsColumns, setLyricsColumns] = useState(1);
+  const [showChordDiagrams, setShowChordDiagrams] = useState(false);
   useEffect(() => {
     setReady(false); setPlaying(false); setRendered(false); setError(''); setExportNotice('');
     setSpeed(1); setLoop(false); setMetronome(false); setPosition({ currentTime: 0, endTime: 0 });
@@ -59,9 +60,10 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
     instance.playerPositionChanged.on(event => setPosition({ currentTime: event.currentTime, endTime: event.endTime }));
     instance.renderFinished.on(() => setRendered(true));
     instance.error.on(error => setError(error.message || 'Notation or audio could not load.'));
+    if (preview) configureChordDiagrams(preview.score, showChordDiagrams);
     instance.renderScore(preview ? preview.score : toAlphaTab(score));
     return () => { instance.destroy(); api.current = null; };
-  }, [score, preview, barsPerRow]);
+  }, [score, preview, barsPerRow, showChordDiagrams]);
   const transport = { ready, playing, ...position, onRestart: () => api.current?.stop(), onPlayPause: () => api.current?.playPause() };
   function printPreviewWithLyrics() {
     const paper = scorePaper.current!;
@@ -168,6 +170,7 @@ export function Player({ score, preview }: { score: Score; preview?: MusicXmlPre
           {preview?.lyricsSection && <label>Lyrics columns <select aria-label="Lyrics columns" value={lyricsColumns} onChange={e => setLyricsColumns(Number(e.target.value))}>
             {[1, 2, 3].map(value => <option key={value} value={value}>{value}</option>)}
           </select></label>}
+          {(preview?.chordDiagrams?.length ?? 0) > 0 && <label className="layout-checkbox"><input aria-label="Show chord diagrams" type="checkbox" checked={showChordDiagrams} onChange={e => setShowChordDiagrams(e.target.checked)} /> Chord diagrams</label>}
         </div>
         <label className="export-label">Export <select aria-label="Export score" value="" disabled={!rendered} onChange={e => exportFile(e.target.value)}>
           <option value="" disabled>Choose format ↗</option><option value="pdf">Print / save PDF</option><option value="midi">MIDI (.mid)</option><option value="tef2">TEF2 (.tef)</option><option value="tef3">TablEdit TEF3 (.tef)</option>{preview ? <option value="musicxml">Original MusicXML</option> : <><option value="txt">Plaintext (.txt)</option><option value="json">Playtab (.json)</option></>}

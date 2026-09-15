@@ -39,10 +39,10 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Reference-model differences remain in some PDFs because PDF glyph decoding and close note/annotation placement are ambiguous. Lyrics are preserved as standalone text, although token spacing can differ from the source layout.
   - Remaining: decode graphical rhythm and time-signature markings where the PDF contains no selectable text, improve semantic alignment for PDFs whose written measure layout differs from the matching TEF, and add confidence review for ambiguous marks.
 
-- [ ] **7. Improve lyrics and chord presentation** — `feature/lyrics-chord-presentation`
-  - Support timed lyrics when source timing is available.
-  - Keep untimed lyrics in their standalone section with compact configurable layout.
-  - Add optional chord-diagram rendering when requested; imported source chord names do not imply diagrams.
+- [x] **7. Improve lyrics and chord presentation** — `feature/lyrics-chord-presentation`
+  - Timed MusicXML lyrics remain attached to their alphaTab beats and render with the notation.
+  - Untimed lyrics remain in their standalone section with configurable columns and compact print spacing.
+  - Imported TEF and MusicXML chord voicings can be shown as diagrams through an explicit control; chord names alone do not enable diagrams.
 
 - [ ] **8. Improve banjo audio assets** — `feature/banjo-audio-assets`
   - Evaluate and integrate a higher-quality banjo soundfont or dedicated samples.
