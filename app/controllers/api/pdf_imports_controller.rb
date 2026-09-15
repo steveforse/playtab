@@ -15,7 +15,7 @@ module Api
       if bytes.bytesize > 10_000_000
         return render json: { error: "PDF upload is too large (10 MB maximum)." }, status: :content_too_large
       end
-      render json: PdfConverter.convert(bytes)
+      render json: PdfConverter.convert(bytes, filename: file.original_filename)
     rescue PdfConverter::Invalid => e
       render json: { error: e.message }, status: :unprocessable_entity
     rescue PdfConverter::Unavailable => e

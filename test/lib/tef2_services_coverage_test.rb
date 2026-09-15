@@ -118,35 +118,31 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
       assert_equal "TEF conversion failed: broken", error.message
     end
 
-    client = Object.new
-    client.define_singleton_method(:convert_pdf) { |_bytes| { "musicxml" => "pdf xml", "warnings" => [] } }
-    client.define_singleton_method(:stop!) { nil }
-    Tef2::ConverterClient.stub(:new, client) do
-      assert_equal({ "musicxml" => "pdf xml", "warnings" => [] }, PdfConverter.convert("pdf"))
+    score = { warnings: [] }
+    Tef2::PdfRecognizer.stub(:recognize, score) do
+      Tef2::PdfMusicxmlBuilder.stub(:build, "pdf xml") do
+        assert_equal({ "musicxml" => "pdf xml", "warnings" => [] }, PdfConverter.convert("pdf", filename: "score.pdf"))
+      end
     end
     assert_raises(PdfConverter::Invalid) { PdfConverter.convert("") }
-    invalid_pdf_client = Object.new
-    invalid_pdf_client.define_singleton_method(:convert_pdf) { |_bytes| raise Tef2::ConverterClient::Invalid, "bad PDF" }
-    invalid_pdf_client.define_singleton_method(:stop!) { nil }
-    Tef2::ConverterClient.stub(:new, invalid_pdf_client) do
+    Tef2::PdfRecognizer.stub(:recognize, ->(*) { raise Tef2::PdfRecognizer::Error, "bad PDF" }) do
       assert_raises(PdfConverter::Invalid) { PdfConverter.convert("pdf") }
     end
-    unavailable_pdf_client = Object.new
-    unavailable_pdf_client.define_singleton_method(:convert_pdf) { |_bytes| raise Tef2::ConverterClient::Unavailable, "down" }
-    unavailable_pdf_client.define_singleton_method(:stop!) { nil }
-    Tef2::ConverterClient.stub(:new, unavailable_pdf_client) do
-      assert_raises(PdfConverter::Unavailable) { PdfConverter.convert("pdf") }
+    Tef2::PdfRecognizer.stub(:recognize, score) do
+      Tef2::PdfMusicxmlBuilder.stub(:build, ->(*) { raise "builder broken" }) do
+        error = assert_raises(PdfConverter::Unavailable) { PdfConverter.convert("pdf") }
+        assert_equal "PDF conversion failed: builder broken", error.message
+      end
     end
     [
       { "musicxml" => "", "warnings" => [] },
       { "musicxml" => "x" * 2_000_001, "warnings" => [] },
       { "musicxml" => "xml", "warnings" => "bad" }
     ].each do |response|
-      response_client = Object.new
-      response_client.define_singleton_method(:convert_pdf) { |_bytes| response }
-      response_client.define_singleton_method(:stop!) { nil }
-      Tef2::ConverterClient.stub(:new, response_client) do
-        assert_raises(PdfConverter::Unavailable) { PdfConverter.convert("pdf") }
+      Tef2::PdfRecognizer.stub(:recognize, { warnings: response["warnings"] }) do
+        Tef2::PdfMusicxmlBuilder.stub(:build, response["musicxml"]) do
+          assert_raises(PdfConverter::Unavailable) { PdfConverter.convert("pdf") }
+        end
       end
     end
   end
@@ -161,7 +157,6 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
     client.stub(:ensure_running!, nil) do
       Net::HTTP.stub(:new, http) do
         assert_equal({ "musicxml" => "xml", "warnings" => [] }, client.convert("bytes"))
-        assert_equal({ "musicxml" => "xml", "warnings" => [] }, client.convert_pdf("bytes"))
       end
     end
 

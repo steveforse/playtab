@@ -1,0 +1,270 @@
+# frozen_string_literal: true
+
+require "nokogiri"
+
+module Tef2
+  class PdfMusicxmlBuilder
+    DIVISIONS = 960
+    MEASURE_TICKS = 3840
+    PDF_MEASURE_TICKS = 1024
+    DEFAULT_TUNING = [ 67, 50, 55, 59, 62 ].freeze
+    PITCHES = { "C" => 0, "D" => 2, "E" => 4, "F" => 5, "G" => 7, "A" => 9, "B" => 11 }.freeze
+
+    def self.build(score)
+      new.build(score)
+    end
+
+    def build(score)
+      builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
+        xml.send("score-partwise", version: "3.1") do
+          xml.identification do
+            xml.miscellaneous do
+              if score[:lyrics]
+                xml.send("miscellaneous-field", score[:lyrics], name: "playtab-lyrics")
+              end
+            end
+          end
+          xml.work do
+            xml.send("work-title", score.fetch(:title, "Imported PDF"))
+          end
+          xml.send("part-list") do
+            xml.send("score-part", id: "P1") do
+              xml.send("part-name", "Banjo")
+              xml.send("score-instrument", id: "P1-I1") { xml.send("instrument-name", "Banjo") }
+              xml.send("midi-instrument", id: "P1-I1") do
+                xml.send("midi-channel", "1")
+                xml.send("midi-program", "105")
+              end
+            end
+          end
+
+          xml.part(id: "P1") do
+            write_measures(xml, score)
+          end
+        end
+      end
+      builder.to_xml
+    end
+
+    private
+
+    def write_measures(xml, score)
+      tuning = parse_tuning(score[:tuning_label].to_s)
+      notes = score[:notes] || []
+      technique_map = techniques_by_note(score, notes)
+      fingering_map = fingerings_by_note(score)
+      sections = metadata_by_measure(score[:sections] || [])
+      chords = metadata_by_measure(score[:chords] || [])
+
+      score.fetch(:measures, 0).times do |measure_index|
+        xml.measure(number: (measure_index + 1).to_s) do
+          if measure_index.zero?
+            write_attributes(xml, score[:time_signature] || { numerator: 4, denominator: 4 }, tuning)
+            write_tempo(xml, score[:tempo]) if score[:tempo]
+          end
+
+          sections.fetch(measure_index, []).each { |section| write_words(xml, section[:text].to_s, section[:position].to_i) }
+          chords.fetch(measure_index, []).each { |chord| write_harmony(xml, chord[:name].to_s, chord[:position].to_i) }
+
+          measure_notes = notes.select { |note| note[:measure] == measure_index }
+          events = measure_notes.each_with_object({}) { |note, result| (result[note[:position]] ||= []) << note }
+          cursor = 0
+          positions = events.keys.sort
+          positions.each_with_index do |position, event_index|
+            target = pdf_position_to_xml(position)
+            write_rest(xml, target - cursor) if target > cursor
+            next_target = event_index + 1 < positions.length ? pdf_position_to_xml(positions[event_index + 1]) : MEASURE_TICKS
+            duration = next_target > target ? [ 120, next_target - target ].max : 120
+            duration = [ duration, MEASURE_TICKS - target ].min
+            events[position].sort_by { |note| note[:string] }.each_with_index do |note, note_index|
+              write_note(
+                xml,
+                note,
+                duration,
+                tuning,
+                note_index.positive?,
+                technique_map[note_key(note)],
+                fingering_map[note_key(note)]
+              )
+            end
+            cursor = target + duration
+          end
+          write_rest(xml, MEASURE_TICKS - cursor) if cursor < MEASURE_TICKS
+        end
+      end
+    end
+
+    def write_attributes(xml, time_signature, tuning)
+      xml.attributes do
+        xml.divisions(DIVISIONS.to_s)
+        xml.time do
+          xml.beats(time_signature.fetch(:numerator, 4).to_s)
+          xml.send("beat-type", time_signature.fetch(:denominator, 4).to_s)
+        end
+        xml.clef do
+          xml.sign("TAB")
+          xml.line("5")
+        end
+        xml.send("staff-details") do
+          xml.send("staff-lines", "5")
+          tuning.each_with_index do |midi, index|
+            xml.send("staff-tuning", line: (index + 1).to_s) do
+              step, alter, octave = midi_pitch(midi)
+              xml.send("tuning-step", step)
+              xml.send("tuning-alter", alter.to_s) if alter != 0
+              xml.send("tuning-octave", octave.to_s)
+            end
+          end
+        end
+      end
+    end
+
+    def write_tempo(xml, tempo)
+      xml.direction(placement: "above") do
+        xml.send("direction-type") do
+          xml.metronome do
+            xml.send("beat-unit", "quarter")
+            xml.send("per-minute", tempo.to_s)
+          end
+        end
+      end
+    end
+
+    def write_words(xml, value, position)
+      xml.direction(placement: "above") do
+        xml.send("direction-type") { xml.words(value) }
+        xml.offset(pdf_position_to_xml(position).to_s) if position.positive?
+      end
+    end
+
+    def write_harmony(xml, value, position)
+      match = value.strip.match(/\A([A-G])([#b]?)(?:\s+(.*))?\z/)
+      return unless match
+
+      xml.harmony do
+        xml.root do
+          xml.send("root-step", match[1])
+          xml.send("root-alter", match[2] == "#" ? "1" : "-1") unless match[2].empty?
+        end
+        suffix = (match[3] || "").downcase
+        kind = %w[min m].include?(suffix) ? "minor" : %w[maj major].include?(suffix) ? "major" : "other"
+        xml.kind(kind)
+        xml.offset(pdf_position_to_xml(position).to_s) if position.positive?
+      end
+    end
+
+    def write_rest(xml, duration)
+      xml.note do
+        xml.rest
+        xml.duration(duration.to_s)
+        xml.type(duration_type(duration))
+      end
+    end
+
+    def write_note(xml, source, duration, tuning, chord, technique, fingering)
+      xml.note do
+        xml.chord if chord
+        xml.pitch do
+          step, alter, octave = midi_pitch(tuning.fetch(source[:string]) + source[:fret])
+          xml.step(step)
+          xml.alter(alter.to_s) unless alter.zero?
+          xml.octave(octave.to_s)
+        end
+        xml.duration(duration.to_s)
+        xml.type(duration_type(duration))
+        xml.notations do
+          xml.technical do
+            xml.string((source[:string] + 1).to_s)
+            xml.fret(source[:fret].to_s)
+            if fingering
+              if fingering == "T"
+                xml.send("other-technical", "TEF fingering T")
+              else
+                xml.fingering(fingering, enclosure: "circle")
+              end
+            end
+            if technique
+              attributes = { type: technique[:marker_type] }
+              xml.send(technique[:xml_type], technique[:marker_type] == "start" ? technique[:label] : nil, **attributes)
+            end
+          end
+        end
+        xml.notehead("x") if source[:dead]
+      end
+    end
+
+    def techniques_by_note(score, notes)
+      result = {}
+      (score[:techniques] || []).each do |technique|
+        next unless %w[hammer-on pull-off slide bend].include?(technique[:type])
+
+        key = [ technique[:measure], technique[:position], technique[:string] ]
+        current = notes.find { |note| note_key(note) == key }
+        next unless current
+
+        following = notes.find do |note|
+          note[:string] == current[:string] && ([ note[:measure], note[:position] ] <=> [ current[:measure], current[:position] ]) == 1
+        end
+        next unless following
+        next if technique[:type] == "hammer-on" && current[:fret] >= following[:fret]
+        next if technique[:type] == "pull-off" && current[:fret] <= following[:fret]
+
+        xml_type = technique[:type]
+        result[key] = { xml_type: xml_type, marker_type: "start", label: technique.fetch(:label, technique[:type]) }
+        result[note_key(following)] = { xml_type: xml_type, marker_type: "stop", label: "" }
+      end
+      result
+    end
+
+    def fingerings_by_note(score)
+      result = {}
+      (score[:fingerings] || []).each { |item| result[[ item[:measure], item[:position], item[:string] ]] = item[:value] }
+      (score[:techniques] || []).select { |item| item[:type] == "thumb" }.each do |item|
+        result[[ item[:measure], item[:position], item[:string] ]] = "T"
+      end
+      result
+    end
+
+    def metadata_by_measure(items)
+      items.each_with_object({}) { |item, result| (result[item.fetch(:measure, 0)] ||= []) << item }
+    end
+
+    def note_key(note)
+      [ note[:measure], note[:position], note[:string] ]
+    end
+
+    def pdf_position_to_xml(position)
+      [ 0, [ MEASURE_TICKS, (position * MEASURE_TICKS.to_f / PDF_MEASURE_TICKS).round ].min ].max
+    end
+
+    def duration_type(duration)
+      {
+        120 => "32nd",
+        240 => "16th",
+        480 => "eighth",
+        960 => "quarter",
+        1920 => "half",
+        3840 => "whole"
+      }.fetch(duration, "eighth")
+    end
+
+    def parse_tuning(label)
+      tokens = label.scan(/[A-Ga-g](?:#|b|♭)?/)
+      return DEFAULT_TUNING.dup unless tokens.length == 5
+
+      [ 4, 3, 3, 4, 4 ].each_with_index.map { |octave, index| pitch_from_token(tokens[index], octave) }
+    end
+
+    def pitch_from_token(token, octave)
+      step = token[0].upcase
+      alter = token[1] == "#" ? 1 : [ "b", "♭" ].include?(token[1]) ? -1 : 0
+      (octave + 1) * 12 + PITCHES.fetch(step) + alter
+    end
+
+    def midi_pitch(midi)
+      names = [ [ "C", 0 ], [ "C", 1 ], [ "D", 0 ], [ "D", 1 ], [ "E", 0 ], [ "F", 0 ], [ "F", 1 ], [ "G", 0 ], [ "G", 1 ], [ "A", 0 ], [ "A", 1 ], [ "B", 0 ] ]
+      step, alter = names.fetch(midi % 12)
+      [ step, alter, midi / 12 - 1 ]
+    end
+  end
+end

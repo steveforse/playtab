@@ -34,9 +34,10 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Emit a bounded five-string MusicXML preview through the Rails upload flow.
   - Preserve reviewable recognition counts and warnings for inferred timing, missing tempo, unresolved voicings, and uncertain marks.
   - Completed on commit `c561d33`; all 356 paired Brainjo PDFs recognize successfully.
-  - Follow-up implementation now detects eighth-, sixteenth-, and 32nd-note spacing per measure, recognizes more section and technique label variants, accepts common selectable metronome markings, and includes `script/compare_pdf_corpus.py` for private corpus review.
-  - Generated PDF MusicXML preserves the recognized note positions exactly for all 356 paired PDFs. The Wellerman PDF retains all 294 note positions, 6 sections, and 14 chords; raw TEF/PDF equality remains limited by source repeat/layout differences.
-  - Remaining: decode graphical rhythm and time-signature markings where the PDF contains no selectable text, and improve semantic alignment for PDFs whose written measure layout differs from the matching TEF.
+  - Follow-up implementation now detects eighth-, sixteenth-, and 32nd-note spacing per measure, recognizes more section and technique label variants, accepts common selectable metronome markings, and runs entirely through the native Ruby Rails path. `script/check_pdf_corpus.rb` repeats private corpus scans while skipping byte-identical duplicates and can target the paired corpus manifest.
+  - Ruby recognition parses all 356 private paired Brainjo PDFs successfully. The Wellerman PDF retains 34 measures, 294 notes, 6 sections, 14 chords, 20 techniques, 4 fingerings, and standalone lyrics; flat chord symbols are preserved.
+  - Ruby/Python reference-model differences remain in some PDFs because PDF glyph decoding and close note/annotation placement are ambiguous. Lyrics are preserved as standalone text, although token spacing can differ from the source layout.
+  - Remaining: decode graphical rhythm and time-signature markings where the PDF contains no selectable text, improve semantic alignment for PDFs whose written measure layout differs from the matching TEF, and add confidence review for ambiguous marks.
 
 - [ ] **7. Improve lyrics and chord presentation** — `feature/lyrics-chord-presentation`
   - Support timed lyrics when source timing is available.

@@ -63,23 +63,5 @@ class ConverterTest(unittest.TestCase):
                 self.assertEqual(status, 422)
                 self.assertIn('error', result)
 
-    def test_pdf_conversion_returns_musicxml_and_recognition_counts(self):
-        recognized = {
-            'warnings': ['timing inferred'], 'sections': [{}], 'chords': [{}, {}],
-            'techniques': [{}], 'fingerings': [], 'lyrics': 'VERSE',
-        }
-        with patch('server.recognize', return_value=recognized), patch('server.build_musicxml', return_value='<score-partwise/>'):
-            status, result = self.post(b'%PDF-1.7 synthetic', '/pdf')
-        self.assertEqual(status, 200)
-        self.assertEqual(result['musicxml'], '<score-partwise/>')
-        self.assertEqual(result['recognition'], {'sections': 1, 'chords': 2, 'techniques': 1, 'fingerings': 0, 'lyrics': True})
-
-    def test_pdf_recognition_errors_are_safe(self):
-        with patch('server.recognize', side_effect=server.PdfRecognitionError('scan unsupported')):
-            status, result = self.post(b'%PDF-1.7 synthetic', '/pdf')
-        self.assertEqual(status, 422)
-        self.assertEqual(result['error'], 'scan unsupported')
-
-
 if __name__ == '__main__':
     unittest.main()

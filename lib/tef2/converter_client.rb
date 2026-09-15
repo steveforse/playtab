@@ -30,11 +30,6 @@ module Tef2
       request_conversion(bytes, "/convert")
     end
 
-    # Convert a vector PDF score to MusicXML via the Python service.
-    def convert_pdf(bytes)
-      request_conversion(bytes, "/pdf")
-    end
-
     private
 
     def request_conversion(bytes, endpoint)
