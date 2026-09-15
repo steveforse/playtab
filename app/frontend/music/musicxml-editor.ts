@@ -110,7 +110,7 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
     tempo: Number.isInteger(tempo) ? tempo : 96,
     tuning: [...(tab?.tuning ?? [])],
     measureCount: score.masterBars?.length ?? (part ? directMeasures(part).length : 1),
-    lyricsSection: lyrics?.textContent?.replace(/^\s*LYRICS\s*&\s*CHORDS\s*\r?\n?/i, '').trimEnd() ?? '',
+    lyricsSection: lyrics?.textContent?.replace(/^\s*(?:LYRICS\s*&\s*CHORDS|CHORDS\s*&\s*LYRICS)\s*\r?\n?/i, '').trimEnd() ?? '',
     annotations,
     chords,
     notes,

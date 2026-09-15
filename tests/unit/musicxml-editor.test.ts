@@ -15,6 +15,7 @@ describe('MusicXML score editing', () => {
     const preview = readMusicXml(source, 'edit.xml');
     const state = musicXmlEditorState(preview.source, preview.score);
     expect(state).toMatchObject({ title: 'Technique exercise', measureCount: 1, tempo: 120, lyricsSection: 'VERSE\nThere once was a ship', annotations: ['Low solo'], chords: ['Cm'] });
+    expect(musicXmlEditorState(preview.source.replace('LYRICS &amp; CHORDS', 'CHORDS &amp; LYRICS'), preview.score).lyricsSection).toBe('VERSE\nThere once was a ship');
     expect(state.notes.map(note => [note.string, note.fret, note.technique])).toEqual([
       [4, 0, 'hammer-on-start'], [4, 3, 'hammer-on-stop'], [4, 3, 'pull-off-start'], [4, 0, 'pull-off-stop'],
     ]);

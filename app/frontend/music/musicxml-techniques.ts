@@ -12,7 +12,7 @@ export function extractTechniques(source: string) {
   if (doc.getElementsByTagName('parsererror').length) throw new Error('Invalid MusicXML.');
   const lyricsField = Array.from(doc.getElementsByTagName('miscellaneous-field'))
     .find(field => field.getAttribute('name') === 'playtab-lyrics');
-  const lyricsSection = lyricsField?.textContent?.replaceAll('\0', '').replace(/^\s*LYRICS\s*&\s*CHORDS\s*\r?\n?/i, '').trimEnd() || null;
+  const lyricsSection = lyricsField?.textContent?.replaceAll('\0', '').replace(/^\s*(?:LYRICS\s*&\s*CHORDS|CHORDS\s*&\s*LYRICS)\s*\r?\n?/i, '').trimEnd() || null;
   const markers: Marker[] = [];
   let divisions = 1;
   const part = child(doc.documentElement, 'part');
