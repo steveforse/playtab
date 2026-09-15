@@ -63,6 +63,55 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal [ 67, 50, 55, 59, 62 ], Tef2::PdfMusicxmlBuilder::DEFAULT_TUNING
   end
 
+  test "attaches a technique to the matching fret when notes share a position and string" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Shared position",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 0 },
+        { measure: 0, position: 0, string: 0, fret: 2 },
+        { measure: 0, position: 256, string: 0, fret: 2 }
+      ],
+      techniques: [ { measure: 0, position: 0, string: 0, type: "hammer-on", label: "H" } ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal 1, document.xpath("//hammer-on[@type='start']").length
+    assert_equal 1, document.xpath("//hammer-on[@type='stop']").length
+    assert_equal "0", document.at_xpath("//hammer-on[@type='start']/ancestor::note/notations/technical/fret").text
+  end
+
+  test "preserves a technique stop and start on the same note" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Chained techniques",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 0 },
+        { measure: 0, position: 256, string: 0, fret: 3 },
+        { measure: 0, position: 512, string: 0, fret: 0 }
+      ],
+      techniques: [
+        { measure: 0, position: 0, string: 0, type: "hammer-on", label: "H" },
+        { measure: 0, position: 256, string: 0, type: "pull-off", label: "Po" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+    chained_note = document.at_xpath("//measure[1]/note[2]")
+
+    assert_equal "stop", chained_note.at_xpath("./notations/technical/hammer-on")["type"]
+    assert_equal "start", chained_note.at_xpath("./notations/technical/pull-off")["type"]
+  end
+
+  test "does not pair a technique with a distant note" do
+    notes = [
+      { measure: 0, position: 0, string: 0, fret: 0 },
+      { measure: 4, position: 0, string: 0, fret: 2 }
+    ]
+    score = { techniques: [ { measure: 0, position: 0, string: 0, type: "hammer-on" } ] }
+
+    assert_empty Tef2::PdfMusicxmlBuilder.new.send(:techniques_by_note, score, notes)
+  end
+
   test "uses the printed time signature when sizing an empty measure" do
     xml = Tef2::PdfMusicxmlBuilder.build(title: "Two Four", measures: 1, time_signature: { numerator: 2, denominator: 4 }, notes: [])
     document = Nokogiri::XML(xml)

@@ -148,6 +148,9 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     refute recognizer.send(:technique_pair_valid?, { measure: 0, position: 0, string: 0, type: "pull-off" }, [
       { measure: 0, position: 0, string: 0, fret: 0 }, { measure: 0, position: 128, string: 0, fret: 2 }
     ])
+    refute recognizer.send(:technique_pair_valid?, { measure: 0, position: 0, string: 0, type: "hammer-on" }, [
+      { measure: 0, position: 0, string: 0, fret: 0 }, { measure: 4, position: 0, string: 0, fret: 2 }
+    ])
     assert Tef2::PdfRecognizer::PageReceiver.new.send(:respond_to_missing?, :anything, false)
     chord_system = { bottom: 640, bars: [ 20, 300, 580 ], measure_start: 0, events: [] }
     assert_equal 1, recognizer.send(:chords_for_system, chord_system, [ { x: 40, y: 650, text: "C" }, { x: 50, y: 650, text: "min" } ]).length

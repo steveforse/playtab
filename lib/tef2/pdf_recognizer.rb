@@ -41,6 +41,7 @@ module Tef2
       "t" => "thumb",
       "thumb" => "thumb"
     }.freeze
+    MAX_TECHNIQUE_MEASURE_GAP = 3
 
     class PageReceiver < PDF::Reader::PageTextReceiver
       attr_reader :segments, :time_signature_symbols, :curve_boxes
@@ -854,6 +855,7 @@ module Tef2
         note[:string] == current[:string] && ([ note[:measure], note[:position] ] <=> [ current[:measure], current[:position] ]) == 1
       end
       return false unless following
+      return false if following[:measure] - current[:measure] > MAX_TECHNIQUE_MEASURE_GAP
 
       technique[:type] == "hammer-on" ? current[:fret] < following[:fret] : current[:fret] > following[:fret]
     end

@@ -199,6 +199,21 @@ describe('MusicXML preview', () => {
     expect(notes.map(n => n.beat.playbackStart)).toEqual([0, 960, 1920, 2880]);
     expect(preview.source).toBe(techniques);
   });
+  it('matches techniques to the normal note beside a same-onset ghost note', () => {
+    const ghostDuplicate = '<note><chord/><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notehead parentheses="yes">normal</notehead><notations><technical><string>4</string><fret>0</fret></technical></notations></note>';
+    const annotated = techniques.replace(
+      '    <note><pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations>',
+      `${ghostDuplicate}\n$&`,
+    );
+    const preview = readMusicXml(annotated, 'ghost-technique.xml');
+    const notes = preview.score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+    const origin = notes.find(note => !note.isGhost);
+
+    expect(notes).toHaveLength(2);
+    expect(origin?.isHammerPullOrigin).toBe(true);
+    expect(origin?.hammerPullDestination?.fret).toBe(3);
+    expect(notes.find(note => note.isGhost)?.isHammerPullOrigin).not.toBe(true);
+  });
   it('rejects unpaired and wrong-direction techniques', () => {
     expect(() => readMusicXml(techniques.replace('<pull-off type="stop"/>', ''), 'bad.xml')).toThrow('Unpaired');
     expect(() => readMusicXml(techniques.replaceAll('pull-off', 'hammer-on'), 'bad.xml')).toThrow('direction');

@@ -8,6 +8,7 @@ module Tef2
     MEASURE_TICKS = 3840
     PDF_MEASURE_TICKS = 1024
     DEFAULT_TUNING = [ 67, 50, 55, 59, 62 ].freeze
+    MAX_TECHNIQUE_MEASURE_GAP = 3
     PITCHES = { "C" => 0, "D" => 2, "E" => 4, "F" => 5, "G" => 7, "A" => 9, "B" => 11 }.freeze
 
     def self.build(score)
@@ -57,7 +58,7 @@ module Tef2
       pdf_measure_ticks = pdf_measure_ticks(time_signature)
       notes = score[:notes] || []
       technique_map = techniques_by_note(score, notes)
-      fingering_map = fingerings_by_note(score)
+      fingering_map = fingerings_by_note(score, notes)
       sections = metadata_by_measure(score[:sections] || [])
       chords = metadata_by_measure(score[:chords] || [])
       chord_diagrams = (score[:chord_diagrams] || []).to_h { |diagram| [ diagram[:name].to_s, diagram ] }
@@ -229,7 +230,7 @@ module Tef2
       end
     end
 
-    def write_note(xml, source, duration, tuning, chord, technique, fingering)
+    def write_note(xml, source, duration, tuning, chord, techniques, fingering)
       xml.note do
         xml.chord if chord
         xml.pitch do
@@ -255,7 +256,7 @@ module Tef2
                 xml.fingering(fingering, enclosure: "circle")
               end
             end
-            if technique
+            techniques.to_a.each do |technique|
               attributes = { type: technique[:marker_type] }
               xml.send(technique[:xml_type], technique[:marker_type] == "start" ? technique[:label] : nil, **attributes)
             end
@@ -277,30 +278,40 @@ module Tef2
         next unless %w[hammer-on pull-off slide bend].include?(technique[:type])
 
         key = [ technique[:measure], technique[:position], technique[:string] ]
-        current = notes.find { |note| note_key(note) == key }
+        current = notes.find { |note| note_location_key(note) == key }
         next unless current
 
         following = notes.find do |note|
           note[:string] == current[:string] && ([ note[:measure], note[:position] ] <=> [ current[:measure], current[:position] ]) == 1
         end
         next unless following
+        next if following[:measure] - current[:measure] > MAX_TECHNIQUE_MEASURE_GAP
         next if technique[:type] == "hammer-on" && current[:fret] >= following[:fret]
         next if technique[:type] == "pull-off" && current[:fret] <= following[:fret]
 
         xml_type = technique[:type]
-        result[key] = { xml_type: xml_type, marker_type: "start", label: technique.fetch(:label, technique[:type]) }
-        result[note_key(following)] = { xml_type: xml_type, marker_type: "stop", label: "" }
+        add_technique(result, note_key(current), xml_type: xml_type, marker_type: "start", label: technique.fetch(:label, technique[:type]))
+        add_technique(result, note_key(following), xml_type: xml_type, marker_type: "stop", label: "")
       end
       result
     end
 
-    def fingerings_by_note(score)
+    def fingerings_by_note(score, notes)
       result = {}
-      (score[:fingerings] || []).each { |item| result[[ item[:measure], item[:position], item[:string] ]] = item[:value] }
+      (score[:fingerings] || []).each do |item|
+        note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
+        result[note_key(note)] = item[:value] if note
+      end
       (score[:techniques] || []).select { |item| item[:type] == "thumb" }.each do |item|
-        result[[ item[:measure], item[:position], item[:string] ]] = "T"
+        note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
+        result[note_key(note)] = "T" if note
       end
       result
+    end
+
+    def add_technique(result, key, technique)
+      result[key] ||= []
+      result[key] << technique unless result[key].include?(technique)
     end
 
     def metadata_by_measure(items)
@@ -308,6 +319,10 @@ module Tef2
     end
 
     def note_key(note)
+      [ note[:measure], note[:position], note[:string], note[:fret], note[:dead], note[:ghost] ]
+    end
+
+    def note_location_key(note)
       [ note[:measure], note[:position], note[:string] ]
     end
 

@@ -1,6 +1,6 @@
 import { Settings, type model } from '@coderline/alphatab';
 
-type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; kind: string; type: string; number: string };
+type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; ghost?: boolean; kind: string; type: string; number: string };
 const children = (node: Element) => Array.from(node.childNodes).filter((n): n is Element => n.nodeType === 1);
 const child = (node: Element, name: string) => children(node).find(n => n.localName === name);
 const value = (node: Element, name: string) => child(node, name)?.textContent ?? '';
@@ -45,7 +45,7 @@ export function extractTechniques(source: string) {
         if (child(item, 'grace')) throw new Error('Grace-note techniques are not supported by this preview yet.');
         markers.push({ bar, tick: onset, staff: Number(value(item, 'staff') || 1) - 1, voice: value(item, 'voice') || '1',
           string: Number(value(technical, 'string')), fret: Number(value(technical, 'fret')),
-          kind, type: tag.getAttribute('type') || '', number });
+          ghost: child(item, 'notehead')?.getAttribute('parentheses') === 'yes', kind, type: tag.getAttribute('type') || '', number });
         technical.removeChild(tag);
       }
     }
@@ -63,7 +63,7 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
   const spans: { from: model.Note; to: model.Note; label: string }[] = [];
   for (const marker of markers.filter(m => m.staff === staffIndex)) {
     const notes = tab.bars[marker.bar].voices.flatMap(v => v.beats.filter(b => Math.abs(b.playbackStart - marker.tick) < 0.01).flatMap(b => b.notes))
-      .filter(n => n.string === 6 - marker.string && n.fret === marker.fret);
+      .filter(n => n.string === 6 - marker.string && n.fret === marker.fret && (marker.ghost === undefined || n.isGhost === marker.ghost));
     if (notes.length !== 1) throw new Error('Cannot uniquely locate a MusicXML technique note.');
     const note = notes[0];
     if (marker.kind === 'fingering') {
@@ -93,6 +93,8 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       if (!next?.notes.includes(note)) throw new Error('Technique must end on the next note on the same string.');
       if (marker.kind === 'pull-off' ? from.fret <= note.fret : from.fret >= note.fret) throw new Error('Technique direction disagrees with the frets.');
       from.isHammerPullOrigin = true;
+      from.beat.noteStringLookup.set(from.string, from);
+      note.beat.noteStringLookup.set(note.string, note);
       spans.push({ from, to: note, label: marker.kind === 'pull-off' ? 'PO' : 'H' });
     } else throw new Error('Unsupported MusicXML technique marker.');
   }
