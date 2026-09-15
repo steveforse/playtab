@@ -3,6 +3,8 @@
 require "pdf/reader"
 require "set"
 require "stringio"
+require "ttfunk"
+require "zlib"
 
 module Tef2
   # Recognizes the positioned text and tablature geometry in vector PDFs.
@@ -41,12 +43,13 @@ module Tef2
     }.freeze
 
     class PageReceiver < PDF::Reader::PageTextReceiver
-      attr_reader :segments
+      attr_reader :segments, :time_signature_symbols
 
       def initialize
         super
         @segments = []
         @flat_symbols = []
+        @time_signature_symbols = []
         @pending = nil
       end
 
@@ -54,8 +57,51 @@ module Tef2
 
       def show_text(string)
         origin = state.trm_transform_point(0, 0)
-        @flat_symbols << { x: origin.x, y: origin.y, text: string } if string == "!"
+        if string == "!"
+          @flat_symbols << { x: origin.x, y: origin.y, text: string }
+        end
+        if [ "!", '"' ].include?(string) && state.respond_to?(:current_font)
+          @time_signature_symbols << {
+            x: origin.x,
+            y: origin.y,
+            code: string.ord,
+            font: state.current_font
+          }
+        end
         super
+      end
+
+      def time_signature
+        numerator = time_signature_symbols.find do |symbol|
+          symbol[:code] == 33 && time_signature_symbols.any? do |other|
+            other[:code] == 34 && (other[:x] - symbol[:x]).abs <= 2 && (other[:y] - symbol[:y]).abs.between?(8, 16)
+          end
+        end
+        return unless numerator
+
+        value = numerator_value(numerator)
+        value && { numerator: value, denominator: 4 }
+      rescue StandardError
+        nil
+      end
+
+      private def numerator_value(symbol)
+        font = symbol[:font]
+        descriptor = font.font_descriptor
+        stream = descriptor.instance_variable_get(:@font_program_stream)
+        raw = stream&.instance_variable_get(:@data)
+        return unless raw
+
+        ttf = TTFunk::File.open(StringIO.new(Zlib::Inflate.inflate(raw)))
+        cmap = ttf.cmap.tables.find { |table| table[symbol[:code]] }
+        return unless cmap
+
+        glyph = ttf.find_glyph(cmap[symbol[:code]])
+        width = glyph.x_max - glyph.x_min
+        return 4 if width < 280
+        return 3 if width < 370
+
+        2
       end
 
       def begin_new_subpath(x, y)
@@ -106,8 +152,13 @@ module Tef2
         page_data[:systems].each { |system| system[:page] = page_index }
         page_data
       end
+      time_signature = pages.filter_map { |page| page[:time_signature] }.first || { numerator: 4, denominator: 4 }
+      measure_ticks = pdf_measure_ticks(time_signature)
       systems = pages.flat_map { |page| page[:systems] }
-      systems.sort_by! { |system| [ system[:page], -system[:bottom] ] }
+      # The page receiver normalizes the PDF coordinates to screen order:
+      # larger y values are visually higher on the page. Musical order is
+      # therefore top-to-bottom within each page.
+      systems.sort_by! { |system| [ system[:page], -system[:top] ] }
       if systems.empty?
         raise Error, "No five-line tablature systems were found. This PDF may be a scan or an unsupported layout."
       end
@@ -117,13 +168,17 @@ module Tef2
       timing_steps = Set.new
       systems.each do |system|
         system[:measure_start] = measure_index
+        system[:measure_ticks] = measure_ticks
+        system[:measure_layouts] = []
         system[:bars].each_cons(2).with_index do |(left, right), measure_offset|
           events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
           event_xs = events.map { |event| event[:x] }
-          step = position_step(left, right, event_xs)
+          step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
+          layout = position_layout(left, right, event_xs, measure_ticks, step)
+          system[:measure_layouts] << { step: step, layout: layout }
           timing_steps << step
           events.each do |event|
-            position = position(event[:x], left, right, step: step)
+            position = position(event[:x], left, right, step: step, measure_ticks: measure_ticks, layout: layout)
             event[:notes].each do |note|
               notes << {
                 measure: measure_index + measure_offset,
@@ -167,7 +222,7 @@ module Tef2
         title: title.empty? ? filename_without_extension(filename) : title,
         tuning_label: tuning,
         measures: measure_index,
-        time_signature: { numerator: 4, denominator: 4 },
+        time_signature: time_signature,
         notes: notes,
         tempo: metadata[:tempo],
         sections: metadata[:sections],
@@ -230,7 +285,11 @@ module Tef2
       segments = receiver.segments.select do |x1, y1, x2, y2|
         [ x1, x2 ].min >= 5 && [ x1, x2 ].max <= 607 && [ y1, y2 ].min >= 10 && [ y1, y2 ].max <= 782
       end
-      { texts: texts, systems: systems(note_texts, segments) }
+      page_systems = systems(note_texts, segments)
+      detected_time_signature = receiver.respond_to?(:time_signature) ? receiver.time_signature : nil
+      symbols = receiver.respond_to?(:time_signature_symbols) ? receiver.time_signature_symbols : []
+      detected_time_signature = infer_time_signature_from_spacing(detected_time_signature, symbols, page_systems)
+      { texts: texts, systems: page_systems, time_signature: detected_time_signature }
     rescue Error
       raise
     rescue StandardError => e
@@ -279,7 +338,10 @@ module Tef2
           x = (x1 + x2) / 2.0
           x if x.between?(start - 2, finish + 2)
         end
-        bars = unique_sorted(bars)
+        # TablEdit commonly draws a barline as two very close vertical
+        # strokes. Treat that pair as one boundary or it becomes a phantom
+        # measure and shifts every following note.
+        bars = unique_sorted(bars, 4.0)
         if bars.length < 2
           cursor += 5
           next
@@ -335,6 +397,24 @@ module Tef2
         fingerings: deduplicate_metadata(fingerings),
         tempo: tempo(pages)
       }
+    end
+
+    def infer_time_signature_from_spacing(time_signature, symbols, page_systems)
+      return time_signature unless time_signature&.fetch(:numerator, nil) == 2
+
+      symbol = symbols.find { |item| item[:code] == 33 }
+      system = page_systems.find do |candidate|
+        symbol && symbol[:y].between?(candidate[:top] - 5, candidate[:bottom] + 5)
+      end
+      return time_signature unless system
+
+      gaps = system[:bars].each_cons(2).flat_map do |left, right|
+        system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
+          .sort.each_cons(2).map { |first, second| second - first }
+      end.select { |gap| gap > 1.5 }.sort
+      return time_signature if gaps.empty?
+
+      { numerator: gaps[gaps.length / 2] >= 15 ? 3 : 2, denominator: 4 }
     end
 
     def deduplicate_metadata(items)
@@ -393,13 +473,16 @@ module Tef2
       value = value.tr("!♭♯", "b♭#")
       value = value.gsub(/\s+/, " ").strip
       value = value.gsub(/\A([A-Ga-g])\s+([#b])/, '\1\2')
-      match = value.match(/\A([A-Ga-g](?:[#b])?)(?:\s+(Maj|Min|maj|min|m|M|dim|aug|sus\d*))?\z/)
+      suffix_pattern = "(?:Maj|Min|maj|min|major|minor|m|M|dim|aug|sus\d*|7|maj7|min7|m7|dim7|aug7)"
+      match = value.match(/\A([A-Ga-g](?:[#b])?)\s*(#{suffix_pattern})?\z/)
       return "" unless match
 
       root = match[1][0].upcase + match[1][1..]
       suffix = match[2]
       suffix = "min" if suffix == "m"
-      suffix ? "#{root} #{suffix}" : root
+      return root unless suffix
+
+      suffix.match?(/\A(?:\d|maj\d|min\d|m\d|dim\d|aug\d)/i) ? "#{root}#{suffix}" : "#{root} #{suffix}"
     end
 
     def techniques_for_system(system, texts)
@@ -496,12 +579,33 @@ module Tef2
       end
       left = bars[measure_offset]
       right = bars[measure_offset + 1]
-      event_xs = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
-      step = position_step(left, right, event_xs)
-      [ system[:measure_start] + measure_offset, position(x, left, right, step: step) ]
+      measure_ticks = system.fetch(:measure_ticks, MEASURE_TICKS)
+      geometry = system[:measure_layouts]&.[](measure_offset)
+      if geometry
+        step = geometry[:step]
+        layout = geometry[:layout]
+      else
+        event_xs = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
+        step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
+        layout = position_layout(left, right, event_xs, measure_ticks, step)
+      end
+      [ system[:measure_start] + measure_offset, position(x, left, right, step: step, measure_ticks: measure_ticks, layout: layout) ]
     end
 
     def lyrics(pages)
+      collected = []
+      lyrics_started = false
+      pages.each do |page|
+        heading = page[:texts].find { |item| item[:text].match?(/\ALYRICS(?:\s*&\s*CHORDS)?\z/i) }
+        if heading
+          lyrics_started = true
+          collected.concat(lyrics_items(page, maximum_y: heading[:y]).sort_by { |item| [ -item[:y], item[:x] ] })
+        elsif lyrics_started && page[:systems].empty?
+          collected.concat(lyrics_items(page).sort_by { |item| [ -item[:y], item[:x] ] })
+        end
+      end
+      return collected.map { |item| item[:text].strip }.join("\n") if collected.any?
+
       candidates = pages.filter_map do |page|
         next if page[:systems].any?
 
@@ -512,6 +616,14 @@ module Tef2
 
       value = candidates.first.sort_by { |item| [ -item[:y], item[:x] ] }.map { |item| item[:text].strip }.reject(&:empty?).join("\n")
       value unless value.empty?
+    end
+
+    def lyrics_items(page, maximum_y: 735)
+      page[:texts].select do |item|
+        item[:y] < maximum_y && item[:y] > 55 && item[:x] < 120 &&
+          !item[:text].match?(/\A(?:lyrics(?:\s*&\s*chords)?|verse|chorus)\z/i) &&
+          normalize_chord(item[:text]).empty? && !item[:text].match?(/\A\d{1,2}\z/)
+      end
     end
 
     def tempo(pages)
@@ -541,7 +653,7 @@ module Tef2
       nil
     end
 
-    def position_step(left, right, event_xs)
+    def position_step(left, right, event_xs, measure_ticks: MEASURE_TICKS)
       unique_xs = event_xs.compact.uniq.sort
       return POSITION_STEP if unique_xs.length < 2
 
@@ -550,19 +662,96 @@ module Tef2
 
       subdivisions = (right - left) / gaps.min
       return 32 if subdivisions >= 24
-      return 64 if subdivisions >= 12
+      return 64 if subdivisions >= 8 || (measure_ticks <= 512 && subdivisions >= 6)
 
       POSITION_STEP
     end
 
-    def position(x, left, right, step: nil, event_xs: [])
+    def position(x, left, right, step: nil, event_xs: [], measure_ticks: MEASURE_TICKS, layout: nil)
+      step ||= position_step(left, right, event_xs, measure_ticks: measure_ticks)
+      layout ||= position_layout(left, right, event_xs, measure_ticks, step)
+      raw = ((x - left - layout[:left_margin]).to_f / layout[:usable].to_f) * measure_ticks
+      [ 0, [ measure_ticks - step, (raw / step).round * step ].min ].max
+    end
+
+    def position_layout(left, right, event_xs, measure_ticks, step)
       width = right - left
-      left_margin = [ 12.0, [ 6.0, width * POSITION_LEFT_MARGIN_RATIO ].max ].min
-      right_margin = [ 4.0, [ 2.0, width * POSITION_RIGHT_MARGIN_RATIO ].max ].min
-      usable = [ 1.0, width - left_margin - right_margin ].max
-      raw = ((x - left - left_margin) / usable) * MEASURE_TICKS
-      step ||= position_step(left, right, event_xs)
-      [ 0, [ MEASURE_TICKS - step, (raw / step).round * step ].min ].max
+      default_left = [ 12.0, [ 6.0, width * POSITION_LEFT_MARGIN_RATIO ].max ].min
+      default_right = [ 4.0, [ 2.0, width * POSITION_RIGHT_MARGIN_RATIO ].max ].min
+      default = { left_margin: default_left, right_margin: default_right, usable: [ 1.0, width - default_left - default_right ].max }
+      if measure_ticks == 768 && event_xs.length == 1 && event_xs.first - left <= width * 0.2
+        return { left_margin: event_xs.first - left, right_margin: 0, usable: width }
+      end
+      return default if event_xs.length < 2
+
+      best = nil
+      max_left = (width * 0.8 * 2).round
+      gaps = event_xs.sort.each_cons(2).map { |first, second| second - first }.select { |gap| gap > 1.5 }
+      spacing = gaps.min
+      if measure_ticks == 768 && spacing && event_xs.first - left <= spacing * 1.5
+        usable = spacing * measure_ticks / step
+        return { left_margin: event_xs.first - left, right_margin: width - (event_xs.first - left) - usable, usable: usable }
+      end
+      (0..max_left).each do |left_units|
+        left_margin = left_units / 2.0
+        max_right = (width * 0.2 * 2).round
+        (0..max_right).each do |right_units|
+          right_margin = right_units / 2.0
+          usable = [ 1.0, width - left_margin - right_margin ].max
+          error = event_xs.sum do |x|
+            raw = ((x - left - left_margin) / usable) * measure_ticks
+            quantized = (raw / step).round * step
+            quantized = [ 0, [ measure_ticks - step, quantized ].min ].max
+            (raw - quantized)**2
+          end
+          candidate = [ error, left_margin + right_margin, left_margin, right_margin, usable ]
+          best = candidate if best.nil? || (candidate[0, 2] <=> best[0, 2]) == -1
+        end
+      end
+
+      if spacing && measure_ticks == 768
+        inferred_usable_values = [
+          spacing * measure_ticks / step,
+          spacing * measure_ticks / step / 2.0,
+          spacing * measure_ticks / step * 2.0
+        ]
+        min_left = (-width * 0.5 * 2).floor
+        inferred_usable_values.each do |usable|
+          (min_left..max_left).each do |left_units|
+          left_margin = left_units / 2.0
+          error = event_xs.sum do |x|
+            raw = ((x - left - left_margin) / usable) * measure_ticks
+            quantized = (raw / step).round * step
+            quantized = [ 0, [ measure_ticks - step, quantized ].min ].max
+            (raw - quantized)**2
+          end
+          candidate = [ error, 0, left_margin, width - left_margin - usable, usable ]
+          best = candidate if (candidate[0, 2] <=> best[0, 2]) == -1
+          end
+        end
+      end
+
+      regular_spacing = measure_ticks <= 512 && gaps.length >= 2 && (gaps.max - gaps.min).abs <= 1.0 && event_xs.min - left <= spacing * 1.5
+      if regular_spacing
+        usable = spacing * measure_ticks / step
+        (0..max_left).each do |left_units|
+          left_margin = left_units / 2.0
+          error = event_xs.sum do |x|
+            raw = ((x - left - left_margin) / usable) * measure_ticks
+            quantized = (raw / step).round * step
+            quantized = [ 0, [ measure_ticks - step, quantized ].min ].max
+            (raw - quantized)**2
+          end
+          candidate = [ error, 0, left_margin, width - left_margin - usable, usable ]
+          best = candidate if (candidate[0, 2] <=> best[0, 2]) == -1
+        end
+      end
+
+      { left_margin: best[2], right_margin: best[3], usable: best[4] }
+    end
+
+    def pdf_measure_ticks(time_signature)
+      (MEASURE_TICKS * time_signature.fetch(:numerator, 4).to_f / time_signature.fetch(:denominator, 4)).round
     end
 
     def header(texts)

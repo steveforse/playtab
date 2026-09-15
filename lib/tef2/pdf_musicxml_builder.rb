@@ -50,6 +50,9 @@ module Tef2
 
     def write_measures(xml, score)
       tuning = parse_tuning(score[:tuning_label].to_s)
+      time_signature = score[:time_signature] || { numerator: 4, denominator: 4 }
+      measure_ticks = xml_measure_ticks(time_signature)
+      pdf_measure_ticks = pdf_measure_ticks(time_signature)
       notes = score[:notes] || []
       technique_map = techniques_by_note(score, notes)
       fingering_map = fingerings_by_note(score)
@@ -59,23 +62,27 @@ module Tef2
       score.fetch(:measures, 0).times do |measure_index|
         xml.measure(number: (measure_index + 1).to_s) do
           if measure_index.zero?
-            write_attributes(xml, score[:time_signature] || { numerator: 4, denominator: 4 }, tuning)
+            write_attributes(xml, time_signature, tuning)
             write_tempo(xml, score[:tempo]) if score[:tempo]
           end
 
-          sections.fetch(measure_index, []).each { |section| write_words(xml, section[:text].to_s, section[:position].to_i) }
-          chords.fetch(measure_index, []).each { |chord| write_harmony(xml, chord[:name].to_s, chord[:position].to_i) }
+          sections.fetch(measure_index, []).each do |section|
+            write_words(xml, section[:text].to_s, section[:position].to_i, pdf_measure_ticks, measure_ticks)
+          end
+          chords.fetch(measure_index, []).each do |chord|
+            write_harmony(xml, chord[:name].to_s, chord[:position].to_i, pdf_measure_ticks, measure_ticks)
+          end
 
           measure_notes = notes.select { |note| note[:measure] == measure_index }
           events = measure_notes.each_with_object({}) { |note, result| (result[note[:position]] ||= []) << note }
           cursor = 0
           positions = events.keys.sort
           positions.each_with_index do |position, event_index|
-            target = pdf_position_to_xml(position)
+            target = pdf_position_to_xml(position, pdf_measure_ticks, measure_ticks)
             write_rest(xml, target - cursor) if target > cursor
-            next_target = event_index + 1 < positions.length ? pdf_position_to_xml(positions[event_index + 1]) : MEASURE_TICKS
+            next_target = event_index + 1 < positions.length ? pdf_position_to_xml(positions[event_index + 1], pdf_measure_ticks, measure_ticks) : measure_ticks
             duration = next_target > target ? [ 120, next_target - target ].max : 120
-            duration = [ duration, MEASURE_TICKS - target ].min
+            duration = [ duration, measure_ticks - target ].min
             events[position].sort_by { |note| note[:string] }.each_with_index do |note, note_index|
               write_note(
                 xml,
@@ -89,7 +96,7 @@ module Tef2
             end
             cursor = target + duration
           end
-          write_rest(xml, MEASURE_TICKS - cursor) if cursor < MEASURE_TICKS
+          write_rest(xml, measure_ticks - cursor) if cursor < measure_ticks
         end
       end
     end
@@ -130,15 +137,15 @@ module Tef2
       end
     end
 
-    def write_words(xml, value, position)
+    def write_words(xml, value, position, pdf_measure_ticks, measure_ticks)
       xml.direction(placement: "above") do
         xml.send("direction-type") { xml.words(value) }
-        xml.offset(pdf_position_to_xml(position).to_s) if position.positive?
+        xml.offset(pdf_position_to_xml(position, pdf_measure_ticks, measure_ticks).to_s) if position.positive?
       end
     end
 
-    def write_harmony(xml, value, position)
-      match = value.strip.match(/\A([A-G])([#b]?)(?:\s+(.*))?\z/)
+    def write_harmony(xml, value, position, pdf_measure_ticks, measure_ticks)
+      match = value.strip.match(/\A([A-G])([#b]?)(?:\s*(.*))?\z/)
       return unless match
 
       xml.harmony do
@@ -149,7 +156,7 @@ module Tef2
         suffix = (match[3] || "").downcase
         kind = %w[min m].include?(suffix) ? "minor" : %w[maj major].include?(suffix) ? "major" : "other"
         xml.kind(kind)
-        xml.offset(pdf_position_to_xml(position).to_s) if position.positive?
+        xml.offset(pdf_position_to_xml(position, pdf_measure_ticks, measure_ticks).to_s) if position.positive?
       end
     end
 
@@ -233,8 +240,16 @@ module Tef2
       [ note[:measure], note[:position], note[:string] ]
     end
 
-    def pdf_position_to_xml(position)
-      [ 0, [ MEASURE_TICKS, (position * MEASURE_TICKS.to_f / PDF_MEASURE_TICKS).round ].min ].max
+    def pdf_position_to_xml(position, pdf_measure_ticks, measure_ticks)
+      [ 0, [ measure_ticks, (position * measure_ticks.to_f / pdf_measure_ticks).round ].min ].max
+    end
+
+    def xml_measure_ticks(time_signature)
+      (MEASURE_TICKS * time_signature.fetch(:numerator, 4).to_f / time_signature.fetch(:denominator, 4)).round
+    end
+
+    def pdf_measure_ticks(time_signature)
+      (PDF_MEASURE_TICKS * time_signature.fetch(:numerator, 4).to_f / time_signature.fetch(:denominator, 4)).round
     end
 
     def duration_type(duration)

@@ -104,6 +104,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal 128, recognizer.send(:position_step, 20, 220, [ 45, 100 ])
     assert_equal "C#", recognizer.send(:normalize_chord, "c #")
     assert_equal "C min", recognizer.send(:normalize_chord, "C m")
+    assert_equal "G7", recognizer.send(:normalize_chord, "G7")
     assert_equal "", recognizer.send(:normalize_chord, "not a chord")
     assert_equal "hammer-on", recognizer.send(:technique_type, "Hammer-On")
     assert_equal "pull-off", recognizer.send(:technique_type, "p_o")
@@ -128,6 +129,29 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert Tef2::PdfRecognizer::PageReceiver.new.send(:respond_to_missing?, :anything, false)
     chord_system = { bottom: 640, bars: [ 20, 300, 580 ], measure_start: 0, events: [] }
     assert_equal 1, recognizer.send(:chords_for_system, chord_system, [ { x: 40, y: 650, text: "C" }, { x: 50, y: 650, text: "min" } ]).length
+
+    lyric_pages = [
+      { systems: [ :tab ], texts: [ { x: 30, y: 500, text: "LYRICS & CHORDS" }, { x: 30, y: 490, text: "Cm" }, { x: 30, y: 480, text: "First line" } ] },
+      { systems: [], texts: [ { x: 30, y: 700, text: "Second line" } ] }
+    ]
+    assert_equal "First line\nSecond line", recognizer.send(:lyrics, lyric_pages)
+
+    layout = recognizer.send(:position_layout, 391.5, 477.8, [ 401.1, 411.9, 422.7, 433.5, 444.3 ], 512, 64)
+    assert_equal [ 0, 64, 128, 192, 256 ], [ 401.1, 411.9, 422.7, 433.5, 444.3 ].map { |x| recognizer.send(:position, x, 391.5, 477.8, step: 64, measure_ticks: 512, layout: layout) }
+    assert_equal 512, recognizer.send(:pdf_measure_ticks, numerator: 2, denominator: 4)
+
+    assert_equal({ numerator: 3, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 2, denominator: 4 }, [ { code: 33, y: 100 } ], [ { top: 90, bottom: 130, bars: [ 20, 100, 180 ], events: [ { x: 40 }, { x: 60 }, { x: 120 }, { x: 140 } ] } ]))
+    assert_equal({ numerator: 2, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 2, denominator: 4 }, [ { code: 33, y: 100 } ], [ { top: 90, bottom: 130, bars: [ 20, 100, 180 ], events: [ { x: 40 }, { x: 50 }, { x: 120 }, { x: 130 } ] } ]))
+    assert_equal({ numerator: 2, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 2, denominator: 4 }, [], []))
+    assert_equal({ numerator: 2, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 2, denominator: 4 }, [ { code: 33, y: 100 } ], []))
+    assert_equal({ numerator: 3, denominator: 4 }, recognizer.send(:infer_time_signature_from_spacing, { numerator: 3, denominator: 4 }, [], []))
+
+    single_layout = recognizer.send(:position_layout, 20, 100, [ 30 ], 768, 128)
+    assert_equal 0, recognizer.send(:position, 30, 20, 100, step: 128, measure_ticks: 768, layout: single_layout)
+    inferred_layout = recognizer.send(:position_layout, 20, 100, [ 70, 87 ], 768, 128)
+    assert_equal [ 512, 640 ], [ 70, 87 ].map { |x| recognizer.send(:position, x, 20, 100, step: 128, measure_ticks: 768, layout: inferred_layout) }
+    anchored_layout = recognizer.send(:position_layout, 20, 100, [ 30, 47 ], 768, 128)
+    assert_equal [ 0, 128 ], [ 30, 47 ].map { |x| recognizer.send(:position, x, 20, 100, step: 128, measure_ticks: 768, layout: anchored_layout) }
   end
 
   test "handles line grouping, dead notes, and malformed pages" do
@@ -196,6 +220,51 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     receiver.stroke_path
     receiver.append_line(2, 2)
     assert_equal 1, receiver.segments.length
+  end
+
+  test "page receiver recognizes embedded time-signature glyph widths" do
+    receiver = Tef2::PdfRecognizer::PageReceiver.new
+    stream = Object.new
+    stream.instance_variable_set(:@data, "compressed")
+    descriptor = Object.new
+    descriptor.instance_variable_set(:@font_program_stream, stream)
+    font = Object.new
+    font.define_singleton_method(:font_descriptor) { descriptor }
+
+    cmap = Object.new
+    cmap.define_singleton_method(:[]) { |_code| 7 }
+    ttf = Object.new
+    ttf.define_singleton_method(:cmap) { Struct.new(:tables).new([ cmap ]) }
+    ttf.define_singleton_method(:find_glyph) { |_index| Struct.new(:x_min, :x_max).new(0, 400) }
+    receiver.instance_variable_set(:@time_signature_symbols, [
+      { x: 10, y: 10, code: 33, font: font },
+      { x: 10, y: 20, code: 34, font: font }
+    ])
+
+    Zlib::Inflate.stub(:inflate, "ttf") do
+      TTFunk::File.stub(:open, ->(*) { ttf }) do
+        assert_equal({ numerator: 2, denominator: 4 }, receiver.time_signature)
+      end
+    end
+
+    [ [ 200, 4 ], [ 300, 3 ], [ 400, 2 ] ].each do |width, expected|
+      ttf.define_singleton_method(:find_glyph) { |_index| Struct.new(:x_min, :x_max).new(0, width) }
+      Zlib::Inflate.stub(:inflate, "ttf") do
+        TTFunk::File.stub(:open, ->(*) { ttf }) do
+          assert_equal expected, receiver.time_signature.fetch(:numerator)
+        end
+      end
+    end
+
+    receiver.instance_variable_set(:@time_signature_symbols, [])
+    assert_nil receiver.time_signature
+
+    broken_font = Object.new
+    receiver.instance_variable_set(:@time_signature_symbols, [
+      { x: 10, y: 10, code: 33, font: broken_font },
+      { x: 10, y: 20, code: 34, font: broken_font }
+    ])
+    assert_nil receiver.time_signature
   end
 
   private
