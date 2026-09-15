@@ -93,7 +93,7 @@ function chordDiagrams(tab: model.Staff): ChordDiagramPreview[] {
 export function configureChordDiagrams(score: model.Score, enabled: boolean) {
   if (!score.stylesheet) return;
   score.stylesheet.globalDisplayChordDiagramsInScore = enabled;
-  score.stylesheet.globalDisplayChordDiagramsOnTop = false;
+  score.stylesheet.globalDisplayChordDiagramsOnTop = enabled;
   for (const staff of score.tracks?.[0]?.staves ?? []) {
     for (const chord of staff.chords?.values() ?? []) chord.showDiagram = enabled && chord.strings.length === staff.tuning.length && chord.strings.some(fret => fret >= 0);
   }

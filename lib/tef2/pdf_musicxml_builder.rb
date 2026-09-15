@@ -27,6 +27,8 @@ module Tef2
           xml.work do
             xml.send("work-title", score.fetch(:title, "Imported PDF"))
           end
+          write_credit(xml, "subtitle", score[:subtitle])
+          write_credit(xml, "arranger", score[:arranger])
           xml.send("part-list") do
             xml.send("score-part", id: "P1") do
               xml.send("part-name", "Banjo")
@@ -58,6 +60,7 @@ module Tef2
       fingering_map = fingerings_by_note(score)
       sections = metadata_by_measure(score[:sections] || [])
       chords = metadata_by_measure(score[:chords] || [])
+      chord_diagrams = (score[:chord_diagrams] || []).to_h { |diagram| [ diagram[:name].to_s, diagram ] }
 
       score.fetch(:measures, 0).times do |measure_index|
         xml.measure(number: (measure_index + 1).to_s) do
@@ -72,7 +75,8 @@ module Tef2
             write_words(xml, section[:text].to_s, section[:position].to_i, pdf_measure_ticks, measure_ticks)
           end
           chords.fetch(measure_index, []).each do |chord|
-            write_harmony(xml, chord[:name].to_s, chord[:position].to_i, pdf_measure_ticks, measure_ticks)
+            write_harmony(xml, chord[:name].to_s, chord[:position].to_i, pdf_measure_ticks, measure_ticks,
+                          diagram: chord_diagrams[chord[:name].to_s])
           end
 
           measure_notes = notes.select { |note| note[:measure] == measure_index }
@@ -139,6 +143,16 @@ module Tef2
       end
     end
 
+    def write_credit(xml, type, value)
+      text = value.to_s.strip
+      return if text.empty?
+
+      xml.credit(page: "1") do
+        xml.send("credit-type", type)
+        xml.send("credit-words", text)
+      end
+    end
+
     def write_words(xml, value, position, pdf_measure_ticks, measure_ticks)
       xml.direction(placement: "above") do
         xml.send("direction-type") { xml.words(value) }
@@ -146,11 +160,16 @@ module Tef2
       end
     end
 
-    def write_harmony(xml, value, position, pdf_measure_ticks, measure_ticks)
+    def write_harmony(xml, value, position, pdf_measure_ticks, measure_ticks, diagram: nil)
       match = value.strip.match(/\A([A-G])([#b]?)(?:\s*(.*))?\z/)
       return unless match
 
-      xml.harmony do
+      harmony_attributes = {}
+      if diagram && diagram[:strings].to_a.length == 5
+        harmony_attributes["data-playtab-strings"] = diagram[:strings].map { |fret| fret.to_i }.join(",")
+        harmony_attributes["data-playtab-first-fret"] = diagram[:first_fret].to_i if diagram[:first_fret].to_i.positive?
+      end
+      xml.harmony(harmony_attributes) do
         xml.root do
           xml.send("root-step", match[1])
           xml.send("root-alter", match[2] == "#" ? "1" : "-1") unless match[2].empty?
