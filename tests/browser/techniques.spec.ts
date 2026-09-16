@@ -92,8 +92,8 @@ test('renders section words below the tablature staff', async ({ page }) => {
 
 test('renders duration dots between the tablature staff and rhythm beams in score and print preview', async ({ page, context }) => {
   const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
-    .replace('<divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type>', '<divisions>4</divisions><time><beats>3</beats><beat-type>4</beat-type>')
-    .replace('<duration>1</duration><type>quarter</type>', '<duration>6</duration><type>quarter</type><dot/>')
+    .replace('<divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type>', '<divisions>4</divisions><time><beats>9</beats><beat-type>16</beat-type>')
+    .replace('<duration>1</duration><type>quarter</type>', '<duration>3</duration><type>eighth</type><dot/>')
     .replaceAll('<duration>1</duration><type>quarter</type>', '<duration>2</duration><type>eighth</type>');
   const readPositions = (container: Locator) => container.locator('svg').evaluateAll(svgs => {
     const dots = svgs.flatMap(svg => [...svg.querySelectorAll('text')]
