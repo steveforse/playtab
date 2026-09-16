@@ -1,5 +1,11 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import fs from 'node:fs';
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!crypto.randomUUID) Object.defineProperty(crypto, 'randomUUID', { value: () => 'browser-test-id' });
+  });
+});
 
 test('renders H and PO on technique slurs and retains them after resize and printing', async ({ page, context }) => {
   const errors: string[] = [];
@@ -82,4 +88,43 @@ test('renders section words below the tablature staff', async ({ page }) => {
   await expect.poll(async () => (await readSectionPosition())?.labelY ?? -1).toBeGreaterThan(0);
   const position = await readSectionPosition();
   expect((position?.labelY ?? Number.NEGATIVE_INFINITY) + 0.1).toBeGreaterThanOrEqual(position?.stemBottomY ?? Number.POSITIVE_INFINITY);
+});
+
+test('renders duration dots above technique slurs in the score and print preview', async ({ page, context }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type>', '<divisions>4</divisions><time><beats>3</beats><beat-type>4</beat-type>')
+    .replace('<duration>1</duration><type>quarter</type>', '<duration>6</duration><type>quarter</type><dot/>')
+    .replaceAll('<duration>1</duration><type>quarter</type>', '<duration>2</duration><type>eighth</type>');
+  const readPositions = (container: Locator) => container.locator('svg').evaluateAll(svgs => {
+    const dots = svgs.flatMap(svg => [...svg.querySelectorAll('text')]
+      .filter(text => text.textContent?.length === 1 && text.textContent.codePointAt(0) === 57831)
+      .map(dot => ({ svg, dot })));
+    const dot = dots[0]?.dot;
+    const transform = dot?.parentElement?.getAttribute('transform');
+    const dotY = Number(transform?.match(/translate\([^ ]+ ([^)]+)\)/)?.[1]);
+    const techniqueYs = [...(dots[0]?.svg.querySelectorAll('text') ?? [])]
+      .filter(text => ['H', 'PO'].includes(text.textContent ?? ''))
+      .map(text => Number(text.getAttribute('y')))
+      .filter(Number.isFinite);
+    return dots.length && techniqueYs.length ? { dotY, techniqueYs } : null;
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'dotted-technique.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const notation = page.getByTestId('notation');
+  await expect.poll(async () => (await readPositions(notation))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
+  const position = await readPositions(notation);
+  expect(position).not.toBeNull();
+  expect(position!.dotY).toBeLessThan(Math.min(...position!.techniqueYs));
+
+  await context.addInitScript(() => { window.print = () => {}; });
+  const popup = page.waitForEvent('popup');
+  await page.getByLabel('Export score').selectOption('pdf');
+  const printPreview = await popup;
+  await expect.poll(async () => (await readPositions(printPreview.locator('body')))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
+  const printPosition = await readPositions(printPreview.locator('body'));
+  expect(printPosition).not.toBeNull();
+  expect(printPosition!.dotY).toBeLessThan(Math.min(...printPosition!.techniqueYs));
+  await printPreview.close();
 });

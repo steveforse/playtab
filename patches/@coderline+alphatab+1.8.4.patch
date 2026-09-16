@@ -367,6 +367,9 @@ index b6203da..eef3e85 100644
  		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
  		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
  	}
+@@ -64064,1 +64170,1 @@
+-				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem);
++				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.TopWithStem);
 @@ -64530,8 +64653,10 @@ class TabBarRenderer extends LineBarRenderer {
  	createLinePreBeatGlyphs() {
  		if (this.isFirstOfStaff) {
