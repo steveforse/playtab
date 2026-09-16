@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!-- Original synthetic exercise, not extracted from a published arrangement. -->
+<score-partwise version="4.0">
+  <work><work-title>Chained technique exercise</work-title></work>
+  <part-list><score-part id="P1"><part-name>Banjo</part-name></score-part></part-list>
+  <part id="P1"><measure number="1">
+    <attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time>
+      <clef><sign>TAB</sign><line>5</line></clef>
+      <staff-details><staff-lines>5</staff-lines>
+        <staff-tuning line="1"><tuning-step>G</tuning-step><tuning-octave>4</tuning-octave></staff-tuning>
+        <staff-tuning line="2"><tuning-step>C</tuning-step><tuning-octave>3</tuning-octave></staff-tuning>
+        <staff-tuning line="3"><tuning-step>G</tuning-step><tuning-octave>3</tuning-octave></staff-tuning>
+        <staff-tuning line="4"><tuning-step>C</tuning-step><tuning-octave>4</tuning-octave></staff-tuning>
+        <staff-tuning line="5"><tuning-step>E</tuning-step><tuning-alter>-1</tuning-alter><tuning-octave>4</tuning-octave></staff-tuning>
+      </staff-details>
+    </attributes>
+    <note><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>4</string><fret>0</fret><hammer-on type="start">H</hammer-on></technical></notations></note>
+    <note><pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>4</string><fret>2</fret><hammer-on type="stop"/><pull-off type="start">PO</pull-off></technical></notations></note>
+    <note><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>4</string><fret>0</fret><pull-off type="stop"/></technical></notations></note>
+    <note><rest/><duration>1</duration><type>quarter</type></note>
+  </measure></part>
+</score-partwise>

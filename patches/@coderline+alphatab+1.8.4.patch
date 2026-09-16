@@ -1,5 +1,5 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..eef3e85 100644
+index b6203da..2cbc70a
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 @@ -33251,7 +33251,11 @@ class JsonConverter {
@@ -309,7 +309,7 @@ index b6203da..eef3e85 100644
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -59240,6 +59341,10 @@ class TieGlyphLabels {
+@@ -59240,11 +59341,17 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {
@@ -318,9 +318,29 @@ index b6203da..eef3e85 100644
 +		return this._forSlide ? super.calculateTieDirection() : BeamDirection.Up;
 +	}
  	_forSlide;
++	_segment;
  	_labels = null;
- 	constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
-@@ -63810,6 +63915,7 @@ class TabNoteChordGlyph extends Glyph {
+-	constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
++	constructor(slurEffectId, startNote, endNote, forSlide, forEnd, segment = null) {
+ 		super(slurEffectId, startNote, endNote, forEnd);
+ 		this._forSlide = forSlide;
++		this._segment = segment;
+ 	}
+ 	getTieHeight(startX, _startY, endX, _endY) {
+ 		return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
+@@ -59253,9 +59360,9 @@ class TabSlurGlyph extends TabTieGlyph {
+ 		if (this._labels === null) {
+ 			this._labels = [];
+ 			const slur = this.startNote.effectSlur;
+-			if (slur !== null) {
++			if (slur !== null || this._segment !== null) {
+ 				const notationSettings = this.renderer.settings.notation;
+-				for (const s of slur.segments) {
++				for (const s of this._segment ? [this._segment] : slur.segments) {
+ 					const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
+ 					if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
+ 				}
+@@ -63810,6 +63917,7 @@ class TabNoteChordGlyph extends Glyph {
  	_deadSlapped = null;
  	_isGrace;
  	beat;
@@ -328,7 +348,7 @@ index b6203da..eef3e85 100644
  	maxStringNote = null;
  	minStringNote = null;
  	beatEffects = /* @__PURE__ */ new Map();
-@@ -63907,7 +64013,9 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63907,7 +64015,9 @@ class TabNoteChordGlyph extends Glyph {
  			let maxEffectY = NaN;
  			let effectY = this.getNoteY(this.minStringNote, NoteYPosition.Center) + tabHeight / 2;
  			const effectSpacing = this.renderer.smuflMetrics.onNoteEffectPadding;
@@ -338,7 +358,7 @@ index b6203da..eef3e85 100644
  				g.y += effectY;
  				g.x += this.width / 2;
  				g.renderer = this.renderer;
-@@ -63916,6 +64024,16 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63916,6 +64026,16 @@ class TabNoteChordGlyph extends Glyph {
  				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
  				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
  			}
@@ -355,7 +375,7 @@ index b6203da..eef3e85 100644
  			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
  		}
  		this.width = w;
-@@ -63923,6 +64041,11 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63923,6 +64043,11 @@ class TabNoteChordGlyph extends Glyph {
  	addNoteGlyph(noteGlyph, note) {
  		this._notes.push(noteGlyph);
  		this.notesPerString.set(note.string, noteGlyph);
@@ -367,10 +387,47 @@ index b6203da..eef3e85 100644
  		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
  		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
  	}
-@@ -64064,1 +64170,1 @@
+@@ -64060,7 +64185,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
+ 				centeredEffectGlyphs.push(glyph);
+ 			}
+ 			if (this.container.beat.dots > 0 && tabRenderer.rhythmMode !== TabRhythmMode.Hidden) {
 -				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem);
 +				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem) - tabRenderer.beamThickness - 2 * tabRenderer.beamSpacing;
-@@ -64530,8 +64653,10 @@ class TabBarRenderer extends LineBarRenderer {
+ 				for (let i = 0; i < this.container.beat.dots; i++) this.addEffect(new AugmentationDotGlyph(0, y));
+ 			}
+ 		} else {
+@@ -64379,7 +64504,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+ 			const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
+ 			this.addTie(tapSlur);
+ 		}
+-		if (n.isEffectSlurOrigin && n.effectSlurDestination) {
++		const effectSlur = n.effectSlur ?? n.effectSlurOrigin?.effectSlur;
++		const isChainedEffectSlur = effectSlur?.segments?.length > 1;
++		if (isChainedEffectSlur) {
++			if (effectSlur.segments[0].fromNote === n) for (const segment of effectSlur.segments) {
++				const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, false, segment);
++				this.addTie(segmentSlur);
++			}
++		} else if (n.isEffectSlurOrigin && n.effectSlurDestination) {
+ 			let expanded = false;
+ 			for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
+ 				expanded = true;
+@@ -64391,7 +64523,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+ 				this.addTie(effectSlur);
+ 			}
+ 		}
+-		if (n.isEffectSlurDestination && n.effectSlurOrigin) {
++		if (isChainedEffectSlur && n.isEffectSlurDestination && n.effectSlurOrigin) {
++			const segment = effectSlur.segments.find(s => s.toNote === n);
++			if (segment) {
++				const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, true, segment);
++				this.addTie(segmentSlur);
++			}
++		} else if (n.isEffectSlurDestination && n.effectSlurOrigin) {
+ 			let expanded = false;
+ 			for (const slur of this._effectSlurs) if (slur.tryExpand(n.effectSlurOrigin, n, false, true)) {
+ 				expanded = true;
+@@ -64530,8 +64668,10 @@ class TabBarRenderer extends LineBarRenderer {
  	createLinePreBeatGlyphs() {
  		if (this.isFirstOfStaff) {
  			const center = (this.bar.staff.tuning.length - 1) / 2;
@@ -383,7 +440,7 @@ index b6203da..eef3e85 100644
  		}
  		if (this.showTimeSignature && (!this.bar.previousBar || this.bar.previousBar && this.bar.masterBar.timeSignatureNumerator !== this.bar.previousBar.masterBar.timeSignatureNumerator || this.bar.previousBar && this.bar.masterBar.timeSignatureDenominator !== this.bar.previousBar.masterBar.timeSignatureDenominator || this.bar.previousBar && this.bar.masterBar.isFreeTime && this.bar.masterBar.isFreeTime !== this.bar.previousBar.masterBar.isFreeTime)) {
  			this.createStartSpacing();
-@@ -64923,7 +65048,7 @@ class Environment {
+@@ -64923,7 +65063,7 @@ class Environment {
  			},
  			{
  				effect: new MarkerEffectInfo(),
@@ -392,7 +449,7 @@ index b6203da..eef3e85 100644
  			},
  			{
  				effect: new DirectionsEffectInfo(),
-@@ -64935,7 +65060,7 @@ class Environment {
+@@ -64935,7 +65075,7 @@ class Environment {
  			},
  			{
  				effect: new TextEffectInfo(),
@@ -401,3 +458,64 @@ index b6203da..eef3e85 100644
  			},
  			{
  				effect: new BeatTimerEffectInfo(),
+diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.js b/node_modules/@coderline/alphatab/dist/alphaTab.js
+index 6da399c..2c0a5c3
+--- a/node_modules/@coderline/alphatab/dist/alphaTab.js
++++ b/node_modules/@coderline/alphatab/dist/alphaTab.js
+@@ -59245,10 +59245,12 @@
+ 	*/
+ 	var TabSlurGlyph = class extends TabTieGlyph {
+ 		_forSlide;
++		_segment;
+ 		_labels = null;
+-		constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
++		constructor(slurEffectId, startNote, endNote, forSlide, forEnd, segment = null) {
+ 			super(slurEffectId, startNote, endNote, forEnd);
+ 			this._forSlide = forSlide;
++			this._segment = segment;
+ 		}
+ 		getTieHeight(startX, _startY, endX, _endY) {
+ 			return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
+@@ -59257,9 +59259,9 @@
+ 			if (this._labels === null) {
+ 				this._labels = [];
+ 				const slur = this.startNote.effectSlur;
+-				if (slur !== null) {
++				if (slur !== null || this._segment !== null) {
+ 					const notationSettings = this.renderer.settings.notation;
+-					for (const s of slur.segments) {
++					for (const s of this._segment ? [this._segment] : slur.segments) {
+ 						const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
+ 						if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
+ 					}
+@@ -64383,7 +64385,14 @@
+ 				const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
+ 				this.addTie(tapSlur);
+ 			}
+-			if (n.isEffectSlurOrigin && n.effectSlurDestination) {
++			const effectSlur = n.effectSlur ?? n.effectSlurOrigin?.effectSlur;
++			const isChainedEffectSlur = effectSlur?.segments?.length > 1;
++			if (isChainedEffectSlur) {
++				if (effectSlur.segments[0].fromNote === n) for (const segment of effectSlur.segments) {
++					const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, false, segment);
++					this.addTie(segmentSlur);
++				}
++			} else if (n.isEffectSlurOrigin && n.effectSlurDestination) {
+ 				let expanded = false;
+ 				for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
+ 					expanded = true;
+@@ -64395,7 +64404,13 @@
+ 					this.addTie(effectSlur);
+ 				}
+ 			}
+-			if (n.isEffectSlurDestination && n.effectSlurOrigin) {
++			if (isChainedEffectSlur && n.isEffectSlurDestination && n.effectSlurOrigin) {
++				const segment = effectSlur.segments.find(s => s.toNote === n);
++				if (segment) {
++					const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, true, segment);
++					this.addTie(segmentSlur);
++				}
++			} else if (n.isEffectSlurDestination && n.effectSlurOrigin) {
+ 				let expanded = false;
+ 				for (const slur of this._effectSlurs) if (slur.tryExpand(n.effectSlurOrigin, n, false, true)) {
+ 					expanded = true;
