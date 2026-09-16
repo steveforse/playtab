@@ -78,6 +78,16 @@ describe('MusicXML preview', () => {
     expect(note.leftHandFinger).not.toBe(baseline.leftHandFinger);
     expect(note.beat.text).toBeNull();
   });
+  it('shows a PDF rake as an R annotation and arpeggio', () => {
+    const annotated = techniques.replace(
+      '<fret>3</fret>',
+      '<fret>3</fret><other-technical>TEF rake</other-technical><arpeggiate direction="down" />',
+    );
+    const { score } = readMusicXml(annotated, 'rake.xml');
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(note.beat.text).toBe('R');
+    expect(note.beat.brushType).toBe(model.BrushType.ArpeggioDown);
+  });
   it('maps the TEF code for finger 1 to a circled fingering', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><fingering enclosure="circle">1</fingering>');
     const { score } = readMusicXml(annotated, 'finger-one.xml');

@@ -104,6 +104,23 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "stop", chained_destination.at_xpath("./notations/technical/pull-off")["type"]
   end
 
+  test "writes a PDF rake as an arpeggio with an R annotation" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Rake",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 5 },
+        { measure: 0, position: 0, string: 1, fret: 0 },
+        { measure: 0, position: 0, string: 2, fret: 0 }
+      ],
+      techniques: [ { measure: 0, position: 0, string: 0, type: "rake", label: "R" } ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal 1, document.xpath("//arpeggiate[@direction='down']").length
+    assert_equal "TEF rake", document.at_xpath("//other-technical").text
+  end
+
   test "does not pair a technique with a distant note" do
     notes = [
       { measure: 0, position: 0, string: 0, fret: 0 },

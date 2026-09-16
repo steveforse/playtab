@@ -21,6 +21,9 @@ module Tef2
     POSITION_STEP = 128
     POSITION_LEFT_MARGIN_RATIO = 0.08
     POSITION_RIGHT_MARGIN_RATIO = 0.02
+    MIN_SYSTEM_LINE_LENGTH = 60
+    MAX_SYSTEM_EDGE_VARIANCE = 8
+    MAX_MULTI_DIGIT_FRET_GAP = 6.5
     TIME_SIGNATURE_CODES = (33..37).freeze
 
     SECTION_LABELS = %w[
@@ -39,6 +42,8 @@ module Tef2
       "s" => "slide",
       "bend" => "bend",
       "b" => "bend",
+      "r" => "rake",
+      "rake" => "rake",
       "t" => "thumb",
       "thumb" => "thumb"
     }.freeze
@@ -370,9 +375,33 @@ module Tef2
       raise Error, "A PDF page could not be read safely.", cause: e
     end
 
+    def merge_multi_digit_frets(texts)
+      result = []
+      index = 0
+      ordered = texts.sort_by { |item| [ item[:y], item[:x] ] }
+      while index < ordered.length
+        current = ordered[index]
+        following = ordered[index + 1]
+        if single_digit_fret?(current) && following && single_digit_fret?(following) &&
+            (current[:y] - following[:y]).abs <= 1.5 && following[:x] > current[:x] &&
+            following[:x] - current[:x] <= MAX_MULTI_DIGIT_FRET_GAP
+          result << current.merge(text: current[:text] + following[:text])
+          index += 2
+        else
+          result << current
+          index += 1
+        end
+      end
+      result
+    end
+
+    def single_digit_fret?(item)
+      item[:text].match?(/\A\d\z/)
+    end
+
     def systems(texts, segments, curve_boxes = [])
       horizontal = segments.filter_map do |x1, y1, x2, y2|
-        next unless (y1 - y2).abs < 0.8 && (x2 - x1).abs >= 100
+        next unless (y1 - y2).abs < 0.8 && (x2 - x1).abs >= MIN_SYSTEM_LINE_LENGTH
 
         [ (y1 + y2) / 2.0, [ x1, x2 ].min, [ x1, x2 ].max ]
       end
@@ -397,9 +426,17 @@ module Tef2
           next
         end
 
+        edge_starts = candidate.map { |line| line[1] }
+        edge_finishes = candidate.map { |line| line[2] }
+        if edge_starts.max - edge_starts.min > MAX_SYSTEM_EDGE_VARIANCE ||
+            edge_finishes.max - edge_finishes.min > MAX_SYSTEM_EDGE_VARIANCE
+          cursor += 1
+          next
+        end
+
         start = candidate.map { |line| line[1] }.max
         finish = candidate.map { |line| line[2] }.min
-        if finish - start < 100
+        if finish - start < MIN_SYSTEM_LINE_LENGTH
           cursor += 1
           next
         end
@@ -423,9 +460,10 @@ module Tef2
         end
 
         row_positions = 5.times.map { |index| bottom - index * (bottom - top) / 4.0 }
-        note_text = texts.filter_map do |item|
-          next unless item[:x].between?(start + 10, finish - 2) && item[:y].between?(top - 5, bottom + 5)
-
+        note_candidates = texts.select do |item|
+          item[:x].between?(start + 10, finish - 2) && item[:y].between?(top - 5, bottom + 5)
+        end
+        note_text = merge_multi_digit_frets(note_candidates).filter_map do |item|
           nearest = (0...5).min_by { |index| (item[:y] - row_positions[index]).abs }
           next unless (item[:y] - row_positions[nearest] + 3.6).abs <= 5
 
@@ -1001,7 +1039,7 @@ module Tef2
     end
 
     def technique_marker_position?(system, item, technique = nil)
-      bottom_margin = technique == "pull-off" ? 18 : 8
+      bottom_margin = %w[hammer-on pull-off].include?(technique) ? 18 : 8
       item[:y].between?(system[:top] - 36, system[:bottom] + bottom_margin)
     end
 
@@ -1063,7 +1101,7 @@ module Tef2
     end
 
     def technique_note(system, item, technique)
-      return nearest_note(system, item[:x]) if technique == "thumb"
+      return nearest_note(system, item[:x]) if %w[thumb rake].include?(technique)
 
       notes = system[:events].flat_map { |event| event[:notes] }.sort_by { |note| [ note[:x], note[:string] ] }
       candidates = notes.filter_map do |current|
@@ -1153,7 +1191,7 @@ module Tef2
       candidates = pages.filter_map do |page|
         next if page[:systems].any?
 
-        body = page[:texts].select { |item| item[:y] < 735 && item[:y] > 55 && item[:x] < 120 }
+        body = lyrics_items(page)
         body if body.length >= 4
       end
       return unless candidates.any?
@@ -1165,7 +1203,7 @@ module Tef2
     def lyrics_items(page, maximum_y: 735)
       page[:texts].select do |item|
         item[:y] < maximum_y && item[:y] > 55 && item[:x] < 120 &&
-          !item[:text].match?(/\A(?:lyrics(?:\s*&\s*chords)?|verse|chorus)\z/i) &&
+          !item[:text].match?(/\Alyrics(?:\s*&\s*chords)?\z/i) &&
           normalize_chord(item[:text]).empty? && !item[:text].match?(/\A\d{1,2}\z/)
       end
     end
