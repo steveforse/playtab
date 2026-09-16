@@ -21,6 +21,7 @@ module Tef2
     POSITION_STEP = 128
     POSITION_LEFT_MARGIN_RATIO = 0.08
     POSITION_RIGHT_MARGIN_RATIO = 0.02
+    TIME_SIGNATURE_CODES = (33..37).freeze
 
     SECTION_LABELS = %w[
       intro verse verses chorus bridge high\ solo low\ solo solo outro tag break ending
@@ -62,7 +63,7 @@ module Tef2
         if string == "!"
           @flat_symbols << { x: origin.x, y: origin.y, text: string }
         end
-        if string.length == 1 && string.ord.between?(33, 35) && state.respond_to?(:current_font)
+        if string.length == 1 && TIME_SIGNATURE_CODES.cover?(string.ord) && state.respond_to?(:current_font)
           @time_signature_symbols << {
             x: origin.x,
             y: origin.y,
@@ -74,18 +75,30 @@ module Tef2
       end
 
       def time_signature
-        pair = time_signature_symbols.sort_by { |symbol| [ symbol[:y], symbol[:x] ] }.each_cons(2).find do |numerator, denominator|
-          (denominator[:x] - numerator[:x]).abs <= 2 &&
-            (denominator[:y] - numerator[:y]).between?(8, 16)
-        end
-        return unless pair
+        time_signature_markers.first&.slice(:numerator, :denominator)
+      end
 
-        numerator, denominator = pair
+      def time_signature_markers
+        time_signature_symbols.combination(2).filter_map do |first, second|
+          next unless (second[:x] - first[:x]).abs <= 2
+          next unless (second[:y] - first[:y]).abs.between?(8, 16)
 
-        value = numerator[:code] == denominator[:code] ? 4 : numerator_value(numerator)
-        value && { numerator: value, denominator: 4 }
+          numerator, denominator = [ first, second ].sort_by { |symbol| -symbol[:y] }
+          signature = time_signature_from_symbols(numerator, denominator)
+          next unless signature
+
+          signature.merge(x: (first[:x] + second[:x]) / 2.0, y: numerator[:y])
+        end.sort_by { |marker| [ -marker[:y], marker[:x] ] }
       rescue StandardError
-        nil
+        []
+      end
+
+      private def time_signature_from_symbols(numerator, denominator)
+        return { numerator: 6, denominator: 8 } if numerator[:code] == 37 && denominator[:code] == 36
+
+        denominator_value = denominator[:code] == 36 ? 8 : 4
+        numerator_value = numerator[:code] == denominator[:code] ? 4 : numerator_value(numerator)
+        numerator_value && { numerator: numerator_value, denominator: denominator_value }
       end
 
       private def numerator_value(symbol)
@@ -182,7 +195,6 @@ module Tef2
         page_data
       end
       time_signature = pages.filter_map { |page| page[:time_signature] }.first || { numerator: 4, denominator: 4 }
-      measure_ticks = pdf_measure_ticks(time_signature)
       systems = pages.flat_map { |page| page[:systems] }
       # The page receiver normalizes the PDF coordinates to screen order:
       # larger y values are visually higher on the page. Musical order is
@@ -194,13 +206,20 @@ module Tef2
 
       notes = []
       measure_index = 0
+      measure_signatures = []
+      current_time_signature = time_signature
       timing_steps = Set.new
       systems.each do |system|
         system[:measure_start] = measure_index
-        system[:measure_ticks] = measure_ticks
+        system[:measure_ticks] = pdf_measure_ticks(current_time_signature)
+        system[:measure_ticks_by_measure] = []
         system[:measure_layouts] = []
         system[:measure_rhythm_positions] = []
         system[:bars].each_cons(2).with_index do |(left, right), measure_offset|
+          current_time_signature = system.fetch(:time_signature_changes, {}).fetch(measure_offset, current_time_signature)
+          measure_signatures << current_time_signature
+          measure_ticks = pdf_measure_ticks(current_time_signature)
+          system[:measure_ticks_by_measure] << measure_ticks
           events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
           event_xs = events.map { |event| event[:x] }
           step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
@@ -264,6 +283,7 @@ module Tef2
         tempo: metadata[:tempo],
         sections: metadata[:sections],
         chords: metadata[:chords],
+        measure_signatures: measure_signatures,
         chord_diagrams: metadata[:chord_diagrams],
         endings: metadata[:endings],
         repeats: metadata[:repeats],
@@ -327,6 +347,8 @@ module Tef2
       end
       curve_boxes = receiver.respond_to?(:curve_boxes) ? receiver.curve_boxes : []
       page_systems = systems(note_texts, segments, curve_boxes)
+      markers = receiver.respond_to?(:time_signature_markers) ? receiver.time_signature_markers : []
+      assign_time_signature_markers(page_systems, markers)
       detected_time_signature = receiver.respond_to?(:time_signature) ? receiver.time_signature : nil
       symbols = receiver.respond_to?(:time_signature_symbols) ? receiver.time_signature_symbols : []
       detected_time_signature = infer_time_signature_from_spacing(detected_time_signature, symbols, page_systems)
@@ -419,6 +441,22 @@ module Tef2
         cursor += 5
       end
       result
+    end
+
+    def assign_time_signature_markers(page_systems, markers)
+      page_systems.each do |system|
+        system[:time_signature_changes] = {}
+        markers.each do |marker|
+          next unless marker[:y].between?(system[:top] - 18, system[:bottom] + 18)
+
+          measure_offset, distance = system[:bars][0...-1].each_with_index.map do |bar, index|
+            [ index, (marker[:x] - bar).abs ]
+          end.min_by(&:last)
+          next unless distance <= 24
+
+          system[:time_signature_changes][measure_offset] = marker.slice(:numerator, :denominator)
+        end
+      end
     end
 
     def parenthesized_note?(item, texts)
@@ -929,7 +967,8 @@ module Tef2
       end
       left = bars[measure_offset]
       right = bars[measure_offset + 1]
-      measure_ticks = system.fetch(:measure_ticks, MEASURE_TICKS)
+      measure_ticks = system[:measure_ticks_by_measure]&.[](measure_offset) ||
+        system.fetch(:measure_ticks, MEASURE_TICKS)
       event_xs = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
       geometry = system[:measure_layouts]&.[](measure_offset)
       if geometry

@@ -124,6 +124,25 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "half", document.at_xpath("//measure[1]/note/type").text
   end
 
+  test "writes time-signature changes and measure-specific durations" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Mixed meter",
+      measures: 3,
+      time_signature: { numerator: 3, denominator: 4 },
+      measure_signatures: [
+        { numerator: 3, denominator: 4 },
+        { numerator: 6, denominator: 8 },
+        { numerator: 3, denominator: 8 }
+      ],
+      notes: []
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal [ "3", "6", "3" ], document.xpath("//measure/attributes/time/beats").map(&:text)
+    assert_equal [ "4", "8", "8" ], document.xpath("//measure/attributes/time/beat-type").map(&:text)
+    assert_equal [ "2880", "2880", "1440" ], document.xpath("//measure/note/duration").map(&:text)
+  end
+
   test "writes dotted durations and first and second endings" do
     dotted = Tef2::PdfMusicxmlBuilder.build(
       title: "Dotted",

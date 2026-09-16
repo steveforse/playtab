@@ -54,8 +54,7 @@ module Tef2
     def write_measures(xml, score)
       tuning = parse_tuning(score[:tuning_label].to_s)
       time_signature = score[:time_signature] || { numerator: 4, denominator: 4 }
-      measure_ticks = xml_measure_ticks(time_signature)
-      pdf_measure_ticks = pdf_measure_ticks(time_signature)
+      measure_signatures = score[:measure_signatures].to_a
       notes = score[:notes] || []
       technique_map = techniques_by_note(score, notes)
       fingering_map = fingerings_by_note(score, notes)
@@ -63,11 +62,17 @@ module Tef2
       chords = metadata_by_measure(score[:chords] || [])
       chord_diagrams = (score[:chord_diagrams] || []).to_h { |diagram| [ diagram[:name].to_s, diagram ] }
 
+      previous_measure_signature = nil
       score.fetch(:measures, 0).times do |measure_index|
+        measure_signature = measure_signatures[measure_index] || time_signature
+        measure_ticks = xml_measure_ticks(measure_signature)
+        pdf_measure_ticks = pdf_measure_ticks(measure_signature)
         xml.measure(number: (measure_index + 1).to_s) do
           if measure_index.zero?
-            write_attributes(xml, time_signature, tuning)
+            write_attributes(xml, measure_signature, tuning)
             write_tempo(xml, score[:tempo]) if score[:tempo]
+          elsif measure_signature != previous_measure_signature
+            xml.attributes { write_time_signature(xml, measure_signature) }
           end
 
           write_repeat_barlines(xml, score[:repeats] || [], score[:endings] || [], measure_index)
@@ -105,16 +110,14 @@ module Tef2
           end
           write_rest(xml, measure_ticks - cursor) if cursor < measure_ticks
         end
+        previous_measure_signature = measure_signature
       end
     end
 
     def write_attributes(xml, time_signature, tuning)
       xml.attributes do
         xml.divisions(DIVISIONS.to_s)
-        xml.time do
-          xml.beats(time_signature.fetch(:numerator, 4).to_s)
-          xml.send("beat-type", time_signature.fetch(:denominator, 4).to_s)
-        end
+        write_time_signature(xml, time_signature)
         xml.clef do
           xml.sign("TAB")
           xml.line("5")
@@ -130,6 +133,13 @@ module Tef2
             end
           end
         end
+      end
+    end
+
+    def write_time_signature(xml, time_signature)
+      xml.time do
+        xml.beats(time_signature.fetch(:numerator, 4).to_s)
+        xml.send("beat-type", time_signature.fetch(:denominator, 4).to_s)
       end
     end
 
