@@ -205,6 +205,7 @@ module Tef2
       end
 
       notes = []
+      rests = []
       measure_index = 0
       measure_signatures = []
       current_time_signature = time_signature
@@ -225,13 +226,17 @@ module Tef2
           step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
           layout = position_layout(left, right, event_xs, measure_ticks, step)
           system[:measure_layouts] << { step: step, layout: layout }
+          dotted_indices = dotted_event_indices(system, events, left, right)
+          triplet_starts = triplet_event_starts(system, events, left, right)
           rhythm_positions = beam_rhythm_positions(left, right, events, measure_ticks)
-          rhythm_positions ||= spacing_rhythm_positions(left, right, event_xs, measure_ticks, step)
+          rhythm_positions ||= spacing_rhythm_positions(left, right, event_xs, measure_ticks, step,
+            dotted_indices: dotted_indices, triplet_starts: triplet_starts)
           system[:measure_rhythm_positions] << rhythm_positions
           timing_steps << step
+          event_positions = rhythm_positions || events.map { |event| position(event[:x], left, right, step: step,
+            event_xs: event_xs, measure_ticks: measure_ticks, layout: layout) }
           events.each_with_index do |event, event_index|
-            position = rhythm_positions&.fetch(event_index) || position(event[:x], left, right, step: step,
-              event_xs: event_xs, measure_ticks: measure_ticks, layout: layout)
+            position = event_positions.fetch(event_index)
             event[:notes].each do |note|
               notes << {
                 measure: measure_index + measure_offset,
@@ -242,6 +247,9 @@ module Tef2
                 ghost: note[:ghost]
               }
             end
+          end
+          silent_positions(system, left, right, events, event_positions, step, measure_ticks).each do |position|
+            rests << { measure: measure_index + measure_offset, position: position }
           end
         end
         measure_index += [ system[:bars].length - 1, 0 ].max
@@ -283,6 +291,7 @@ module Tef2
         tempo: metadata[:tempo],
         sections: metadata[:sections],
         chords: metadata[:chords],
+        rests: rests,
         measure_signatures: measure_signatures,
         chord_diagrams: metadata[:chord_diagrams],
         endings: metadata[:endings],
@@ -436,11 +445,31 @@ module Tef2
           end
         end
         events.each { |event| event[:beam_count] = beam_count_for_event(event[:x], segments, top) }
+        silent_stems = silent_stem_positions(segments, top, start, finish, events)
 
-        result << { page: 0, top: top, bottom: bottom, bars: bars, repeat_barlines: repeat_barlines, events: events, texts: texts }
+        result << {
+          page: 0, top: top, bottom: bottom, bars: bars, repeat_barlines: repeat_barlines,
+          events: events, silent_stems: silent_stems, curve_boxes: curve_boxes, texts: texts
+        }
         cursor += 5
       end
       result
+    end
+
+    def silent_stem_positions(segments, top, start, finish, events)
+      candidates = segments.filter_map do |x1, y1, x2, y2|
+        next unless (x1 - x2).abs < 0.8
+        next unless [ x1, x2 ].min >= start + 5 && [ x1, x2 ].max < finish - 2
+
+        low, high = [ y1, y2 ].minmax
+        next unless high < top - 4 && low >= top - 20
+        next unless (high - low).between?(7, 13)
+        x = (x1 + x2) / 2.0
+        next if events.any? { |event| (event[:x] - x).abs <= 3 }
+
+        x
+      end
+      unique_sorted(candidates, 3.0)
     end
 
     def assign_time_signature_markers(page_systems, markers)
@@ -568,25 +597,120 @@ module Tef2
     # starts at the barline, the local gaps still preserve the rhythm pattern:
     # a gap twice the smallest printed gap represents two grid steps. This
     # handles compact endings where a global fit can move one onset by a step.
-    def spacing_rhythm_positions(left, right, event_xs, measure_ticks, step)
+    def spacing_rhythm_positions(left, right, event_xs, measure_ticks, step, dotted_indices: [], triplet_starts: [])
       return if event_xs.length < 2
 
       width = right - left
       return if event_xs.first - left > width * 0.15
 
       gaps = event_xs.each_cons(2).map { |first, second| second - first }
-      base = gaps.min
+      forced_indices = (dotted_indices + triplet_starts.flat_map { |start| [ start, start + 1 ] }).to_set
+      base = gaps.each_index.reject { |index| forced_indices.include?(index) }.map { |index| gaps[index] }.min || gaps.min
       return if base <= 0
 
-      multipliers = gaps.map { |gap| (gap / base) >= 1.4 ? 2 : 1 }
-      predicted = gaps.zip(multipliers).map { |gap, multiplier| (gap - base * multiplier).abs }
-      return if predicted.sum / gaps.sum > 0.2
+      forced_dotted_gaps = dotted_indices.to_set
+      forced_triplet_gaps = triplet_starts.flat_map { |start| [ start, start + 1 ] }.to_set
+      multipliers = gaps.each_index.map do |index|
+        if forced_dotted_gaps.include?(index)
+          3
+        elsif forced_triplet_gaps.include?(index)
+          0.5
+        else
+          (gaps[index] / base) >= 1.4 ? 2 : 1
+        end
+      end
+      predicted = gaps.each_index.filter_map do |index|
+        next if forced_dotted_gaps.include?(index) || forced_triplet_gaps.include?(index)
+
+        (gaps[index] - base * multipliers[index]).abs
+      end
+      return if predicted.any? && forced_dotted_gaps.empty? && forced_triplet_gaps.empty? && predicted.sum / gaps.sum > 0.2
 
       positions = [ 0 ]
-      multipliers.each { |multiplier| positions << positions.last + multiplier * step }
+      multipliers.each { |multiplier| positions << positions.last + (multiplier * step).round }
       return if positions.last > measure_ticks - step
 
       positions
+    end
+
+    def dotted_event_indices(system, events, left, right)
+      dots = curve_dot_centers(system[:curve_boxes])
+      events.each_index.filter do |index|
+        event = events[index]
+        next false unless event[:notes].any?
+
+        dots.any? do |dot|
+          dot[:x].between?(event[:x] + 2, event[:x] + 10) &&
+            dot[:x].between?(left + 5, right - 2) && dot[:y].between?(system[:top] - 22, system[:top] + 5)
+        end
+      end
+    end
+
+    def curve_dot_centers(boxes)
+      points = boxes.to_a.filter_map do |box|
+        next unless box[:width].to_f <= 1.5 && box[:height].to_f <= 1.5
+
+        [ box[:x].to_f, box[:y].to_f ]
+      end
+      groups = []
+      points.each do |point|
+        group = groups.find { |candidate| candidate.any? { |other| (other[0] - point[0]).abs <= 2 && (other[1] - point[1]).abs <= 2 } }
+        group ? group << point : groups << [ point ]
+      end
+      groups.filter_map do |group|
+        next if group.length < 4
+
+        { x: group.sum(&:first) / group.length, y: group.sum(&:last) / group.length }
+      end
+    end
+
+    def triplet_event_starts(system, events, left, right)
+      labels = system[:texts].to_a.select do |item|
+        item[:text].to_s.strip == "3" && item[:x].between?(left - 8, right + 8) &&
+          item[:y] < system[:top] - 5 && item[:y] >= system[:top] - 45
+      end
+      labels.filter_map do |label|
+        candidates = events.each_cons(3).with_index.filter_map do |group, index|
+          next unless group.all? { |event| event[:notes].any? }
+          next unless group.map { |event| event[:notes].map { |note| note[:string] } }.reduce(:&).any?
+          next unless label[:x].between?(group.first[:x] - 8, group.last[:x] + 8)
+
+          [ ((group.first[:x] + group.last[:x]) / 2.0 - label[:x]).abs, index ]
+        end
+        match = candidates.min_by(&:first)
+        match.last if match && match.first <= 12
+      end.uniq
+    end
+
+    def silent_positions(system, left, right, events, event_positions, step, measure_ticks)
+      stems = system[:silent_stems].to_a.select { |x| x.between?(left + 5, right - 2) }
+      return [] if stems.empty?
+
+      note_indices = events.each_index.select { |index| events[index][:notes].any? }
+      return [] if note_indices.empty?
+
+      note_xs = note_indices.map { |index| events[index][:x] }
+      note_positions = note_indices.map { |index| event_positions[index] }
+      gaps = note_xs.each_cons(2).map { |first, second| second - first }.select { |gap| gap > 1.5 }
+      base_gap = gaps.min
+      return [] unless base_gap&.positive?
+
+      stems.filter_map do |x|
+        if x < note_xs.first
+          index = note_xs.each_index.find { |i| note_xs[i] > x }
+          distance = ((note_xs[index] - x) / base_gap).round
+          note_positions[index] - [ distance, 1 ].max * step
+        elsif x > note_xs.last
+          distance = ((x - note_xs.last) / base_gap).round
+          note_positions.last + [ distance, 1 ].max * step
+        else
+          index = note_xs.each_index.find { |i| note_xs[i] > x }
+          left_position = note_positions[index - 1]
+          right_position = note_positions[index]
+          fraction = (x - note_xs[index - 1]).to_f / (note_xs[index] - note_xs[index - 1])
+          (left_position + fraction * (right_position - left_position)).round
+        end.clamp(0, measure_ticks - step)
+      end.uniq
     end
 
     def metadata(pages, systems)
@@ -1061,7 +1185,7 @@ module Tef2
 
       subdivisions = (right - left) / gaps.min
       return 32 if subdivisions >= 24
-      return 64 if subdivisions >= 12 || (measure_ticks == 768 && subdivisions >= 10) ||
+      return 64 if subdivisions >= 12 || (measure_ticks == 768 && subdivisions >= 8) ||
         (measure_ticks <= 512 && subdivisions >= 6)
 
       POSITION_STEP

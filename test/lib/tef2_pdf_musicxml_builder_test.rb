@@ -172,6 +172,22 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "stop", document.at_xpath("//measure[2]/barline[@location='right']/ending")["type"]
   end
 
+  test "writes explicit PDF silence stems as rests at their positions" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Silence stems",
+      measures: 1,
+      time_signature: { numerator: 4, denominator: 4 },
+      notes: [ { measure: 0, position: 0, string: 0, fret: 0 }, { measure: 0, position: 512, string: 0, fret: 2 } ],
+      rests: [ { measure: 0, position: 256 } ]
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note")
+
+    assert_equal [ "960", "960", "1920" ], notes.map { |note| note.at_xpath("./duration").text }
+    assert_equal 1, document.xpath("//measure[1]/note/rest").length
+    assert_equal "0", notes.first.at_xpath("./notations/technical/fret").text
+  end
+
   test "maps common chord suffixes to MusicXML harmony kinds" do
     builder = Tef2::PdfMusicxmlBuilder.new
     expected = {

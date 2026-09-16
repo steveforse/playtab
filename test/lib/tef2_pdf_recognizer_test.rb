@@ -95,6 +95,21 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "preserves silence stems alongside recognized note positions" do
+    page = staff_page(
+      note_texts: [ [ 40, 636.4, "0" ], [ 80, 636.4, "2" ] ],
+      extra_segments: [ [ 60, 585, 60, 595 ] ]
+    )
+
+    with_reader([ page ]) do
+      result = Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "rests.pdf")
+
+      assert_equal 1, result[:rests].length
+      assert_equal 0, result[:rests].first[:measure]
+      assert result[:rests].first[:position].positive?
+    end
+  end
+
   test "covers PDF timing regressions, metadata normalization, and layout helpers" do
     recognizer = Tef2::PdfRecognizer.new
     assert_equal 0, recognizer.send(:position, 20, 20, 300)
@@ -157,6 +172,41 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal [ 0, 64, 128, 192, 256, 384 ], recognizer.send(:spacing_rhythm_positions, 308, 395, [ 318.03, 328.43, 340.34, 350.74, 361.53, 378.8 ], 512, 64)
     assert_equal [ 0, 128, 192, 256 ], recognizer.send(:spacing_rhythm_positions, 132, 205, [ 141.74, 158.29, 169.08, 179.88 ], 512, 64)
     assert_equal [ 0, 128, 192, 256, 384, 448 ], recognizer.send(:spacing_rhythm_positions, 272, 373, [ 283.81, 302.52, 315.48, 328.43, 347.14, 360.09 ], 512, 64)
+
+    dotted_xs = [ 10.0, 35.0, 47.0, 65.0, 83.0, 101.0 ]
+    assert_equal [ 0, 192, 256, 384, 512, 640 ], recognizer.send(
+      :spacing_rhythm_positions, 0, 110, dotted_xs, 768, 64, dotted_indices: [ 0 ]
+    )
+    triplet_xs = [ 10.0, 27.0, 38.0, 49.0, 66.0, 77.0, 88.0, 99.0, 110.0, 117.9, 125.9 ]
+    assert_equal [ 0, 128, 192, 256, 384, 448, 512, 576, 640, 672, 704 ], recognizer.send(
+      :spacing_rhythm_positions, 0, 130, triplet_xs, 768, 64, triplet_starts: [ 8 ]
+    )
+
+    dot_boxes = [
+      { x: 22.0, y: 90.0, width: 1, height: 1 }, { x: 23.0, y: 90.5, width: 1, height: 1 },
+      { x: 22.5, y: 91.0, width: 1, height: 1 }, { x: 23.5, y: 91.0, width: 1, height: 1 }
+    ]
+    dotted_system = { top: 100, curve_boxes: dot_boxes }
+    dotted_events = [ { x: 15, notes: [ { string: 0 } ] }, { x: 40, notes: [ { string: 0 } ] } ]
+    assert_equal [ 0 ], recognizer.send(:dotted_event_indices, dotted_system, dotted_events, 0, 100)
+    assert_equal [ { x: 22.75, y: 90.625 } ], recognizer.send(:curve_dot_centers, dot_boxes)
+    assert_empty recognizer.send(:curve_dot_centers, [ { x: 1, y: 1, width: 2, height: 2 } ])
+
+    triplet_system = { top: 100, texts: [ { x: 30, y: 70, text: "3" } ] }
+    triplet_events = [
+      { x: 20, notes: [ { string: 0 } ] }, { x: 30, notes: [ { string: 0 } ] },
+      { x: 40, notes: [ { string: 0 } ] }, { x: 60, notes: [ { string: 1 } ] }
+    ]
+    assert_equal [ 0 ], recognizer.send(:triplet_event_starts, triplet_system, triplet_events, 0, 100)
+    assert_empty recognizer.send(:triplet_event_starts, { top: 100, texts: [] }, triplet_events, 0, 100)
+
+    silent_segments = [ [ 35, 85, 35, 95 ], [ 50, 85, 50, 95 ], [ 70, 85, 70, 95 ] ]
+    silent_events = [ { x: 50, notes: [ { string: 0 } ] } ]
+    assert_equal [ 35, 70 ], recognizer.send(:silent_stem_positions, silent_segments, 100, 20, 80, silent_events)
+    silent_system = { silent_stems: [ 15, 45, 85 ] }
+    timed_events = [ { x: 30, notes: [ { string: 0 } ] }, { x: 60, notes: [ { string: 0 } ] } ]
+    assert_equal [ 64, 192, 320 ], recognizer.send(:silent_positions, silent_system, 0, 100, timed_events, [ 128, 256 ], 64, 512)
+    assert_empty recognizer.send(:silent_positions, { silent_stems: [] }, 0, 100, timed_events, [ 128, 256 ], 64, 512)
 
     ending_system = { bars: [ 20, 100, 180 ], measure_start: 0, measure_layouts: [], events: [], bottom: 100 }
     endings = recognizer.send(:endings_for_system, ending_system, [
@@ -436,7 +486,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     FakePage.new([], [], 612, 792)
   end
 
-  def staff_page(title: nil, tuning: nil, extra_texts: [], note_texts: nil, flat_symbols_data: nil)
+  def staff_page(title: nil, tuning: nil, extra_texts: [], note_texts: nil, flat_symbols_data: nil, extra_segments: [])
     texts = []
     texts << [ 100, 750, title ] if title
     texts << [ 150, 740, tuning ] if tuning
@@ -450,6 +500,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     [ 20, 300, 580 ].each do |x|
       segments << [ x, 600, x, 640 ]
     end
+    segments.concat(extra_segments)
     FakePage.new(runs, segments, 612, 792, flat_symbols_data)
   end
 end
