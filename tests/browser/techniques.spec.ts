@@ -90,6 +90,34 @@ test('renders section words below the tablature staff', async ({ page }) => {
   expect((position?.labelY ?? Number.NEGATIVE_INFINITY) + 0.1).toBeGreaterThanOrEqual(position?.stemBottomY ?? Number.POSITIVE_INFINITY);
 });
 
+test('keeps an overlapping section word below a thumb fingering', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<note><pitch', '<direction><direction-type><words>Banjo Solo</words></direction-type></direction><note><pitch')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><hammer-on type="start">H</hammer-on>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'section-thumb.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const notation = page.getByTestId('notation');
+  const readPositions = () => notation.locator('svg').evaluateAll(svgs => {
+    const y = (node: Element) => {
+      const direct = node.getAttribute('y');
+      if (direct) return Number(direct);
+      const match = node.parentElement?.getAttribute('transform')?.match(/translate\([^ ]+ ([^)]+)\)/);
+      return match ? Number(match[1]) : NaN;
+    };
+    for (const svg of svgs) {
+      const section = [...svg.querySelectorAll('text')].find(node => node.textContent === 'Banjo Solo');
+      const thumb = [...svg.querySelectorAll('text')].find(node => node.textContent === 'T');
+      if (section && thumb) return { sectionY: y(section), thumbY: y(thumb) };
+    }
+    return null;
+  });
+  await expect.poll(async () => (await readPositions())?.sectionY ?? -1).toBeGreaterThan(0);
+  const position = await readPositions();
+  expect(position).not.toBeNull();
+  expect(position!.sectionY).toBeGreaterThan(position!.thumbY);
+});
+
 test('renders duration dots between the tablature staff and rhythm beams in score and print preview', async ({ page, context }) => {
   const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
     .replace('<divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type>', '<divisions>4</divisions><time><beats>9</beats><beat-type>16</beat-type>')
@@ -121,6 +149,7 @@ test('renders duration dots between the tablature staff and rhythm beams in scor
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles({ name: 'dotted-technique.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Technique exercise');
   const notation = page.getByTestId('notation');
   await expect.poll(async () => (await readPositions(notation))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
   const position = await readPositions(notation);

@@ -22,6 +22,16 @@ ${[['G',4],['C',3],['G',3],['C',4],['D',4]].map(([step, octave], i) => `<staff-t
 
 describe('MusicXML preview', () => {
   const techniques = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
+  it('creates preview IDs when randomUUID is unavailable on the serving origin', () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {} });
+    try {
+      expect(readMusicXml(techniques, 'insecure-origin.xml').id).toMatch(/^preview-/);
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'crypto', original);
+      else delete (globalThis as { crypto?: Crypto }).crypto;
+    }
+  });
   it.skipIf(!process.env.PLAYTAB_CORRECTED_XML || !process.env.PLAYTAB_TEFSOURCE)('preserves base frets for every flagged annotation in the private TEF', () => {
     const preview = readMusicXml(fs.readFileSync(process.env.PLAYTAB_CORRECTED_XML!, 'utf8'), 'corrected.xml');
     const tab = preview.score.tracks[0].staves[0];

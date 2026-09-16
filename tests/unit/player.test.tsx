@@ -110,6 +110,18 @@ describe('notation player', () => {
     }
   });
 
+  it('prefers Philharmonia Banjo-F when the optional bank is available', () => {
+    const injected = !availableSoundFonts.some(option => option.id === 'philharmonia-banjo-f');
+    if (injected) availableSoundFonts.push({ id: 'philharmonia-banjo-f', label: 'Philharmonia Banjo-F', filename: 'philharmonia-banjo-f.sf2', description: 'Dedicated banjo bank' });
+    try {
+      const api = readyPlayer();
+      expect((screen.getByLabelText('Sound bank') as HTMLSelectElement).value).toBe('philharmonia-banjo-f');
+      expect((api.settings as any).player.soundFont).toBe('/notation/soundfont/philharmonia-banjo-f.sf2');
+    } finally {
+      if (injected) availableSoundFonts.pop();
+    }
+  });
+
   it('exports native files and prints a native score', () => {
     const api = readyPlayer();
     vi.useFakeTimers();
