@@ -228,7 +228,9 @@ module Tef2
           system[:measure_layouts] << { step: step, layout: layout }
           dotted_indices = dotted_event_indices(system, events, left, right)
           triplet_starts = triplet_event_starts(system, events, left, right)
-          rhythm_positions = beam_rhythm_positions(left, right, events, measure_ticks)
+          rhythm_positions = if dotted_indices.empty? && triplet_starts.empty?
+            beam_rhythm_positions(left, right, events, measure_ticks)
+          end
           rhythm_positions ||= spacing_rhythm_positions(left, right, event_xs, measure_ticks, step,
             dotted_indices: dotted_indices, triplet_starts: triplet_starts)
           system[:measure_rhythm_positions] << rhythm_positions
@@ -568,7 +570,7 @@ module Tef2
     end
 
     def beam_rhythm_positions(left, right, events, measure_ticks)
-      return if events.empty? || events.any? { |event| !event[:beam_count].to_i.positive? }
+      return if events.empty?
 
       # A shared beam can cross a quarter-note boundary. If the printed gaps
       # show that boundary, use the spacing fallback instead of treating every
@@ -576,6 +578,10 @@ module Tef2
       gaps = events.each_cons(2).map { |first, second| second[:x] - first[:x] }
       return if gaps.length >= 2 && gaps.min.positive? && gaps.max.fdiv(gaps.min) >= 1.4
 
+      # A missing beam is a quarter note in the tablature PDFs produced by
+      # TablEdit. Keeping these events in the beam pass is important: mixed
+      # quarter/eighth measures cannot be recovered from horizontal spacing
+      # alone, especially when a pickup starts late in the measure.
       quarter_ticks = MEASURE_TICKS / 4
       durations = events.map { |event| quarter_ticks / (2**event[:beam_count].to_i) }
       total = durations.sum
@@ -909,18 +915,11 @@ module Tef2
     def endings_for_system(system, texts)
       return [] unless system[:bars].length >= 2
 
-      labels = texts.filter_map do |item|
+      labels = combined_marker_texts(texts).filter_map do |item|
         value = item[:text].gsub(/\s+/, "").strip
         match = value.match(/\A([12])\.D\z/i)
         next [ item, match[1] ] if match
-        next unless value.match?(/\A[12]\.\z/)
-
-        d = texts.find do |candidate|
-          candidate[:text].strip.match?(/\AD(?:\s|\z)/i) &&
-            candidate[:x] >= item[:x] && candidate[:x] - item[:x] <= 16 &&
-            (candidate[:y] - item[:y]).abs <= 5
-        end
-        d ? [ item, value[0] ] : nil
+        next [ item, value[0] ] if value.match?(/\A[12]\.\z/)
       end
 
       labels.filter_map do |label, number|
@@ -978,11 +977,11 @@ module Tef2
     end
 
     def techniques_for_system(system, texts)
-      texts.filter_map do |item|
+      combined_marker_texts(texts).filter_map do |item|
         label = item[:text].strip
         technique = technique_type(label)
         next unless technique && near_system?(system, item[:x], item[:y], 42)
-        next unless technique_marker_position?(system, item)
+        next unless technique_marker_position?(system, item, technique)
 
         note = technique_note(system, item, technique)
         target = metadata_system_for_overflow(system, item[:x])
@@ -1001,8 +1000,9 @@ module Tef2
       end
     end
 
-    def technique_marker_position?(system, item)
-      item[:y].between?(system[:top] - 36, system[:bottom] + 8)
+    def technique_marker_position?(system, item, technique = nil)
+      bottom_margin = technique == "pull-off" ? 18 : 8
+      item[:y].between?(system[:top] - 36, system[:bottom] + bottom_margin)
     end
 
     def fingerings_for_system(system, texts)
@@ -1063,6 +1063,8 @@ module Tef2
     end
 
     def technique_note(system, item, technique)
+      return nearest_note(system, item[:x]) if technique == "thumb"
+
       notes = system[:events].flat_map { |event| event[:notes] }.sort_by { |note| [ note[:x], note[:string] ] }
       candidates = notes.filter_map do |current|
         following = notes.find { |note| note[:string] == current[:string] && note[:x] > current[:x] }
@@ -1073,6 +1075,19 @@ module Tef2
         [ ((current[:x] + following[:x]) / 2.0 - item[:x]).abs, current ]
       end
       candidates.min_by(&:first)&.last || nearest_note(system, item[:x])
+    end
+
+    def combined_marker_texts(texts)
+      additions = texts.sort_by { |item| [ item[:y], item[:x] ] }.each_cons(2).filter_map do |first, second|
+        next unless (first[:y] - second[:y]).abs <= 2
+        next unless second[:x] > first[:x] && second[:x] - first[:x] <= 8
+
+        value = "#{first[:text]}#{second[:text]}"
+        next unless value.match?(/\A(?:[12]\.|[Pp][Oo])\z/)
+
+        { x: first[:x], y: (first[:y] + second[:y]) / 2.0, text: value }
+      end
+      texts + additions
     end
 
     def technique_direction_valid?(technique, current, following)
