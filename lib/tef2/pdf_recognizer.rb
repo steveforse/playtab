@@ -610,12 +610,6 @@ module Tef2
     def beam_rhythm_positions(left, right, events, measure_ticks)
       return if events.empty?
 
-      # A shared beam can cross a quarter-note boundary. If the printed gaps
-      # show that boundary, use the spacing fallback instead of treating every
-      # event as the same duration.
-      gaps = events.each_cons(2).map { |first, second| second[:x] - first[:x] }
-      return if gaps.length >= 2 && gaps.min.positive? && gaps.max.fdiv(gaps.min) >= 1.4
-
       # A missing beam is a quarter note in the tablature PDFs produced by
       # TablEdit. Keeping these events in the beam pass is important: mixed
       # quarter/eighth measures cannot be recovered from horizontal spacing
@@ -624,6 +618,13 @@ module Tef2
       durations = events.map { |event| quarter_ticks / (2**event[:beam_count].to_i) }
       total = durations.sum
       return if total > measure_ticks
+
+      # A shared beam can cross a quarter-note boundary. If the printed gaps
+      # show that boundary, use the spacing fallback instead of treating every
+      # event as the same duration. A complete beam-derived measure is already
+      # rhythmically accounted for, so preserve its explicit beam pattern.
+      gaps = events.each_cons(2).map { |first, second| second[:x] - first[:x] }
+      return if total < measure_ticks && gaps.length >= 2 && gaps.min.positive? && gaps.max.fdiv(gaps.min) >= 1.4
 
       leading = events.first[:x] - left > (right - left) * 0.35 ? measure_ticks - total : 0
       return if leading + total > measure_ticks

@@ -188,6 +188,8 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     skip "Set PLAYTAB_CUMBERLAND_GAP_PDF for the private Cumberland Gap regression PDF." unless path && File.file?(path)
 
     score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    assert_equal [ 0, 64, 128, 192, 256, 384, 448 ], score[:notes].select { |note| note[:measure] == 0 }.map { |note| note[:position] }.uniq
+    assert_empty score[:rests].select { |rest| rest[:measure] == 0 }
     slide = score[:techniques].find { |technique| technique[:measure] == 13 && technique[:type] == "slide" }
 
     assert_equal({ measure: 13, position: 384, string: 1, type: "slide", label: "Sl", confidence: "medium" }, slide)
@@ -309,6 +311,10 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { x: 10, beam_count: nil }, { x: 20, beam_count: nil }, { x: 30, beam_count: nil },
       { x: 40, beam_count: nil }
     ], 1024)
+    assert_equal [ 0, 64, 128, 192, 256, 384, 448 ], recognizer.send(:beam_rhythm_positions, 0, 100, [
+      { x: 10, beam_count: 2 }, { x: 20, beam_count: 2 }, { x: 30, beam_count: 2 }, { x: 40, beam_count: 2 },
+      { x: 55, beam_count: 1 }, { x: 65, beam_count: 2 }, { x: 75, beam_count: 2 }
+    ], 512)
     assert_equal [ 0 ], recognizer.send(:beam_rhythm_positions, 0, 100, [ { x: 10, beam_count: nil } ], 1024)
     # A shared beam crossing a quarter-note boundary must use measured spacing.
     uneven_beams = [ 0, 10, 25 ].map { |x| { x: x, beam_count: 1 } }
