@@ -721,11 +721,12 @@ module Tef2
       fingerings = []
       systems.each do |system|
         page_texts = pages[system[:page]][:texts]
+        technique_texts = system[:texts] || page_texts
         sections.concat(sections_for_system(system, page_texts))
         chords.concat(chords_for_system(system, page_texts))
         endings.concat(endings_for_system(system, page_texts))
-        techniques.concat(techniques_for_system(system, page_texts))
-        fingerings.concat(fingerings_for_system(system, page_texts))
+        techniques.concat(techniques_for_system(system, technique_texts))
+        fingerings.concat(fingerings_for_system(system, technique_texts))
       end
       {
         sections: deduplicate_metadata(sections),
@@ -981,6 +982,7 @@ module Tef2
         label = item[:text].strip
         technique = technique_type(label)
         next unless technique && near_system?(system, item[:x], item[:y], 42)
+        next unless technique_marker_position?(system, item)
 
         note = technique_note(system, item, technique)
         target = metadata_system_for_overflow(system, item[:x])
@@ -997,6 +999,10 @@ module Tef2
           confidence: %w[slide bend].include?(technique) ? "medium" : "high"
         }
       end
+    end
+
+    def technique_marker_position?(system, item)
+      item[:y].between?(system[:top] - 36, system[:bottom] + 8)
     end
 
     def fingerings_for_system(system, texts)

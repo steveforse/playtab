@@ -110,6 +110,24 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "uses the text captured with a system for technique metadata" do
+    recognizer = Tef2::PdfRecognizer.new
+    system = {
+      page: 0, top: 100, bottom: 140, bars: [ 20, 100 ], measure_start: 0, measure_ticks: 1024,
+      events: [
+        { x: 30, notes: [ { x: 30, string: 1, fret: 0 } ] },
+        { x: 40, notes: [ { x: 40, string: 1, fret: 2 } ] }
+      ],
+      texts: [ { x: 35, y: 144, text: "H" }, { x: 36, y: 155, text: "B" } ]
+    }
+
+    metadata = recognizer.send(:metadata, [ { texts: [], segments: [], curve_boxes: [], systems: [] } ], [ system ])
+
+    assert_equal 1, metadata[:techniques].length
+    assert_equal "hammer-on", metadata[:techniques].first[:type]
+    assert_equal 0, metadata[:techniques].first[:measure]
+  end
+
   test "covers PDF timing regressions, metadata normalization, and layout helpers" do
     recognizer = Tef2::PdfRecognizer.new
     assert_equal 0, recognizer.send(:position, 20, 20, 300)
