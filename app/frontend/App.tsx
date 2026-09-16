@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Player } from './Player';
-import { ScoreEditor } from './ScoreEditor';
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { applyMusicXmlEdits, type MusicXmlEditorState } from './music/musicxml-editor';
 
 type LibraryItem = { id: number; title: string };
 const initialText = exportAscii(demo);
@@ -69,21 +67,9 @@ export function App() {
     setSaving(true); setError('');
     try {
       const document = preview ? toImportedScoreDocument(preview, warnings) : score;
-      const existing = savedId !== null;
-      const item = await apiRequest(existing ? `/api/songs/${savedId}` : '/api/songs', { method: existing ? 'PATCH' : 'POST', body: JSON.stringify({ score: document, source_text: preview ? null : source }) });
-      setSavedId(item.id); setDirty(false); setLibrary(items => existing ? items.map(saved => saved.id === item.id ? item : saved) : [item, ...items]); setMessage(existing ? 'Changes saved to your library.' : 'Saved to your library.');
+      const item = await apiRequest('/api/songs', { method: 'POST', body: JSON.stringify({ score: document, source_text: preview ? null : source }) });
+      setSavedId(item.id); setDirty(false); setLibrary(items => [item, ...items]); setMessage('Saved to your library.');
     } catch (e) { setError((e as Error).message); } finally { setSaving(false); }
-  }
-  function applyNativeEdits(next: Score) {
-    setScore(next); setDirty(true); setMessage('Edits applied. Save the score to keep them.'); setError('');
-  }
-  function applyImportedEdits(edits: MusicXmlEditorState) {
-    try {
-      const current = preview!;
-      const source = applyMusicXmlEdits(current.source, edits);
-      const next = readMusicXml(source, current.filename, current.sourceFormat);
-      setPreview(next); setDirty(true); setMessage('Edits applied. Save the score to keep them.'); setError('');
-    } catch (e) { setError((e as Error).message); }
   }
   async function readFile(file?: File) {
     if (!file) return;
@@ -136,11 +122,10 @@ export function App() {
       <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={() => { void signOut().catch(e => setError(e.message)); }}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
       <div className="workspace">
         <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
-        <div className="title-row"><div><h1>{preview?.score.title ?? score.title}</h1><p className="subtitle">5-string banjo <span>·</span> {preview ? preview.tuningLabel : 'Open G tuning'} <span>·</span> {preview?.score.masterBars.length ?? score.measures.length} measures</p></div><button className="save-button" disabled={saving || !dirty} onClick={save}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button></div>
+        <div className="title-row"><div><h1>{preview?.score.title ?? score.title}</h1><p className="subtitle">5-string banjo <span>·</span> {preview ? preview.tuningLabel : 'Open G tuning'} <span>·</span> {preview?.score.masterBars.length ?? score.measures.length} measures</p></div><button className="save-button" disabled={saving || !dirty} onClick={save}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : '＋ Save to library'}</button></div>
         {error && <p className="alert" role="alert">{error}</p>}
         {message && <p className="success" role="status">{message}</p>}
         {warnings.length > 0 && <details className="import-notice" open><summary>Check your import</summary>{warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}
-        <ScoreEditor score={score} preview={preview} onApplyNative={applyNativeEdits} onApplyImported={applyImportedEdits} />
         <div className="practice-note"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span></div>
         <Player key={preview?.id ?? JSON.stringify(score)} score={score} preview={preview} />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
