@@ -183,6 +183,16 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_includes techniques_for.call(61), [ 384, 3, "pull-off", "Po" ]
   end
 
+  test "keeps the Cumberland Gap measure 14 slide on its final two notes when supplied" do
+    path = ENV["PLAYTAB_CUMBERLAND_GAP_PDF"]
+    skip "Set PLAYTAB_CUMBERLAND_GAP_PDF for the private Cumberland Gap regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    slide = score[:techniques].find { |technique| technique[:measure] == 13 && technique[:type] == "slide" }
+
+    assert_equal({ measure: 13, position: 384, string: 1, type: "slide", label: "Sl", confidence: "medium" }, slide)
+  end
+
   test "uses the text captured with a system for technique metadata" do
     recognizer = Tef2::PdfRecognizer.new
     system = {
@@ -247,12 +257,12 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     ]).first
     assert_equal({ measure: 0, position: 0, string: 3, type: "pull-off", label: "Po", confidence: "high" }, split_pull_off)
     ambiguous_technique_system = technique_system.merge(
-      bars: [ 0, 200 ],
+      bars: [ 0, 100, 200 ],
       events: [
         { x: 20, notes: [ { x: 20, string: 1, fret: 2 } ] },
         { x: 80, notes: [ { x: 80, string: 3, fret: 4 } ] },
-        { x: 86, notes: [ { x: 86, string: 3, fret: 2 } ] },
-        { x: 143, notes: [ { x: 143, string: 1, fret: 0 } ] }
+        { x: 88, notes: [ { x: 88, string: 3, fret: 2 } ] },
+        { x: 144.6, notes: [ { x: 144.6, string: 1, fret: 0 } ] }
       ]
     )
     centered_pull_off = recognizer.send(:techniques_for_system, ambiguous_technique_system, [
