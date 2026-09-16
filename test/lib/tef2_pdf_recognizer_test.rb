@@ -103,6 +103,9 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal 64, recognizer.send(:position_step, 20, 220, [ 45, 56.5, 68 ])
     assert_equal 32, recognizer.send(:position_step, 20, 220, [ 45, 53, 61, 69 ])
     assert_equal 128, recognizer.send(:position_step, 20, 220, [ 45, 100 ])
+    assert_equal 128, recognizer.send(:position_step, 20, 150, [ 35, 52, 69 ])
+    assert_equal 768, recognizer.send(:position, 125, 20, 150, step: 128, event_xs: [ 125 ], measure_ticks: 1024,
+      layout: { left_margin: 12, right_margin: 4, usable: 114 })
     assert_equal "C#", recognizer.send(:normalize_chord, "c #")
     assert_equal "C min", recognizer.send(:normalize_chord, "C m")
     assert_equal "G7", recognizer.send(:normalize_chord, "G7")
@@ -125,6 +128,8 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_nil recognizer.send(:beam_count_for_event, 50, [ [ 45, 98, 60, 98 ] ], 100)
     events = [ 2, 2, 1, 1, 1 ].each_with_index.map { |beam_count, index| { x: 10 + index * 10, beam_count: beam_count } }
     assert_equal [ 0, 64, 128, 256, 384 ], recognizer.send(:beam_rhythm_positions, 0, 100, events, 512)
+    uneven_beams = [ 0, 10, 25 ].map { |x| { x: x, beam_count: 1 } }
+    assert_nil recognizer.send(:beam_rhythm_positions, 0, 100, uneven_beams, 1024)
     assert_equal [ 0, 64, 128, 192, 256, 384 ], recognizer.send(:spacing_rhythm_positions, 308, 395, [ 318.03, 328.43, 340.34, 350.74, 361.53, 378.8 ], 512, 64)
     assert_equal [ 0, 128, 192, 256 ], recognizer.send(:spacing_rhythm_positions, 132, 205, [ 141.74, 158.29, 169.08, 179.88 ], 512, 64)
     assert_equal [ 0, 128, 192, 256, 384, 448 ], recognizer.send(:spacing_rhythm_positions, 272, 373, [ 283.81, 302.52, 315.48, 328.43, 347.14, 360.09 ], 512, 64)

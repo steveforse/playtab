@@ -211,7 +211,8 @@ module Tef2
           system[:measure_rhythm_positions] << rhythm_positions
           timing_steps << step
           events.each_with_index do |event, event_index|
-            position = rhythm_positions&.fetch(event_index) || position(event[:x], left, right, step: step, measure_ticks: measure_ticks, layout: layout)
+            position = rhythm_positions&.fetch(event_index) || position(event[:x], left, right, step: step,
+              event_xs: event_xs, measure_ticks: measure_ticks, layout: layout)
             event[:notes].each do |note|
               notes << {
                 measure: measure_index + measure_offset,
@@ -501,6 +502,12 @@ module Tef2
 
     def beam_rhythm_positions(left, right, events, measure_ticks)
       return if events.empty? || events.any? { |event| !event[:beam_count].to_i.positive? }
+
+      # A shared beam can cross a quarter-note boundary. If the printed gaps
+      # show that boundary, use the spacing fallback instead of treating every
+      # event as the same duration.
+      gaps = events.each_cons(2).map { |first, second| second[:x] - first[:x] }
+      return if gaps.length >= 2 && gaps.min.positive? && gaps.max.fdiv(gaps.min) >= 1.4
 
       quarter_ticks = MEASURE_TICKS / 4
       durations = events.map { |event| quarter_ticks / (2**event[:beam_count].to_i) }
@@ -903,12 +910,12 @@ module Tef2
       left = bars[measure_offset]
       right = bars[measure_offset + 1]
       measure_ticks = system.fetch(:measure_ticks, MEASURE_TICKS)
+      event_xs = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
       geometry = system[:measure_layouts]&.[](measure_offset)
       if geometry
         step = geometry[:step]
         layout = geometry[:layout]
       else
-        event_xs = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
         step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
         layout = position_layout(left, right, event_xs, measure_ticks, step)
       end
@@ -921,7 +928,8 @@ module Tef2
         return [ system[:measure_start] + measure_offset, rhythm_positions[index] ] if rhythm_positions
       end
 
-      [ system[:measure_start] + measure_offset, position(x, left, right, step: step, measure_ticks: measure_ticks, layout: layout) ]
+      [ system[:measure_start] + measure_offset, position(x, left, right, step: step,
+        event_xs: event_xs, measure_ticks: measure_ticks, layout: layout) ]
     end
 
     def lyrics(pages)
@@ -994,7 +1002,7 @@ module Tef2
 
       subdivisions = (right - left) / gaps.min
       return 32 if subdivisions >= 24
-      return 64 if subdivisions >= 8 || (measure_ticks <= 512 && subdivisions >= 6)
+      return 64 if subdivisions >= 12 || (measure_ticks <= 512 && subdivisions >= 6)
 
       POSITION_STEP
     end
@@ -1002,6 +1010,13 @@ module Tef2
     def position(x, left, right, step: nil, event_xs: [], measure_ticks: MEASURE_TICKS, layout: nil)
       step ||= position_step(left, right, event_xs, measure_ticks: measure_ticks)
       layout ||= position_layout(left, right, event_xs, measure_ticks, step)
+      # An isolated note near the final quarter of a bar is printed with a
+      # wider right margin than an eighth-note pickup. Keep it on the prior
+      # grid line rather than rounding the text origin to the final eighth.
+      if event_xs.length == 1 && ((right - x).to_f / (right - left)).between?(0.16, 0.25)
+        return [ measure_ticks - (step * 2), 0 ].max
+      end
+
       raw = ((x - left - layout[:left_margin]).to_f / layout[:usable].to_f) * measure_ticks
       [ 0, [ measure_ticks - step, (raw / step).round * step ].min ].max
     end
