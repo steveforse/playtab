@@ -57,6 +57,7 @@ module Tef2
       measure_signatures = score[:measure_signatures].to_a
       notes = score[:notes] || []
       technique_map = techniques_by_note(score, notes)
+      rake_map = rakes_by_note(score, notes)
       fingering_map = fingerings_by_note(score, notes)
       sections = metadata_by_measure(score[:sections] || [])
       chords = metadata_by_measure(score[:chords] || [])
@@ -106,7 +107,8 @@ module Tef2
                   tuning,
                   note_index.positive?,
                   technique_map[note_key(note)],
-                  fingering_map[note_key(note)]
+                  fingering_map[note_key(note)],
+                  rake_map[note_key(note)]
                 )
               end
             else
@@ -246,7 +248,7 @@ module Tef2
       end
     end
 
-    def write_note(xml, source, duration, tuning, chord, techniques, fingering)
+    def write_note(xml, source, duration, tuning, chord, techniques, fingering, rake)
       xml.note do
         xml.chord if chord
         xml.pitch do
@@ -262,6 +264,7 @@ module Tef2
           xml.notehead("x")
         end
         xml.notations do
+          xml.arpeggiate(direction: "down") if rake
           xml.technical do
             xml.string((source[:string] + 1).to_s)
             xml.fret(source[:fret].to_s)
@@ -276,6 +279,7 @@ module Tef2
               attributes = { type: technique[:marker_type] }
               xml.send(technique[:xml_type], technique[:marker_type] == "start" ? technique[:label] : nil, **attributes)
             end
+            xml.send("other-technical", "TEF rake") if rake
           end
         end
       end
@@ -308,6 +312,15 @@ module Tef2
         xml_type = technique[:type]
         add_technique(result, note_key(current), xml_type: xml_type, marker_type: "start", label: technique.fetch(:label, technique[:type]))
         add_technique(result, note_key(following), xml_type: xml_type, marker_type: "stop", label: "")
+      end
+      result
+    end
+
+    def rakes_by_note(score, notes)
+      result = {}
+      (score[:techniques] || []).select { |item| item[:type] == "rake" }.each do |item|
+        note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
+        result[note_key(note)] = true if note
       end
       result
     end

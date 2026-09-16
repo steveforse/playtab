@@ -134,6 +134,30 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_empty score[:rests].select { |rest| rest[:measure] == 25 }
   end
 
+  test "keeps the Arkansas Traveler legato, rake, multi-digit frets, and final measure when supplied" do
+    path = ENV["PLAYTAB_ARKANSAS_TRAVELER_PDF"]
+    skip "Set PLAYTAB_ARKANSAS_TRAVELER_PDF for the private Arkansas Traveler regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    techniques_for = ->(measure) {
+      score[:techniques].select { |technique| technique[:measure] == measure }.map {
+        |technique| [ technique[:position], technique[:string], technique[:type] ]
+      }
+    }
+    notes_for = ->(measure) { score[:notes].select { |note| note[:measure] == measure } }
+
+    assert_equal 25, score[:measures]
+    assert_nil score[:lyrics]
+    assert_includes techniques_for.call(2), [ 256, 0, "hammer-on" ]
+    assert_includes techniques_for.call(3), [ 0, 0, "hammer-on" ]
+    assert_includes techniques_for.call(6), [ 256, 2, "hammer-on" ]
+    assert_includes techniques_for.call(16), [ 384, 0, "rake" ]
+    assert_includes techniques_for.call(18), [ 0, 0, "hammer-on" ]
+    assert_includes notes_for.call(22).map { |note| note[:fret] }, 10
+    assert_includes notes_for.call(23).map { |note| note[:fret] }, 10
+    assert_equal [ 7, 0, 7, 0, 0 ], notes_for.call(24).map { |note| note[:fret] }
+  end
+
   test "uses the text captured with a system for technique metadata" do
     recognizer = Tef2::PdfRecognizer.new
     system = {
@@ -176,6 +200,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal "", recognizer.send(:normalize_chord, "not a chord")
     assert_equal "hammer-on", recognizer.send(:technique_type, "Hammer-On")
     assert_equal "pull-off", recognizer.send(:technique_type, "p_o")
+    assert_equal "rake", recognizer.send(:technique_type, "R")
     assert_nil recognizer.send(:technique_type, "unknown")
     technique_system = {
       top: 0,
@@ -200,6 +225,11 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { x: 20, y: 50, text: "T" }
     ]).first
     assert_equal({ measure: 0, position: 256, string: 3, type: "thumb", label: "T", confidence: "high" }, thumb)
+    rake = recognizer.send(:techniques_for_system, technique_system, [ { x: 10, y: 50, text: "R" } ]).first
+    assert_equal({ measure: 0, position: 0, string: 1, type: "rake", label: "R", confidence: "high" }, rake)
+    assert_equal [ { x: 10, y: 20, text: "10" } ], recognizer.send(:merge_multi_digit_frets, [
+      { x: 10, y: 20, text: "1" }, { x: 15.2, y: 20, text: "0" }
+    ])
     assert recognizer.send(:technique_direction_valid?, "slide", { fret: 3 }, { fret: 0 })
     assert_equal "Demo", recognizer.send(:filename_without_extension, "C:\\tabs\\Demo.pdf")
     assert_equal({ title: "Demo", tuning: "gCGCD#", subtitle: "gCGCD# tuning", arranger: "" }, recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 740, text: "gCGCD# tuning" } ]))
@@ -323,6 +353,12 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { systems: [], texts: [ { x: 30, y: 700, text: "Second line" } ] }
     ]
     assert_equal "First line\nSecond line", recognizer.send(:lyrics, lyric_pages)
+    assert_nil recognizer.send(:lyrics, [
+      { systems: [], texts: [
+        { x: 30, y: 700, text: "25" }, { x: 30, y: 690, text: "7" },
+        { x: 30, y: 680, text: "0" }, { x: 30, y: 670, text: "7" }
+      ] }
+    ])
 
     layout = recognizer.send(:position_layout, 391.5, 477.8, [ 401.1, 411.9, 422.7, 433.5, 444.3 ], 512, 64)
     assert_equal [ 0, 64, 128, 192, 256 ], [ 401.1, 411.9, 422.7, 433.5, 444.3 ].map { |x| recognizer.send(:position, x, 391.5, 477.8, step: 64, measure_ticks: 512, layout: layout) }
@@ -374,6 +410,14 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_empty recognizer.send(:systems, [], uneven)
     narrow = [ [ 20, 600, 150, 600 ], [ 60, 610, 190, 610 ], [ 20, 620, 150, 620 ], [ 60, 630, 190, 630 ], [ 20, 640, 150, 640 ] ]
     assert_empty recognizer.send(:systems, [], narrow)
+    short_horizontal = [ 600, 610, 620, 630, 640 ].map { |y| [ 20, y, 100, y ] }
+    short_system = short_horizontal + [ [ 20, 600, 20, 640 ], [ 100, 600, 100, 640 ] ]
+    short_result = recognizer.send(:systems, [ { x: 40, y: 636.4, text: "1" }, { x: 45.2, y: 636.4, text: "0" } ], short_system)
+    assert_equal 1, short_result.length
+    assert_equal [ 10 ], short_result.first[:events].flat_map { |event| event[:notes].map { |note| note[:fret] } }
+    too_short = [ 600, 610, 620, 630, 640 ].map { |y| [ 20, y, 80, y ] }
+    too_short[1] = [ 25, 610, 85, 610 ]
+    assert_empty recognizer.send(:systems, [], too_short)
     assert_empty recognizer.send(:systems, [], horizontal)
 
     ghost_texts = [

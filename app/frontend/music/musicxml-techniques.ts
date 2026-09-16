@@ -1,4 +1,4 @@
-import { Settings, type model } from '@coderline/alphatab';
+import { Settings, model } from '@coderline/alphatab';
 
 type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; ghost?: boolean; kind: string; type: string; number: string };
 const children = (node: Element) => Array.from(node.childNodes).filter((n): n is Element => n.nodeType === 1);
@@ -37,11 +37,17 @@ export function extractTechniques(source: string) {
         if (tag.localName === 'other-technical') {
           const unresolved = tag.textContent?.match(/(?:Unresolved TEF fingering annotation code|TEF fingering code)\s+(\d+)/i);
           const thumb = tag.textContent?.match(/TEF fingering\s+T(?:humb)?$/i);
-          if (!unresolved && !thumb) continue;
-          kind = 'tef-fingering';
-          number = unresolved?.[1] ?? 'T';
+          const rake = tag.textContent?.match(/TEF rake/i);
+          if (rake) {
+            kind = 'rake';
+            number = 'R';
+          } else {
+            if (!unresolved && !thumb) continue;
+            kind = 'tef-fingering';
+            number = unresolved?.[1] ?? 'T';
+          }
         }
-        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering') continue;
+        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'rake') continue;
         if (child(item, 'grace')) throw new Error('Grace-note techniques are not supported by this preview yet.');
         markers.push({ bar, tick: onset, staff: Number(value(item, 'staff') || 1) - 1, voice: value(item, 'voice') || '1',
           string: Number(value(technical, 'string')), fret: Number(value(technical, 'fret')),
@@ -78,6 +84,11 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
     if (marker.kind === 'tef-fingering') {
       if (marker.number === '6' || marker.number === 'T') note.leftHandFinger = 0;
       else note.beat.text = [note.beat.text, `TEF ${marker.number}`].filter(Boolean).join(' ');
+      continue;
+    }
+    if (marker.kind === 'rake') {
+      note.beat.text = [note.beat.text, 'R'].filter(Boolean).join(' ');
+      note.beat.brushType = model.BrushType.ArpeggioDown;
       continue;
     }
     const key = `${marker.voice}:${marker.string}:${marker.kind}:${marker.number}`;
