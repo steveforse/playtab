@@ -1110,9 +1110,12 @@ module Tef2
         next unless item[:x].between?(current[:x] - 8, following[:x] + 8)
         next unless technique_direction_valid?(technique, current, following)
 
-        [ ((current[:x] + following[:x]) / 2.0 - item[:x]).abs, following[:x] - current[:x], current ]
+        crosses_measure = system[:bars].each_cons(2).any? do |left, right|
+          current[:x] < right && following[:x] >= right
+        end
+        [ crosses_measure, ((current[:x] + following[:x]) / 2.0 - item[:x]).abs, following[:x] - current[:x], current ]
       end
-      candidates.min_by { |distance, width, _current| [ distance, width ] }&.last || nearest_note(system, item[:x])
+      candidates.min_by { |crosses_measure, distance, width, _current| [ crosses_measure ? 1 : 0, distance, width ] }&.last || nearest_note(system, item[:x])
     end
 
     def combined_marker_texts(texts)
