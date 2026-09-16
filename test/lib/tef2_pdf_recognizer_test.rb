@@ -103,6 +103,11 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal 64, recognizer.send(:position_step, 20, 220, [ 45, 56.5, 68 ])
     assert_equal 32, recognizer.send(:position_step, 20, 220, [ 45, 53, 61, 69 ])
     assert_equal 128, recognizer.send(:position_step, 20, 220, [ 45, 100 ])
+    dense_six_eight_xs = [ 10.0, 28.0, 40.0, 52.0, 69.0, 87.0, 99.0, 111.0, 123.0 ]
+    assert_equal 64, recognizer.send(:position_step, 0, 134, dense_six_eight_xs, measure_ticks: 768)
+    assert_equal [ 0, 128, 192, 256, 384, 512, 576, 640, 704 ], recognizer.send(
+      :spacing_rhythm_positions, 0, 134, dense_six_eight_xs, 768, 64
+    )
     # Wellerman's ordinary eighth-note spacing must stay on the 128-tick grid.
     assert_equal 128, recognizer.send(:position_step, 20, 150, [ 35, 52, 69 ])
     # Its isolated pickup is a quarter-note event even though it is printed late in the bar.
