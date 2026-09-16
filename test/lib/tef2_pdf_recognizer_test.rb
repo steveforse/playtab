@@ -113,6 +113,22 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal "hammer-on", recognizer.send(:technique_type, "Hammer-On")
     assert_equal "pull-off", recognizer.send(:technique_type, "p_o")
     assert_nil recognizer.send(:technique_type, "unknown")
+    technique_system = {
+      top: 0,
+      bottom: 100,
+      bars: [ 0, 100 ],
+      measure_start: 0,
+      measure_ticks: 1024,
+      measure_layouts: nil,
+      measure_rhythm_positions: nil,
+      events: [
+        { x: 10, notes: [ { x: 10, string: 1, fret: 0 }, { x: 10, string: 3, fret: 3 } ] },
+        { x: 20, notes: [ { x: 20, string: 3, fret: 0 } ] }
+      ]
+    }
+    pull_off = recognizer.send(:techniques_for_system, technique_system, [ { x: 15, y: 50, text: "Po" } ]).first
+    assert_equal({ measure: 0, position: 0, string: 3, type: "pull-off", label: "Po", confidence: "high" }, pull_off)
+    assert recognizer.send(:technique_direction_valid?, "slide", { fret: 3 }, { fret: 0 })
     assert_equal "Demo", recognizer.send(:filename_without_extension, "C:\\tabs\\Demo.pdf")
     assert_equal({ title: "Demo", tuning: "gCGCD#", subtitle: "gCGCD# tuning", arranger: "" }, recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 740, text: "gCGCD# tuning" } ]))
     assert_equal({ title: "Demo", tuning: "aDADE", subtitle: "key of D (aDADE tuning)", arranger: "" }, recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 720, text: "key of D (aDADE tuning)" } ]))
