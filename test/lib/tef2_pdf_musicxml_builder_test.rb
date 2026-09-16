@@ -97,9 +97,11 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     )
     document = Nokogiri::XML(xml)
     chained_note = document.at_xpath("//measure[1]/note[2]")
+    chained_destination = document.at_xpath("//measure[1]/note[3]")
 
     assert_equal "stop", chained_note.at_xpath("./notations/technical/hammer-on")["type"]
     assert_equal "start", chained_note.at_xpath("./notations/technical/pull-off")["type"]
+    assert_equal "stop", chained_destination.at_xpath("./notations/technical/pull-off")["type"]
   end
 
   test "does not pair a technique with a distant note" do
