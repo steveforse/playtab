@@ -820,9 +820,9 @@ module Tef2
         technique = technique_type(label)
         next unless technique && near_system?(system, item[:x], item[:y], 42)
 
-        note = nearest_note(system, item[:x])
+        note = technique_note(system, item, technique)
         target = metadata_system_for_overflow(system, item[:x])
-        note ||= nearest_note(target, item[:x])
+        note ||= technique_note(target, item, technique)
         next unless note
 
         measure, position = measure_position(target, note[:x])
@@ -892,6 +892,26 @@ module Tef2
 
       note = notes.min_by { |candidate| (candidate[:x] - x).abs }
       note if (note[:x] - x).abs <= limit
+    end
+
+    def technique_note(system, item, technique)
+      notes = system[:events].flat_map { |event| event[:notes] }.sort_by { |note| [ note[:x], note[:string] ] }
+      candidates = notes.filter_map do |current|
+        following = notes.find { |note| note[:string] == current[:string] && note[:x] > current[:x] }
+        next unless following
+        next unless item[:x].between?(current[:x] - 8, following[:x] + 8)
+        next unless technique_direction_valid?(technique, current, following)
+
+        [ ((current[:x] + following[:x]) / 2.0 - item[:x]).abs, current ]
+      end
+      candidates.min_by(&:first)&.last || nearest_note(system, item[:x])
+    end
+
+    def technique_direction_valid?(technique, current, following)
+      return current[:fret] < following[:fret] if technique == "hammer-on"
+      return current[:fret] > following[:fret] if technique == "pull-off"
+
+      true
     end
 
     def metadata_system_for_overflow(system, _x)
