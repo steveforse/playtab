@@ -1061,7 +1061,8 @@ module Tef2
 
       subdivisions = (right - left) / gaps.min
       return 32 if subdivisions >= 24
-      return 64 if subdivisions >= 12 || (measure_ticks <= 512 && subdivisions >= 6)
+      return 64 if subdivisions >= 12 || (measure_ticks == 768 && subdivisions >= 10) ||
+        (measure_ticks <= 512 && subdivisions >= 6)
 
       POSITION_STEP
     end
