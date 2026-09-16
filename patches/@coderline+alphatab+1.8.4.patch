@@ -369,7 +369,7 @@ index b6203da..eef3e85 100644
  	}
 @@ -64064,1 +64170,1 @@
 -				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem);
-+				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem) - tabRenderer.getLineHeight(1);
++				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem) - tabRenderer.beamSpacing - tabRenderer.beamThickness;
 @@ -64530,8 +64653,10 @@ class TabBarRenderer extends LineBarRenderer {
  	createLinePreBeatGlyphs() {
  		if (this.isFirstOfStaff) {
