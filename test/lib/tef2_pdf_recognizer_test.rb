@@ -304,8 +304,10 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal :delegated, receiver.delegated_value
     receiver.show_text("!")
     receiver.show_text("#")
+    receiver.show_text("$")
+    receiver.show_text("%")
     assert_equal [ { x: 2, y: 3, text: "!" } ], receiver.flat_symbols
-    assert_equal [ 33, 35 ], receiver.time_signature_symbols.map { |symbol| symbol[:code] }
+    assert_equal [ 33, 35, 36, 37 ], receiver.time_signature_symbols.map { |symbol| symbol[:code] }
     receiver.begin_new_subpath(10, 20)
     receiver.append_line(30, 40)
     receiver.append_line(50, 60)
@@ -362,6 +364,23 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal({ numerator: 4, denominator: 4 }, receiver.time_signature)
 
     receiver.instance_variable_set(:@time_signature_symbols, [
+      { x: 10, y: 10, code: 36, font: font },
+      { x: 10, y: 20, code: 37, font: font }
+    ])
+    assert_equal({ numerator: 6, denominator: 8 }, receiver.time_signature)
+
+    receiver.instance_variable_set(:@time_signature_symbols, [
+      { x: 10, y: 10, code: 36, font: font },
+      { x: 10, y: 20, code: 35, font: font }
+    ])
+    ttf.define_singleton_method(:find_glyph) { |_index| Struct.new(:x_min, :x_max).new(0, 300) }
+    Zlib::Inflate.stub(:inflate, "ttf") do
+      TTFunk::File.stub(:open, ->(*) { ttf }) do
+        assert_equal({ numerator: 3, denominator: 8 }, receiver.time_signature)
+      end
+    end
+
+    receiver.instance_variable_set(:@time_signature_symbols, [
       { x: 10, y: 10, code: 33, font: font },
       { x: 10, y: 20, code: 34, font: font }
     ])
@@ -383,6 +402,20 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { x: 10, y: 20, code: 34, font: broken_font }
     ])
     assert_nil receiver.time_signature
+  end
+
+  test "associates signature markers with their measure starts" do
+    recognizer = Tef2::PdfRecognizer.new
+    systems = [ { top: 100, bottom: 140, bars: [ 10, 100, 200 ] } ]
+    markers = [
+      { x: 12, y: 120, numerator: 3, denominator: 4 },
+      { x: 102, y: 120, numerator: 6, denominator: 8 }
+    ]
+
+    recognizer.send(:assign_time_signature_markers, systems, markers)
+
+    assert_equal({ 0 => { numerator: 3, denominator: 4 }, 1 => { numerator: 6, denominator: 8 } },
+      systems.first[:time_signature_changes])
   end
 
   private
