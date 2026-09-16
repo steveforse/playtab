@@ -110,6 +110,30 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "keeps the Andy Griffith PDF rhythm, endings, pull-offs, and thumb target when supplied" do
+    path = ENV["PLAYTAB_ANDY_GRIFFITH_PDF"]
+    skip "Set PLAYTAB_ANDY_GRIFFITH_PDF for the private Andy Griffith regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    notes_for = ->(measure) { score[:notes].select { |note| note[:measure] == measure }.map { |note| note[:position] } }
+    techniques_for = ->(measure) {
+      score[:techniques].select { |technique| technique[:measure] == measure }.map {
+        |technique| [ technique[:position], technique[:string], technique[:type] ]
+      }
+    }
+
+    assert_equal [ 640, 768 ], notes_for.call(0)
+    assert_equal [ 0, 256, 512, 768 ], notes_for.call(11)
+    assert_equal [ 0, 256, 512, 768 ], notes_for.call(13)
+    assert_equal [ [ 0, 0, "pull-off" ], [ 640, 2, "hammer-on" ], [ 768, 2, "pull-off" ] ], techniques_for.call(4)
+    assert_equal [ [ 768, 0, "pull-off" ] ], techniques_for.call(15)
+    assert_equal [ [ 0, 0, "pull-off" ], [ 640, 2, "hammer-on" ], [ 768, 2, "pull-off" ] ], techniques_for.call(21)
+    assert_equal [ "1", "2" ], score[:endings].sort_by { |ending| ending[:measure] }.map { |ending| ending[:number] }
+    assert_equal [ [ 896, 1, "thumb" ] ], techniques_for.call(23)
+    assert_equal [ 0 ], notes_for.call(25)
+    assert_empty score[:rests].select { |rest| rest[:measure] == 25 }
+  end
+
   test "uses the text captured with a system for technique metadata" do
     recognizer = Tef2::PdfRecognizer.new
     system = {
@@ -168,6 +192,14 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     }
     pull_off = recognizer.send(:techniques_for_system, technique_system, [ { x: 15, y: 50, text: "Po" } ]).first
     assert_equal({ measure: 0, position: 0, string: 3, type: "pull-off", label: "Po", confidence: "high" }, pull_off)
+    split_pull_off = recognizer.send(:techniques_for_system, technique_system, [
+      { x: 15, y: 50, text: "P" }, { x: 20.3, y: 50, text: "o" }
+    ]).first
+    assert_equal({ measure: 0, position: 0, string: 3, type: "pull-off", label: "Po", confidence: "high" }, split_pull_off)
+    thumb = recognizer.send(:techniques_for_system, technique_system.merge(measure_rhythm_positions: [ [ 0, 256 ] ]), [
+      { x: 20, y: 50, text: "T" }
+    ]).first
+    assert_equal({ measure: 0, position: 256, string: 3, type: "thumb", label: "T", confidence: "high" }, thumb)
     assert recognizer.send(:technique_direction_valid?, "slide", { fret: 3 }, { fret: 0 })
     assert_equal "Demo", recognizer.send(:filename_without_extension, "C:\\tabs\\Demo.pdf")
     assert_equal({ title: "Demo", tuning: "gCGCD#", subtitle: "gCGCD# tuning", arranger: "" }, recognizer.send(:header, [ { x: 100, y: 750, text: "Demo" }, { x: 150, y: 740, text: "gCGCD# tuning" } ]))
@@ -184,6 +216,18 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_nil recognizer.send(:beam_count_for_event, 50, [ [ 45, 98, 60, 98 ] ], 100)
     events = [ 2, 2, 1, 1, 1 ].each_with_index.map { |beam_count, index| { x: 10 + index * 10, beam_count: beam_count } }
     assert_equal [ 0, 64, 128, 256, 384 ], recognizer.send(:beam_rhythm_positions, 0, 100, events, 512)
+    assert_equal [ 640, 768 ], recognizer.send(:beam_rhythm_positions, 0, 100, [
+      { x: 70, beam_count: 1 }, { x: 85, beam_count: nil }
+    ], 1024)
+    assert_equal [ 0, 256, 512, 640, 768 ], recognizer.send(:beam_rhythm_positions, 0, 100, [
+      { x: 10, beam_count: nil }, { x: 20, beam_count: nil }, { x: 30, beam_count: 1 },
+      { x: 40, beam_count: 1 }, { x: 50, beam_count: nil }
+    ], 1024)
+    assert_equal [ 0, 256, 512, 768 ], recognizer.send(:beam_rhythm_positions, 0, 100, [
+      { x: 10, beam_count: nil }, { x: 20, beam_count: nil }, { x: 30, beam_count: nil },
+      { x: 40, beam_count: nil }
+    ], 1024)
+    assert_equal [ 0 ], recognizer.send(:beam_rhythm_positions, 0, 100, [ { x: 10, beam_count: nil } ], 1024)
     # A shared beam crossing a quarter-note boundary must use measured spacing.
     uneven_beams = [ 0, 10, 25 ].map { |x| { x: x, beam_count: 1 } }
     assert_nil recognizer.send(:beam_rhythm_positions, 0, 100, uneven_beams, 1024)
@@ -231,6 +275,11 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { x: 101, y: 120, text: "1." }, { x: 105, y: 116, text: "D" }
     ])
     assert_equal [ { measure: 1, location: "left", number: "1", type: "start", confidence: "high" } ], endings
+    split_endings = recognizer.send(:endings_for_system, ending_system, [
+      { x: 21, y: 120, text: "1" }, { x: 26, y: 120, text: "." },
+      { x: 101, y: 120, text: "2" }, { x: 106, y: 120, text: "." }
+    ])
+    assert_equal [ "1", "2" ], split_endings.map { |ending| ending[:number] }
 
     system = { top: 600, bottom: 640, bars: [ 20, 300, 580 ], measure_start: 0, events: [ { x: 40, notes: [ { x: 40, string: 0, fret: 0 } ] } ] }
     assert recognizer.send(:section_label?, system, { y: 570 }, "A section")
