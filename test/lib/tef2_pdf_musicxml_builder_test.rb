@@ -121,6 +121,24 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "TEF rake", document.at_xpath("//other-technical").text
   end
 
+  test "writes a PDF slide as a native span with its printed label" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Slide",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 1, fret: 2 },
+        { measure: 0, position: 256, string: 1, fret: 4 }
+      ],
+      techniques: [ { measure: 0, position: 0, string: 1, type: "slide", label: "Sl" } ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal 1, document.xpath("//measure[1]/note[1]/notations/slide[@type='start']").length
+    assert_equal "Sl", document.at_xpath("//measure[1]/note[1]/notations/slide").text
+    assert_equal "TEF slide Sl", document.at_xpath("//measure[1]/note[1]/notations/technical/other-technical").text
+    assert_empty document.xpath("//measure[1]/note[1]/notations/technical/slide")
+  end
+
   test "does not pair a technique with a distant note" do
     notes = [
       { measure: 0, position: 0, string: 0, fret: 0 },

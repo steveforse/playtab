@@ -1116,16 +1116,19 @@ module Tef2
     end
 
     def combined_marker_texts(texts)
-      additions = texts.sort_by { |item| [ item[:y], item[:x] ] }.each_cons(2).filter_map do |first, second|
+      additions = []
+      consumed = []
+      texts.sort_by { |item| [ item[:y], item[:x] ] }.each_cons(2) do |first, second|
         next unless (first[:y] - second[:y]).abs <= 2
         next unless second[:x] > first[:x] && second[:x] - first[:x] <= 8
 
         value = "#{first[:text]}#{second[:text]}"
-        next unless value.match?(/\A(?:[12]\.|[Pp][Oo])\z/)
+        next unless value.match?(/\A(?:[12]\.|[Pp][Oo]|[Ss][Ll])\z/)
 
-        { x: first[:x], y: (first[:y] + second[:y]) / 2.0, text: value }
+        additions << { x: first[:x], y: (first[:y] + second[:y]) / 2.0, text: value }
+        consumed.concat([ first, second ])
       end
-      texts + additions
+      texts.reject { |item| consumed.include?(item) } + additions
     end
 
     def technique_direction_valid?(technique, current, following)

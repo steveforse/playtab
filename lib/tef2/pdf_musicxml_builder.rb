@@ -264,6 +264,10 @@ module Tef2
           xml.notehead("x")
         end
         xml.notations do
+          techniques.to_a.select { |technique| technique[:xml_type] == "slide" }.each do |technique|
+            attributes = { type: technique[:marker_type] }
+            xml.slide(technique[:marker_type] == "start" ? technique[:label] : nil, **attributes)
+          end
           xml.arpeggiate(direction: "down") if rake
           xml.technical do
             xml.string((source[:string] + 1).to_s)
@@ -276,8 +280,13 @@ module Tef2
               end
             end
             techniques.to_a.each do |technique|
+              next if technique[:xml_type] == "slide"
+
               attributes = { type: technique[:marker_type] }
               xml.send(technique[:xml_type], technique[:marker_type] == "start" ? technique[:label] : nil, **attributes)
+            end
+            techniques.to_a.select { |technique| technique[:xml_type] == "slide" && technique[:marker_type] == "start" }.each do |technique|
+              xml.send("other-technical", "TEF slide #{technique[:label]}")
             end
             xml.send("other-technical", "TEF rake") if rake
           end

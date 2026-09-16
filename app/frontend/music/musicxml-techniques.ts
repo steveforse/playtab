@@ -38,16 +38,20 @@ export function extractTechniques(source: string) {
           const unresolved = tag.textContent?.match(/(?:Unresolved TEF fingering annotation code|TEF fingering code)\s+(\d+)/i);
           const thumb = tag.textContent?.match(/TEF fingering\s+T(?:humb)?$/i);
           const rake = tag.textContent?.match(/TEF rake/i);
+          const printedTechnique = tag.textContent?.match(/TEF (slide|bend)\s+(.+)/i);
           if (rake) {
             kind = 'rake';
             number = 'R';
+          } else if (printedTechnique) {
+            kind = `tef-${printedTechnique[1].toLowerCase()}`;
+            number = printedTechnique[2].trim();
           } else {
             if (!unresolved && !thumb) continue;
             kind = 'tef-fingering';
             number = unresolved?.[1] ?? 'T';
           }
         }
-        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'rake') continue;
+        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'rake' && kind !== 'tef-slide' && kind !== 'tef-bend') continue;
         if (child(item, 'grace')) throw new Error('Grace-note techniques are not supported by this preview yet.');
         markers.push({ bar, tick: onset, staff: Number(value(item, 'staff') || 1) - 1, voice: value(item, 'voice') || '1',
           string: Number(value(technical, 'string')), fret: Number(value(technical, 'fret')),
@@ -89,6 +93,10 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
     if (marker.kind === 'rake') {
       note.beat.text = [note.beat.text, 'R'].filter(Boolean).join(' ');
       note.beat.brushType = model.BrushType.ArpeggioDown;
+      continue;
+    }
+    if (marker.kind === 'tef-slide' || marker.kind === 'tef-bend') {
+      note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
       continue;
     }
     const key = `${marker.voice}:${marker.string}:${marker.kind}:${marker.number}`;
