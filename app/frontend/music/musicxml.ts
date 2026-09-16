@@ -137,6 +137,11 @@ function configureImportedPlayback(track: model.Track) {
   }
 }
 
+function previewId() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
+  return `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 // Preview keeps the imported model separate from the deliberately limited v1 document.
 export function readMusicXml(source: string, filename: string, sourceFormat: MusicXmlSourceFormat = 'musicxml'): MusicXmlPreview {
   if (new TextEncoder().encode(source).length > 2_000_000) throw new Error('MusicXML preview is limited to 2 MB.');
@@ -174,7 +179,7 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   const names = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
   const tuningLabel = [...tab.tuning].reverse().map((n, i) => i === 0 ? names[n % 12].toLowerCase() : names[n % 12]).join(' ');
   return {
-    id: crypto.randomUUID(), source, filename, sourceFormat, score, tuningLabel,
+    id: previewId(), source, filename, sourceFormat, score, tuningLabel,
     lyricsSection: techniques.lyricsSection, timedLyrics: timedLyricEntries, chordDiagrams: diagramEntries,
   };
 }
