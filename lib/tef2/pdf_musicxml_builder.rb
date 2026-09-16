@@ -60,6 +60,7 @@ module Tef2
       fingering_map = fingerings_by_note(score, notes)
       sections = metadata_by_measure(score[:sections] || [])
       chords = metadata_by_measure(score[:chords] || [])
+      rests = metadata_by_measure(score[:rests] || [])
       chord_diagrams = (score[:chord_diagrams] || []).to_h { |diagram| [ diagram[:name].to_s, diagram ] }
 
       previous_measure_signature = nil
@@ -87,24 +88,29 @@ module Tef2
 
           measure_notes = notes.select { |note| note[:measure] == measure_index }
           events = measure_notes.each_with_object({}) { |note, result| (result[note[:position]] ||= []) << note }
+          rest_positions = rests.fetch(measure_index, []).map { |rest| rest[:position].to_i }
           cursor = 0
-          positions = events.keys.sort
+          positions = (events.keys + rest_positions).uniq.sort
           positions.each_with_index do |position, event_index|
             target = pdf_position_to_xml(position, pdf_measure_ticks, measure_ticks)
             write_rest(xml, target - cursor) if target > cursor
             next_target = event_index + 1 < positions.length ? pdf_position_to_xml(positions[event_index + 1], pdf_measure_ticks, measure_ticks) : measure_ticks
             duration = next_target > target ? [ 120, next_target - target ].max : 120
             duration = [ duration, measure_ticks - target ].min
-            events[position].sort_by { |note| note[:string] }.each_with_index do |note, note_index|
-              write_note(
-                xml,
-                note,
-                duration,
-                tuning,
-                note_index.positive?,
-                technique_map[note_key(note)],
-                fingering_map[note_key(note)]
-              )
+            if events[position]
+              events[position].sort_by { |note| note[:string] }.each_with_index do |note, note_index|
+                write_note(
+                  xml,
+                  note,
+                  duration,
+                  tuning,
+                  note_index.positive?,
+                  technique_map[note_key(note)],
+                  fingering_map[note_key(note)]
+                )
+              end
+            else
+              write_rest(xml, duration)
             end
             cursor = target + duration
           end
