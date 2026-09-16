@@ -1110,9 +1110,9 @@ module Tef2
         next unless item[:x].between?(current[:x] - 8, following[:x] + 8)
         next unless technique_direction_valid?(technique, current, following)
 
-        [ ((current[:x] + following[:x]) / 2.0 - item[:x]).abs, current ]
+        [ ((current[:x] + following[:x]) / 2.0 - item[:x]).abs, following[:x] - current[:x], current ]
       end
-      candidates.min_by(&:first)&.last || nearest_note(system, item[:x])
+      candidates.min_by { |distance, width, _current| [ distance, width ] }&.last || nearest_note(system, item[:x])
     end
 
     def combined_marker_texts(texts)
@@ -1125,7 +1125,7 @@ module Tef2
         value = "#{first[:text]}#{second[:text]}"
         next unless value.match?(/\A(?:[12]\.|[Pp][Oo]|[Ss][Ll])\z/)
 
-        additions << { x: first[:x], y: (first[:y] + second[:y]) / 2.0, text: value }
+        additions << { x: (first[:x] + second[:x]) / 2.0, y: (first[:y] + second[:y]) / 2.0, text: value }
         consumed.concat([ first, second ])
       end
       texts.reject { |item| consumed.include?(item) } + additions

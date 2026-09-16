@@ -168,6 +168,21 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal({ measure: 15, position: 320, string: 1, type: "slide", label: "Sl", confidence: "medium" }, slide)
   end
 
+  test "keeps the Big Rock Candy Mountain opening slide and measure 62 pull-off when supplied" do
+    path = ENV["PLAYTAB_BIG_ROCK_CANDY_MOUNTAIN_PDF"]
+    skip "Set PLAYTAB_BIG_ROCK_CANDY_MOUNTAIN_PDF for the private Big Rock Candy Mountain regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    techniques_for = ->(measure) {
+      score[:techniques].select { |technique| technique[:measure] == measure }.map {
+        |technique| [ technique[:position], technique[:string], technique[:type], technique[:label] ]
+      }
+    }
+
+    assert_includes techniques_for.call(0), [ 448, 0, "slide", "s" ]
+    assert_includes techniques_for.call(61), [ 384, 3, "pull-off", "Po" ]
+  end
+
   test "uses the text captured with a system for technique metadata" do
     recognizer = Tef2::PdfRecognizer.new
     system = {
@@ -231,6 +246,19 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { x: 15, y: 50, text: "P" }, { x: 20.3, y: 50, text: "o" }
     ]).first
     assert_equal({ measure: 0, position: 0, string: 3, type: "pull-off", label: "Po", confidence: "high" }, split_pull_off)
+    ambiguous_technique_system = technique_system.merge(
+      bars: [ 0, 200 ],
+      events: [
+        { x: 20, notes: [ { x: 20, string: 1, fret: 2 } ] },
+        { x: 80, notes: [ { x: 80, string: 3, fret: 4 } ] },
+        { x: 86, notes: [ { x: 86, string: 3, fret: 2 } ] },
+        { x: 143, notes: [ { x: 143, string: 1, fret: 0 } ] }
+      ]
+    )
+    centered_pull_off = recognizer.send(:techniques_for_system, ambiguous_technique_system, [
+      { x: 80, y: 50, text: "P" }, { x: 85, y: 50, text: "o" }
+    ]).first
+    assert_equal 3, centered_pull_off[:string]
     split_slide = recognizer.send(:techniques_for_system, technique_system, [
       { x: 15, y: 50, text: "S" }, { x: 20.3, y: 50, text: "l" }
     ]).first
