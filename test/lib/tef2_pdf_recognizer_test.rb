@@ -95,7 +95,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
-  test "covers timing, metadata normalization, and layout helpers" do
+  test "covers PDF timing regressions, metadata normalization, and layout helpers" do
     recognizer = Tef2::PdfRecognizer.new
     assert_equal 0, recognizer.send(:position, 20, 20, 300)
     assert_equal 512, recognizer.send(:position, 160, 20, 300)
@@ -103,7 +103,9 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal 64, recognizer.send(:position_step, 20, 220, [ 45, 56.5, 68 ])
     assert_equal 32, recognizer.send(:position_step, 20, 220, [ 45, 53, 61, 69 ])
     assert_equal 128, recognizer.send(:position_step, 20, 220, [ 45, 100 ])
+    # Wellerman's ordinary eighth-note spacing must stay on the 128-tick grid.
     assert_equal 128, recognizer.send(:position_step, 20, 150, [ 35, 52, 69 ])
+    # Its isolated pickup is a quarter-note event even though it is printed late in the bar.
     assert_equal 768, recognizer.send(:position, 125, 20, 150, step: 128, event_xs: [ 125 ], measure_ticks: 1024,
       layout: { left_margin: 12, right_margin: 4, usable: 114 })
     assert_equal "C#", recognizer.send(:normalize_chord, "c #")
@@ -144,6 +146,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_nil recognizer.send(:beam_count_for_event, 50, [ [ 45, 98, 60, 98 ] ], 100)
     events = [ 2, 2, 1, 1, 1 ].each_with_index.map { |beam_count, index| { x: 10 + index * 10, beam_count: beam_count } }
     assert_equal [ 0, 64, 128, 256, 384 ], recognizer.send(:beam_rhythm_positions, 0, 100, events, 512)
+    # A shared beam crossing a quarter-note boundary must use measured spacing.
     uneven_beams = [ 0, 10, 25 ].map { |x| { x: x, beam_count: 1 } }
     assert_nil recognizer.send(:beam_rhythm_positions, 0, 100, uneven_beams, 1024)
     assert_equal [ 0, 64, 128, 192, 256, 384 ], recognizer.send(:spacing_rhythm_positions, 308, 395, [ 318.03, 328.43, 340.34, 350.74, 361.53, 378.8 ], 512, 64)
