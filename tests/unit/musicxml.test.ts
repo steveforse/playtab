@@ -209,6 +209,17 @@ describe('MusicXML preview', () => {
     expect(notes.map(n => n.beat.playbackStart)).toEqual([0, 960, 1920, 2880]);
     expect(preview.source).toBe(techniques);
   });
+  it('retains adjacent H and PO segments on one technique chain', () => {
+    const preview = readMusicXml(fs.readFileSync('tests/fixtures/chained-techniques.musicxml', 'utf8'), 'chained-techniques.xml');
+    const notes = preview.score.tracks[0].staves[0].bars[0].voices.flatMap(v => v.beats.flatMap(b => b.notes));
+
+    expect(notes.map(note => note.isHammerPullOrigin)).toEqual([true, true, false]);
+    const segments = (notes[0] as any).effectSlur.segments as Array<{ fromNote: (typeof notes)[number]; toNote: (typeof notes)[number]; text: string }>;
+    expect(segments.map(segment => [segment.fromNote, segment.toNote, segment.text])).toEqual([
+      [notes[0], notes[1], 'H'],
+      [notes[1], notes[2], 'PO'],
+    ]);
+  });
   it('matches techniques to the normal note beside a same-onset ghost note', () => {
     const ghostDuplicate = '<note><chord/><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notehead parentheses="yes">normal</notehead><notations><technical><string>4</string><fret>0</fret></technical></notations></note>';
     const annotated = techniques.replace(

@@ -35,6 +35,24 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   expect(errors).toEqual([]);
 });
 
+test('renders consecutive hammer-on and pull-off segments as separate slurs', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/chained-techniques.musicxml');
+
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(1);
+  await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
+  const slurs = await notation.locator('svg path').evaluateAll(paths => paths.map(path => {
+    const box = (path as SVGGraphicsElement).getBBox();
+    return { d: path.getAttribute('d') ?? '', x: box.x, width: box.width, height: box.height };
+  }).filter(path => path.d.includes(' C') && path.width > 20 && path.height > 4)
+    .sort((left, right) => left.x - right.x));
+
+  expect(slurs).toHaveLength(2);
+  expect(slurs[0].x + slurs[0].width).toBeCloseTo(slurs[1].x, 3);
+});
+
 test('renders a native thumb fingering below the tablature staff', async ({ page }) => {
   const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
     .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><hammer-on type="start">H</hammer-on>')
