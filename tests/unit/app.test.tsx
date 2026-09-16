@@ -61,9 +61,7 @@ describe('workspace application', () => {
     fireEvent.change(screen.getByLabelText('Plaintext tablature'), { target: { value: exportAscii(demo) } });
     fireEvent.click(screen.getByRole('button', { name: /Open in player/ }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Morning tune' })).toBeTruthy());
-    fireEvent.change(screen.getByLabelText('Score title'), { target: { value: 'Edited morning' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Edited morning' })).toBeTruthy());
+    expect(screen.queryByLabelText('Score editor')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Save to library/ }));
     await waitFor(() => expect(screen.getByText('Saved to your library.')).toBeTruthy());
@@ -83,7 +81,6 @@ describe('workspace application', () => {
       .mockResolvedValueOnce(response([{ id: 1, title: 'Native' }, { id: 2, title: 'Imported' }]))
       .mockResolvedValueOnce(response(native))
       .mockResolvedValueOnce(response(imported))
-      .mockResolvedValueOnce(response({ id: 2, title: 'Edited imported' }))
       .mockRejectedValueOnce(new Error('library unavailable'));
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
@@ -93,15 +90,7 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Imported' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
     expect(screen.getByText('warning')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Score title'), { target: { value: 'Edited imported' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
-    await waitFor(() => expect(screen.getByText('Edits applied. Save the score to keep them.')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(screen.getByText('Changes saved to your library.')).toBeTruthy());
-    readMusicXml.mockImplementationOnce(() => { throw new Error('edit failed'); });
-    fireEvent.change(screen.getByLabelText('Score title'), { target: { value: 'Broken edit' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('edit failed'));
+    expect(screen.queryByLabelText('Score editor')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Native' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('library unavailable'));
   });
