@@ -90,7 +90,7 @@ test('renders section words below the tablature staff', async ({ page }) => {
   expect((position?.labelY ?? Number.NEGATIVE_INFINITY) + 0.1).toBeGreaterThanOrEqual(position?.stemBottomY ?? Number.POSITIVE_INFINITY);
 });
 
-test('renders duration dots above technique slurs in the score and print preview', async ({ page, context }) => {
+test('renders duration dots between the tablature staff and rhythm beams in score and print preview', async ({ page, context }) => {
   const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
     .replace('<divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type>', '<divisions>4</divisions><time><beats>3</beats><beat-type>4</beat-type>')
     .replace('<duration>1</duration><type>quarter</type>', '<duration>6</duration><type>quarter</type><dot/>')
@@ -102,11 +102,20 @@ test('renders duration dots above technique slurs in the score and print preview
     const dot = dots[0]?.dot;
     const transform = dot?.parentElement?.getAttribute('transform');
     const dotY = Number(transform?.match(/translate\([^ ]+ ([^)]+)\)/)?.[1]);
-    const techniqueYs = [...(dots[0]?.svg.querySelectorAll('text') ?? [])]
-      .filter(text => ['H', 'PO'].includes(text.textContent ?? ''))
-      .map(text => Number(text.getAttribute('y')))
+    const svg = dots[0]?.svg;
+    const staffLineYs = [...(svg?.querySelectorAll('rect') ?? [])]
+      .filter(rect => rect.getAttribute('fill') === '#A5A5A5' && Number(rect.getAttribute('height')) < 2)
+      .map(rect => Number(rect.getAttribute('y')))
       .filter(Number.isFinite);
-    return dots.length && techniqueYs.length ? { dotY, techniqueYs } : null;
+    const beamTopYs = [...(svg?.querySelectorAll('path') ?? [])]
+      .map(path => {
+        const box = (path as SVGGraphicsElement).getBBox();
+        return { y: box.y, height: box.height, width: box.width };
+      })
+      .filter(box => box.width > 10 && box.height > 3 && box.height < 6)
+      .map(box => box.y)
+      .filter(Number.isFinite);
+    return dots.length && staffLineYs.length && beamTopYs.length ? { dotY, staffBottomY: Math.max(...staffLineYs), beamTopY: Math.min(...beamTopYs) } : null;
   });
 
   await page.goto('/');
@@ -116,7 +125,8 @@ test('renders duration dots above technique slurs in the score and print preview
   await expect.poll(async () => (await readPositions(notation))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
   const position = await readPositions(notation);
   expect(position).not.toBeNull();
-  expect(position!.dotY).toBeLessThan(Math.min(...position!.techniqueYs));
+  expect(position!.dotY).toBeGreaterThan(position!.staffBottomY);
+  expect(position!.dotY).toBeLessThan(position!.beamTopY);
 
   await context.addInitScript(() => { window.print = () => {}; });
   const popup = page.waitForEvent('popup');
@@ -125,6 +135,7 @@ test('renders duration dots above technique slurs in the score and print preview
   await expect.poll(async () => (await readPositions(printPreview.locator('body')))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
   const printPosition = await readPositions(printPreview.locator('body'));
   expect(printPosition).not.toBeNull();
-  expect(printPosition!.dotY).toBeLessThan(Math.min(...printPosition!.techniqueYs));
+  expect(printPosition!.dotY).toBeGreaterThan(printPosition!.staffBottomY);
+  expect(printPosition!.dotY).toBeLessThan(printPosition!.beamTopY);
   await printPreview.close();
 });
