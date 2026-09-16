@@ -88,6 +88,15 @@ describe('MusicXML preview', () => {
     expect(note.beat.text).toBe('R');
     expect(note.beat.brushType).toBe(model.BrushType.ArpeggioDown);
   });
+  it('preserves a PDF slide label beside the native slide notation', () => {
+    const annotated = techniques.replace(
+      '<notations><technical><string>4</string><fret>0</fret>',
+      '<notations><slide type="start">Sl</slide><technical><string>4</string><fret>0</fret><other-technical>TEF slide Sl</other-technical>',
+    );
+    const { score } = readMusicXml(annotated, 'slide.xml');
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    expect(note.beat.text).toBe('Sl');
+  });
   it('maps the TEF code for finger 1 to a circled fingering', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><fingering enclosure="circle">1</fingering>');
     const { score } = readMusicXml(annotated, 'finger-one.xml');

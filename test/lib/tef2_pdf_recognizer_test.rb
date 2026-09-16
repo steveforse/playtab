@@ -158,6 +158,16 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal [ 7, 0, 7, 0, 0 ], notes_for.call(24).map { |note| note[:fret] }
   end
 
+  test "keeps the Ashokan Farewell slide label when supplied" do
+    path = ENV["PLAYTAB_ASHOKAN_FAREWELL_PDF"]
+    skip "Set PLAYTAB_ASHOKAN_FAREWELL_PDF for the private Ashokan Farewell regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    slide = score[:techniques].find { |technique| technique[:measure] == 15 && technique[:type] == "slide" }
+
+    assert_equal({ measure: 15, position: 320, string: 1, type: "slide", label: "Sl", confidence: "medium" }, slide)
+  end
+
   test "uses the text captured with a system for technique metadata" do
     recognizer = Tef2::PdfRecognizer.new
     system = {
@@ -221,6 +231,10 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { x: 15, y: 50, text: "P" }, { x: 20.3, y: 50, text: "o" }
     ]).first
     assert_equal({ measure: 0, position: 0, string: 3, type: "pull-off", label: "Po", confidence: "high" }, split_pull_off)
+    split_slide = recognizer.send(:techniques_for_system, technique_system, [
+      { x: 15, y: 50, text: "S" }, { x: 20.3, y: 50, text: "l" }
+    ]).first
+    assert_equal({ measure: 0, position: 0, string: 3, type: "slide", label: "Sl", confidence: "medium" }, split_slide)
     thumb = recognizer.send(:techniques_for_system, technique_system.merge(measure_rhythm_positions: [ [ 0, 256 ] ]), [
       { x: 20, y: 50, text: "T" }
     ]).first
