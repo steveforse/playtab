@@ -81,6 +81,25 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "0", document.at_xpath("//hammer-on[@type='start']/ancestor::note/notations/technical/fret").text
   end
 
+  test "collapses duplicate same-kind technique marks on one note into a single span" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Duplicate hammer marks",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 0 },
+        { measure: 0, position: 256, string: 0, fret: 2 }
+      ],
+      techniques: [
+        { measure: 0, position: 0, string: 0, type: "hammer-on", label: "H" },
+        { measure: 0, position: 0, string: 0, type: "hammer-on", label: "h" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal 1, document.xpath("//hammer-on[@type='start']").length
+    assert_equal 1, document.xpath("//hammer-on[@type='stop']").length
+  end
+
   test "preserves a technique stop and start on the same note" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Chained techniques",
