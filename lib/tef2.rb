@@ -4,6 +4,7 @@ require_relative "tef2/parser"
 require_relative "tef2/timeline"
 require_relative "tef2/musicxml_builder"
 require_relative "tef2/full_parser"
+require_relative "tef2/repeat_map"
 require_relative "tef2/full_musicxml_builder"
 require_relative "tef2/tabledit_v3_parser"
 require_relative "tef2/exporter"
@@ -32,10 +33,13 @@ module Tef2
     # Validate we got meaningful data
     raise FullParser::Invalid, "No notes parsed" if parsed[:notes].empty?
 
+    volta_endings, repeat_warnings = RepeatMap.volta_endings(parsed[:repeats], parsed[:measures])
+    parsed[:endings] = (parsed[:endings] || []) + volta_endings
+
     musicxml = FullMusicxmlBuilder.build(parsed)
     warnings = [
       tabledit_v3 ? "Native Ruby TablEdit 3.00 conversion" : "Native Ruby TEF2 conversion (full)"
-    ]
+    ] + repeat_warnings
     if parsed[:annotations].values.any? { |code| ![ 2, 4, 6 ].include?(code) }
       warnings << "TEF fingering codes without a known finger mapping are shown as TEF code labels."
     end
