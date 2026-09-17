@@ -4,14 +4,15 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
   test "converts through the full native parser and reports metadata warnings" do
     parsed = {
       notes: [ { fret: 0 } ], annotations: { 0 => 9 },
-      track_data: [ { capo: 2 } ], repeats: [ { start: 1, length: 2 } ]
+      measures: 5, track_data: [ { capo: 2 } ], repeats: [ { start: 1, length: 2 } ]
     }
     Tef2::TableditV3Parser.stub(:tabledit_v3?, false) do
       Tef2::FullParser.stub(:parse, parsed) do
         Tef2::FullMusicxmlBuilder.stub(:build, "<score-partwise/>") do
           result = Tef2.try_full_parse("bytes")
           assert_equal "<score-partwise/>", result[:musicxml]
-          assert_equal 4, result[:warnings].length
+          # The repeat table entry decodes fully, so no repeat warning.
+          assert_equal 3, result[:warnings].length
         end
       end
     end

@@ -33,8 +33,8 @@ module Tef2
     # Validate we got meaningful data
     raise FullParser::Invalid, "No notes parsed" if parsed[:notes].empty?
 
-    volta_endings, repeat_warnings = RepeatMap.volta_endings(parsed[:repeats], parsed[:measures])
-    parsed[:endings] = (parsed[:endings] || []) + volta_endings
+    repeat_records, repeat_warnings, decoded_repeats = RepeatMap.decode(parsed[:repeats], parsed[:measures])
+    parsed[:endings] = (parsed[:endings] || []) + repeat_records
 
     musicxml = FullMusicxmlBuilder.build(parsed)
     warnings = [
@@ -50,8 +50,8 @@ module Tef2
     if parsed[:track_data].any? { |track| track[:capo].to_i.positive? }
       warnings << "Capo metadata is preserved in the source tuning; imported fret numbers are unchanged."
     end
-    if parsed[:repeats].any? { |repeat| repeat[:start] != 0 || repeat[:length] != 0 }
-      warnings << "Repeat maps are not expanded; the imported score follows the source's written measures once."
+    if parsed[:repeats].count { |repeat| repeat[:start].nonzero? || repeat[:length].nonzero? } > decoded_repeats
+      warnings << "Some TEF2 repeat-map entries were not decoded; the imported score follows the source's written measures once."
     end
     { musicxml: musicxml, warnings: warnings }
   rescue FullParser::Invalid, TableditV3Parser::Invalid => e
