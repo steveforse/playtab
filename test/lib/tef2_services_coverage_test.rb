@@ -13,6 +13,7 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
           assert_equal "<score-partwise/>", result[:musicxml]
           # The repeat table entry decodes fully, so no repeat warning.
           assert_equal 3, result[:warnings].length
+          assert_includes result[:warnings], "Capo 2: 5th-string fret numbers are displayed relative to the capo, matching the printed tab; other strings are unchanged."
         end
       end
     end

@@ -52,8 +52,9 @@ module Tef2
     unless unsupported_effects.empty?
       warnings << "Unsupported TEF effect codes are preserved as TEF technical metadata: #{unsupported_effects.join(', ')}."
     end
-    if parsed[:track_data].any? { |track| track[:capo].to_i.positive? }
-      warnings << "Capo metadata is preserved in the source tuning; imported fret numbers are unchanged."
+    capo = (parsed[:track_data] || []).map { |track| track[:capo].to_i }.max.to_i
+    if capo.positive?
+      warnings << "Capo #{capo}: 5th-string fret numbers are displayed relative to the capo, matching the printed tab; other strings are unchanged."
     end
     if parsed[:repeats].count { |repeat| repeat[:start].nonzero? || repeat[:length].nonzero? } > decoded_repeats
       warnings << "Some TEF2 repeat-map entries were not decoded; the imported score follows the source's written measures once."

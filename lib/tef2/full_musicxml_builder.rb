@@ -41,6 +41,7 @@ module Tef2
       strings = parsed[:strings]
       tuning = parsed[:tuning] || DEFAULT_TUNING
       measure_signatures = parsed[:measure_signatures]
+      capo = (parsed[:track_data] || []).map { |track| track[:capo].to_i }.max.to_i
       lyrics_text = parsed[:lyrics_text].to_s
 
       builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
@@ -66,10 +67,11 @@ module Tef2
               xml.measure(number: m + 1) do
                 measure_time_sig = measure_signatures&.fetch(m, time_sig) || time_sig
                 write_measure_attributes(xml, m, measure_time_sig, tempo, strings, tuning) if m == 0
+                write_capo_direction(xml, capo) if m == 0 && capo.positive?
                 write_measure_time_signature(xml, measure_time_sig) if m.positive? && measure_signatures && measure_time_sig != measure_signatures[m - 1]
                 write_tempo_direction(xml, tempo) if m == 0 && tempo > 0
                 write_measure_barlines(xml, m, endings, location: "left")
-                write_measure_notes(xml, m, notes, annotations, texts, chords, tempo_changes, strings, tuning, measure_time_sig)
+                write_measure_notes(xml, m, notes, annotations, texts, chords, tempo_changes, strings, tuning, measure_time_sig, capo: capo)
                 write_measure_barlines(xml, m, endings, location: "right")
               end
             end
@@ -175,7 +177,7 @@ module Tef2
       end
     end
 
-    def self.write_measure_notes(xml, measure_index, notes, annotations, texts, chords, tempo_changes, strings, tuning, time_sig)
+    def self.write_measure_notes(xml, measure_index, notes, annotations, texts, chords, tempo_changes, strings, tuning, time_sig, capo: 0)
       # Filter notes for this measure
       measure_notes = notes.select { |n| n[:measure] == measure_index }
       measure_texts = texts.select { |text| text[:measure] == measure_index }
@@ -223,7 +225,7 @@ module Tef2
           xml.backup { xml.duration tef2_to_xml_duration(cursor - tef2_pos) }
         end
 
-        write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning)
+        write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning, capo: capo)
         cursor = tef2_pos + tef2_dur
       end
 
@@ -274,7 +276,7 @@ module Tef2
           xml.backup { xml.duration tef2_to_xml_duration(cursor - tef2_pos) }
         end
 
-        write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning)
+        write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning, capo: capo)
         cursor = tef2_pos + tef2_dur
       end
 
@@ -294,6 +296,13 @@ module Tef2
         rest_dur_tef2 = ticks_per_measure - cursor
         rest_dur_xml = tef2_to_xml_duration(rest_dur_tef2)
         write_rest(xml, rest_dur_xml, staff: 2)
+      end
+    end
+
+    def self.write_capo_direction(xml, capo)
+      xml.direction(placement: "above") do
+        xml.send("direction-type") { xml.words("Capo #{capo}") }
+        xml.staff 1
       end
     end
 
@@ -347,6 +356,17 @@ module Tef2
       end
     end
 
+    # Tabledit-family TEFs store 5th-string frets relative to the open
+    # 5th string while strings 1-4 are already capo-relative; printed
+    # tabs show the 5th string capo-relative as well. Verified against
+    # the printed Brainjo corpus on every capo file: subtracting the
+    # capo from 5th-string frets makes all six mismatched files exact
+    # and leaves the other eleven capo files unchanged.
+    def self.display_fret(string_index, fret, capo)
+      return fret unless capo.positive? && string_index == 4
+      fret >= capo ? fret - capo : fret
+    end
+
     def self.tef2_to_xml_duration(tef2_ticks)
       # TEF2: 256 ticks per quarter
       # XML: 960 divisions per quarter
@@ -366,7 +386,7 @@ module Tef2
       end
     end
 
-    def self.write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning)
+    def self.write_note_notation(xml, note, technique_pairs, slide_pairs, tie_pairs, tuning, capo: 0)
       string = note[:string]  # 0-based, 0 = highest
       fret = note[:fret]
       tef2_dur = note[:tef2_duration]
@@ -385,7 +405,7 @@ module Tef2
       tie = tie_pairs[pair_key]
       technique_number = pair ? pair[:number] : nil
 
-      write_grace_note(xml, note, tuning, staff: 1) if note[:grace]
+      write_grace_note(xml, note, tuning, staff: 1, capo: capo) if note[:grace]
 
       xml.note do
         xml.chord if is_chord
@@ -406,7 +426,7 @@ module Tef2
       end
     end
 
-    def self.write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning)
+    def self.write_note_tab(xml, note, technique_pairs, slide_pairs, tie_pairs, annotations, strings, tuning, capo: 0)
       string = note[:string]  # 0-based, 0 = highest
       fret = note[:fret]
       tef2_dur = note[:tef2_duration]
@@ -421,7 +441,7 @@ module Tef2
       tie = tie_pairs[pair_key]
       technique_number = pair ? pair[:number] : nil
 
-      write_grace_note(xml, note, tuning, staff: 2) if note[:grace]
+      write_grace_note(xml, note, tuning, staff: 2, capo: capo) if note[:grace]
 
       xml.note do
         xml.chord if is_chord
@@ -443,11 +463,11 @@ module Tef2
         xml.staff 2
         write_notehead(xml, note)
 
-        write_note_notations(xml, note, pair, slide, tie, technique_number, tab: true, annotations: annotations)
+        write_note_notations(xml, note, pair, slide, tie, technique_number, tab: true, annotations: annotations, capo: capo)
       end
     end
 
-    def self.write_grace_note(xml, note, tuning, staff:)
+    def self.write_grace_note(xml, note, tuning, staff:, capo: 0)
       string = note[:string]
       fret = note[:grace_note_fret].to_i
       note_pitch = tuning[string] + fret
@@ -464,7 +484,7 @@ module Tef2
         xml.notations do
           xml.technical do
             xml.string(string + 1)
-            xml.fret fret
+            xml.fret display_fret(string, fret, capo)
             if note[:grace_note_effect].to_i.positive?
               xml.send("other-technical") { xml.text "TEF grace effect #{note[:grace_note_effect]}" }
             end
@@ -482,7 +502,7 @@ module Tef2
       end
     end
 
-    def self.write_note_notations(xml, note, pair, slide, tie, technique_number, tab:, annotations: {})
+    def self.write_note_notations(xml, note, pair, slide, tie, technique_number, tab:, annotations: {}, capo: 0)
       xml.notations do
         xml.tied(type: tie[:is_start] ? "start" : "stop", number: tie[:number]) if tie
         if note[:effect1].to_i == 14 || note[:effect2].to_i >> 4 == 3 || note[:effect3].to_i == 3
@@ -499,7 +519,7 @@ module Tef2
         xml.technical do
           if tab
             xml.string(note[:string] + 1)
-            xml.fret note[:fret]
+            xml.fret display_fret(note[:string], note[:fret], capo)
           end
 
           if pair
