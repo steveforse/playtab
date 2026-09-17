@@ -303,6 +303,7 @@ module Tef2
 
     def techniques_by_note(score, notes)
       result = {}
+      used_origins = {}
       (score[:techniques] || []).each do |technique|
         next unless %w[hammer-on pull-off slide bend].include?(technique[:type])
 
@@ -317,6 +318,13 @@ module Tef2
         next if following[:measure] - current[:measure] > MAX_TECHNIQUE_MEASURE_GAP
         next if technique[:type] == "hammer-on" && current[:fret] >= following[:fret]
         next if technique[:type] == "pull-off" && current[:fret] <= following[:fret]
+
+        # Printed pages can carry two marks of the same kind on one note
+        # (e.g. both "H" and "h" for a hammer-on); a note can only start a
+        # technique of a given kind once.
+        origin = [ note_key(current), technique[:type] ]
+        next if used_origins[origin]
+        used_origins[origin] = true
 
         xml_type = technique[:type]
         add_technique(result, note_key(current), xml_type: xml_type, marker_type: "start", label: technique.fetch(:label, technique[:type]))
