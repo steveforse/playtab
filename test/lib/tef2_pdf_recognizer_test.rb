@@ -281,7 +281,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal({ measure: 0, position: 256, string: 3, type: "thumb", label: "T", confidence: "high" }, thumb)
     rake = recognizer.send(:techniques_for_system, technique_system, [ { x: 10, y: 50, text: "R" } ]).first
     assert_equal({ measure: 0, position: 0, string: 1, type: "rake", label: "R", confidence: "high" }, rake)
-    assert_equal [ { x: 10, y: 20, text: "10" } ], recognizer.send(:merge_multi_digit_frets, [
+    assert_equal [ { x: 10, y: 20, text: "10", end_x: 15.2 } ], recognizer.send(:merge_multi_digit_frets, [
       { x: 10, y: 20, text: "1" }, { x: 15.2, y: 20, text: "0" }
     ])
     assert recognizer.send(:technique_direction_valid?, "slide", { fret: 3 }, { fret: 0 })
@@ -316,6 +316,26 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       { x: 55, beam_count: 1 }, { x: 65, beam_count: 2 }, { x: 75, beam_count: 2 }
     ], 512)
     assert_equal [ 0 ], recognizer.send(:beam_rhythm_positions, 0, 100, [ { x: 10, beam_count: nil } ], 1024)
+    # A missed beam line overfills the measure under the quarter-note
+    # default; the unique assignment that fills it recovers the rhythm.
+    assert_equal [ 0, 64, 128, 192, 256, 384 ], recognizer.send(:beam_rhythm_positions, 156.9, 243.2, [
+      { x: 163.9, beam_count: nil }, { x: 174.7, beam_count: 2 }, { x: 186.3, beam_count: 2 },
+      { x: 198.9, beam_count: 2 }, { x: 207.1, beam_count: 1 }, { x: 224.4, beam_count: 1 }
+    ], 512)
+    # Several assignments fill the measure; the x-gap pattern selects the one
+    # whose durations are proportional to the printed onsets.
+    assert_equal [ 0, 128, 192, 256, 384, 448 ], recognizer.send(:beam_rhythm_positions, 307.7, 398.4, [
+      { x: 318.0, beam_count: 1 }, { x: 335.3, beam_count: 1 }, { x: 346.8, beam_count: 2 },
+      { x: 358.3, beam_count: 1 }, { x: 375.6, beam_count: 2 }, { x: 387.1, beam_count: 2 }
+    ], 512)
+    # Symmetric gaps cannot rank the assignments, so keep the safe fallback.
+    assert_nil recognizer.send(:beam_rhythm_positions, 0, 100, [
+      { x: 10, beam_count: nil }, { x: 40, beam_count: nil }, { x: 70, beam_count: 1 }
+    ], 512)
+    # No detected beam at all: no evidence, so leave the measure to spacing.
+    assert_nil recognizer.send(:beam_rhythm_positions, 0, 100, [
+      { x: 10, beam_count: nil }, { x: 30, beam_count: nil }, { x: 50, beam_count: nil }
+    ], 512)
     # A shared beam crossing a quarter-note boundary must use measured spacing.
     uneven_beams = [ 0, 10, 25 ].map { |x| { x: x, beam_count: 1 } }
     assert_nil recognizer.send(:beam_rhythm_positions, 0, 100, uneven_beams, 1024)
@@ -486,6 +506,18 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     ghost_result = recognizer.send(:systems, ghost_texts, horizontal + bars)
     assert ghost_result.first[:events].first[:notes].first[:ghost]
     assert recognizer.send(:parenthesized_note?, { x: 40, y: 636.4, text: "(3)" }, [])
+    # Two-digit ghosts anchor the closing parenthesis to the last digit.
+    two_digit_ghost_texts = [
+      { x: 40, y: 636.4, text: "(" },
+      { x: 42.6, y: 636.4, text: "1" },
+      { x: 47, y: 636.4, text: "0" },
+      { x: 51.4, y: 636.4, text: ")" }
+    ]
+    two_digit_ghost = recognizer.send(:systems, two_digit_ghost_texts, horizontal + bars)
+    assert two_digit_ghost.first[:events].first[:notes].first[:ghost]
+    assert recognizer.send(:parenthesized_note?, { x: 42.6, y: 636.4, text: "10", end_x: 47.0 }, [
+      { x: 40, y: 636.4, text: "(" }, { x: 51.4, y: 636.4, text: ")" }
+    ])
 
     bad_receiver = Object.new
     bad_receiver.define_singleton_method(:segments) { [] }

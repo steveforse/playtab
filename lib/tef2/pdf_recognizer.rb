@@ -385,7 +385,7 @@ module Tef2
         if single_digit_fret?(current) && following && single_digit_fret?(following) &&
             (current[:y] - following[:y]).abs <= 1.5 && following[:x] > current[:x] &&
             following[:x] - current[:x] <= MAX_MULTI_DIGIT_FRET_GAP
-          result << current.merge(text: current[:text] + following[:text])
+          result << current.merge(text: current[:text] + following[:text], end_x: following[:x])
           index += 2
         else
           result << current
@@ -535,8 +535,11 @@ module Tef2
         candidate[:text] == "(" && candidate[:x] < item[:x] && item[:x] - candidate[:x] <= 8 &&
           (candidate[:y] - item[:y]).abs <= 1.5
       end
+      # Multi-digit frets keep the first digit's x; anchor the closing
+      # parenthesis to the last digit so two-digit ghosts are detected.
+      anchor = item[:end_x] || item[:x]
       right = texts.any? do |candidate|
-        candidate[:text] == ")" && candidate[:x] > item[:x] && candidate[:x] - item[:x] <= 8 &&
+        candidate[:text] == ")" && candidate[:x] > anchor && candidate[:x] - anchor <= 8 &&
           (candidate[:y] - item[:y]).abs <= 1.5
       end
       left && right
@@ -617,7 +620,13 @@ module Tef2
       quarter_ticks = MEASURE_TICKS / 4
       durations = events.map { |event| quarter_ticks / (2**event[:beam_count].to_i) }
       total = durations.sum
-      return if total > measure_ticks
+      if total > measure_ticks
+        # A missed beam line makes the detected count a lower bound, so the
+        # quarter-note assumption can overfill the measure. Recover the true
+        # counts when exactly one assignment of extra beams fills it.
+        return if (durations = exact_beam_durations(left, right, events, quarter_ticks, measure_ticks)).nil?
+        total = durations.sum
+      end
 
       # A shared beam can cross a quarter-note boundary. If the printed gaps
       # show that boundary, use the spacing fallback instead of treating every
@@ -642,6 +651,57 @@ module Tef2
     # starts at the barline, the local gaps still preserve the rhythm pattern:
     # a gap twice the smallest printed gap represents two grid steps. This
     # handles compact endings where a global fit can move one onset by a step.
+    # A missed beam line makes a detected count a lower bound. When the
+    # quarter-note default overfills the measure, search the assignments of
+    # extra beams that exactly fill it. If several do, the printed onsets are
+    # proportional to the preceding duration, so keep the assignment whose
+    # duration pattern best matches the measured x gaps.
+    def exact_beam_durations(left, right, events, quarter_ticks, measure_ticks)
+      candidates = events.map do |event|
+        count = event[:beam_count].to_i
+        count == 2 ? [ 2 ] : (count == 1 ? [ 1, 2 ] : [ 0, 1, 2 ])
+      end
+      # With no detected beam there is no evidence to rank the assignments,
+      # so leave the measure to the spacing pass.
+      return if events.all? { |event| event[:beam_count].nil? }
+
+      assignments = candidates.reduce([ [] ]) do |acc, candidate|
+        acc.flat_map { |partial| candidate.map { |count| partial + [ count ] } }
+      end
+      return if assignments.length > 512
+
+      leading_offset = events.first[:x] - left > (right - left) * 0.35
+      solutions = assignments.filter_map do |counts|
+        durations = counts.map { |count| quarter_ticks / (2**count) }
+        total = durations.sum
+        next if total > measure_ticks
+
+        leading = leading_offset ? measure_ticks - total : 0
+        next unless leading + total == measure_ticks
+
+        [ durations, gap_pattern_error(durations, events) ]
+      end
+      return if solutions.empty?
+
+      best_error = solutions.min_by { |solution| solution[1] }[1]
+      winners = solutions.select { |solution| solution[1] == best_error }
+      return unless winners.length == 1
+
+      winners.first[0]
+    end
+
+    # Onsets are printed at horizontal positions proportional to the time
+    # since the previous onset, i.e. to the preceding note's duration. A good
+    # duration assignment has x gaps that scale linearly to those durations.
+    def gap_pattern_error(durations, events)
+      gaps = events.each_cons(2).map { |first, second| second[:x] - first[:x] }
+      predicted = durations[0..-2]
+      return 0.0 if gaps.length != predicted.length || predicted.empty?
+
+      scale = gaps.sum / predicted.sum.to_f
+      gaps.each_index.sum { |i| (gaps[i] - predicted[i] * scale)**2 }
+    end
+
     def spacing_rhythm_positions(left, right, event_xs, measure_ticks, step, dotted_indices: [], triplet_starts: [])
       return if event_xs.length < 2
 
