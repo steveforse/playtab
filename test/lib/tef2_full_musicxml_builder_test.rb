@@ -60,6 +60,50 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "0", note_pitch.at_xpath("alter").text
   end
 
+  test "displays 5th-string frets relative to the capo and labels the capo" do
+    parsed = {
+      measures: 1,
+      notes: [
+        { index: 0, component_index: 0, measure: 0, position: 0, string: 4, fret: 4, tef2_duration: 128, is_chord: false, voice: 1 },
+        { index: 1, component_index: 0, measure: 0, position: 128, string: 4, fret: 1, tef2_duration: 128, is_chord: false, voice: 1 },
+        { index: 2, component_index: 0, measure: 0, position: 256, string: 0, fret: 4, tef2_duration: 128, is_chord: false, voice: 1 }
+      ],
+      annotations: {},
+      texts: [],
+      chords: [],
+      track_data: [ { capo: 4 } ],
+      time_signature: { numerator: 4, denominator: 4 },
+      tempo: 120,
+      strings: 5,
+      tuning: [ 62, 59, 55, 50, 67 ]
+    }
+
+    document = Nokogiri::XML(Tef2::FullMusicxmlBuilder.build(parsed))
+
+    assert_includes document.xpath("//direction/direction-type/words").map(&:text), "Capo 4"
+    # Tab staff frets: 5th string 4 -> 0 (capo-relative, matching the print),
+    # 5th string 1 -> 1 (below the capo, left as stored), string 1 fret 4 -> 4.
+    assert_equal [ "0", "1", "4" ], document.xpath("//note[./staff='2']/notations/technical/fret").map(&:text)
+    # Pitches keep using the stored frets (5th string: 67 + 4 = B4).
+    tab_pitch = document.xpath("//note[./staff='2']/pitch").first
+    assert_equal "B", tab_pitch.at_xpath("step").text
+    assert_equal "4", tab_pitch.at_xpath("octave").text
+  end
+
+  test "omits the capo direction when no capo is stored" do
+    parsed = {
+      measures: 1,
+      notes: [ { index: 0, component_index: 0, measure: 0, position: 0, string: 4, fret: 4, tef2_duration: 256, is_chord: false, voice: 1 } ],
+      annotations: {}, texts: [], chords: [], track_data: [ { capo: 0 } ],
+      time_signature: { numerator: 4, denominator: 4 }, tempo: 120, strings: 5, tuning: [ 62, 59, 55, 50, 67 ]
+    }
+
+    document = Nokogiri::XML(Tef2::FullMusicxmlBuilder.build(parsed))
+
+    refute document.at_xpath("//direction/direction-type/words")
+    assert_equal [ "4" ], document.xpath("//note[./staff='2']/notations/technical/fret").map(&:text)
+  end
+
   test "uses fret direction for modern legato markers" do
     notes = [
       { component_index: 0, measure: 0, position: 0, absolute_position: 0, string: 2, fret: 0, effect1: 2, effect3: 0, effect2: 0, tef2_duration: 64, modern_tabledit: true },
