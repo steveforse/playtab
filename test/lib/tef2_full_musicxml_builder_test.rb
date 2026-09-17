@@ -47,7 +47,7 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal [ "1", "1" ], document.xpath("//harmony/@data-playtab-first-fret").map(&:value)
     assert_equal "C", document.at_xpath("//harmony/root/root-step").text
     assert_equal " min", document.at_xpath("//harmony/kind")[:text]
-    assert_equal "TEF fingering code 6", document.at_xpath("//other-technical").text
+    assert_equal "TEF fingering T", document.at_xpath("//other-technical").text
     assert_equal 2, document.xpath("//note[voice='2']").length
     assert_includes document.at_xpath("//miscellaneous-field[@name='playtab-lyrics']").text, "There once was a ship"
     assert_empty document.xpath("//lyric")
@@ -112,5 +112,74 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_empty m17.xpath(".//repeat")
 
     assert_empty document.xpath("//part/measure[not(@number='16')]/barline/repeat[@direction='backward']")
+  end
+
+  test "renders verified fingering annotation codes as circled fingers and the thumb label" do
+    notes = [ 0, 1, 2 ].map do |index|
+      {
+        index: index,
+        component_index: index,
+        measure: 0,
+        position: index * 64,
+        string: 2,
+        fret: 0,
+        technique: 0,
+        tef2_duration: 256,
+        is_chord: false,
+        voice: 2
+      }
+    end
+    parsed = {
+      measures: 1,
+      notes: notes,
+      annotations: { 0 => 3, 1 => 5, 2 => 18 },
+      texts: [],
+      lyrics_text: "",
+      chords: [],
+      time_signature: { numerator: 4, denominator: 4 },
+      tempo: 120,
+      strings: 5,
+      tuning: [ 63, 60, 55, 48, 67 ]
+    }
+
+    document = Nokogiri::XML(Tef2::FullMusicxmlBuilder.build(parsed))
+
+    fingerings = document.xpath("//fingering")
+    assert_equal [ "2", "4", "2" ], fingerings.map(&:text)
+    assert(fingerings.all? { |node| node["enclosure"] == "circle" })
+    assert_empty document.xpath("//other-technical")
+  end
+
+  test "omits annotation codes with no visible TefView rendering" do
+    parsed = {
+      measures: 1,
+      notes: [ 0, 1, 2 ].map do |index|
+        {
+          index: index,
+          component_index: index,
+          measure: 0,
+          position: index * 64,
+          string: 2,
+          fret: 0,
+          technique: 0,
+          tef2_duration: 256,
+          is_chord: false,
+          voice: 2
+        }
+      end,
+      annotations: { 0 => 1, 1 => 96, 2 => 198 },
+      texts: [],
+      lyrics_text: "",
+      chords: [],
+      time_signature: { numerator: 4, denominator: 4 },
+      tempo: 120,
+      strings: 5,
+      tuning: [ 63, 60, 55, 48, 67 ]
+    }
+
+    document = Nokogiri::XML(Tef2::FullMusicxmlBuilder.build(parsed))
+
+    assert_empty document.xpath("//fingering")
+    assert_empty document.xpath("//other-technical")
   end
 end

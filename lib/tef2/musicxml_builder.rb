@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "nokogiri"
+require_relative "full_musicxml_builder"
 
 module Tef2
   # Builds partwise MusicXML from TEF2 timeline
@@ -136,11 +137,14 @@ module Tef2
               end
             end
 
-            # TEF2 codes 2 and 4 display as circled fingers 1 and 3.
-            if (ann_code = annotations[component_index]) && [ 2, 4 ].include?(ann_code)
-              xml.fingering(enclosure: "circle") { xml.text({ 2 => 1, 4 => 3 }.fetch(ann_code)) }
-            elsif ann_code == 6
-              xml.send("other-technical") { xml.text "TEF fingering code 6" }
+            # TEF2 codes 2-5 display as circled fingers 1-4, 18 as middle
+            # finger (TefView "M"), and 6 as the thumb label.
+            if (ann_code = annotations[component_index])
+              if ann_code == 6
+                xml.send("other-technical") { xml.text "TEF fingering T" }
+              elsif (finger = Tef2::FullMusicxmlBuilder::FINGERING_ANNOTATIONS[ann_code])
+                xml.fingering(enclosure: "circle") { xml.text finger }
+              end
             end
           end
         end

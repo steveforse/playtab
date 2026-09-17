@@ -18,6 +18,38 @@ class Tef2ServicesCoverageTest < ActiveSupport::TestCase
     end
   end
 
+  test "warns when repeat-table entries remain undecoded" do
+    parsed = {
+      notes: [ { fret: 0 } ], annotations: {},
+      measures: 23, track_data: [], repeats: [ { start: 17, length: 17 } ]
+    }
+    Tef2::TableditV3Parser.stub(:tabledit_v3?, false) do
+      Tef2::FullParser.stub(:parse, parsed) do
+        Tef2::FullMusicxmlBuilder.stub(:build, "<score-partwise/>") do
+          result = Tef2.try_full_parse("bytes")
+          assert_includes result[:warnings], "TEF2 repeat table entry (17, 17) was not decoded; no repeat was added."
+          assert_includes result[:warnings], "Some TEF2 repeat-map entries were not decoded; the imported score follows the source's written measures once."
+        end
+      end
+    end
+  end
+
+  test "reports suppressed annotation codes and keeps unknown-code labels" do
+    parsed = {
+      notes: [ { fret: 0 } ], annotations: { 0 => 1, 1 => 198 },
+      measures: 2, track_data: [], repeats: []
+    }
+    Tef2::TableditV3Parser.stub(:tabledit_v3?, false) do
+      Tef2::FullParser.stub(:parse, parsed) do
+        Tef2::FullMusicxmlBuilder.stub(:build, "<score-partwise/>") do
+          result = Tef2.try_full_parse("bytes")
+          assert_includes result[:warnings], "TEF annotation codes with no visible TefView rendering are omitted: 1, 198."
+          refute_includes result[:warnings], "TEF fingering codes without a known finger mapping are shown as TEF code labels."
+        end
+      end
+    end
+  end
+
   test "reports unsupported effect codes while retaining the native conversion" do
     parsed = {
       notes: [ { fret: 0, effect1: 64, effect2: 14, effect3: 12 } ], annotations: {},
