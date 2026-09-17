@@ -71,4 +71,46 @@ class Tef2FullMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "hammer-on", pairs.fetch([ 2, 0 ])[:kind]
     assert_equal false, pairs.fetch([ 2, 1 ])[:is_start]
   end
+
+  test "renders repeat-table volta spans as ending brackets with a single backward repeat" do
+    parsed = {
+      measures: 17,
+      notes: [],
+      annotations: {},
+      texts: [],
+      chords: [],
+      lyrics_text: "",
+      time_signature: { numerator: 4, denominator: 4 },
+      tempo: 120,
+      strings: 5,
+      tuning: [ 67, 50, 55, 59, 62 ],
+      endings: [
+        { measure: 0, is_open: true, is_close: false, ending_number: 0, type: :ending },
+        { measure: 15, is_open: false, is_close: false, ending_number: 1, type: :ending, span: true, repeat: true },
+        { measure: 16, is_open: false, is_close: false, ending_number: 2, type: :ending, span: true, repeat: false }
+      ]
+    }
+
+    document = Nokogiri::XML(Tef2::FullMusicxmlBuilder.build(parsed))
+    measures = document.xpath("//part/measure").map { |m| m["number"] }
+
+    m1 = document.xpath("//part/measure[@number='1']").first
+    assert_equal "forward", m1.at_xpath(".//barline[@location='left']/repeat")["direction"]
+    assert_nil m1.xpath(".//ending").first
+
+    m16 = document.xpath("//part/measure[@number='16']").first
+    left_16 = m16.at_xpath(".//barline[@location='left']/ending")
+    assert_equal [ "1", "start" ], [ left_16["number"], left_16["type"] ]
+    right_16 = m16.xpath(".//barline[@location='right']").last
+    assert_equal [ "1", "stop" ], [ right_16.at_xpath("ending")["number"], right_16.at_xpath("ending")["type"] ]
+    assert_equal "backward", right_16.at_xpath("repeat")["direction"]
+
+    m17 = document.xpath("//part/measure[@number='17']").first
+    left_17 = m17.at_xpath(".//barline[@location='left']/ending")
+    assert_equal [ "2", "start" ], [ left_17["number"], left_17["type"] ]
+    assert_equal "stop", m17.xpath(".//barline[@location='right']").last.at_xpath("ending")["type"]
+    assert_empty m17.xpath(".//repeat")
+
+    assert_empty document.xpath("//part/measure[not(@number='16')]/barline/repeat[@direction='backward']")
+  end
 end

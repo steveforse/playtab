@@ -104,11 +104,23 @@ module Tef2
       measure_endings = endings.select { |ending| ending[:measure] == measure_index }
       return if measure_endings.empty?
 
-      if location == "left" && measure_endings.any? { |ending| ending[:is_open] }
-        xml.barline(location: "left") { xml.repeat(direction: "forward") }
+      # One-measure volta spans synthesized from the TEF2 repeat table
+      # (RepeatMap) and explicit single-measure endings: start at the left
+      # barline, stop at the right barline.
+      span_endings = measure_endings.select do |ending|
+        ending[:span] && !ending[:is_close] && ending[:ending_number].to_i.positive?
       end
 
-      return unless location == "right"
+      if location == "left"
+        forward = measure_endings.any? { |ending| ending[:is_open] }
+        return if forward == false && span_endings.empty?
+
+        xml.barline(location: "left") do
+          xml.repeat(direction: "forward") if forward
+          span_endings.each { |ending| xml.ending(number: ending[:ending_number].to_s, type: "start") }
+        end
+        return
+      end
 
       closing = measure_endings.find { |ending| ending[:is_close] }
       if closing
@@ -123,9 +135,16 @@ module Tef2
         end
       end
 
-      measure_endings.select { |ending| !ending[:is_close] && ending[:ending_number].to_i.positive? }.each do |ending|
+      measure_endings.select { |ending| !ending[:is_close] && !ending[:span] && ending[:ending_number].to_i.positive? }.each do |ending|
         xml.barline(location: "right") do
           xml.ending(number: ending[:ending_number], type: "start")
+        end
+      end
+
+      span_endings.each do |ending|
+        xml.barline(location: "right") do
+          xml.ending(number: ending[:ending_number].to_s, type: "stop")
+          xml.repeat(direction: "backward") if ending[:repeat]
         end
       end
     end
