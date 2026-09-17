@@ -40,7 +40,12 @@ module Tef2
     warnings = [
       tabledit_v3 ? "Native Ruby TablEdit 3.00 conversion" : "Native Ruby TEF2 conversion (full)"
     ] + repeat_warnings
-    if parsed[:annotations].values.any? { |code| ![ 2, 4, 6 ].include?(code) }
+    unknown_annotations = parsed[:annotations].values.uniq - [ 2, 3, 4, 5, 6, 18 ]
+    suppressed = unknown_annotations & Tef2::FullMusicxmlBuilder::SUPPRESSED_ANNOTATIONS
+    unless suppressed.empty?
+      warnings << "TEF annotation codes with no visible TefView rendering are omitted: #{suppressed.sort.join(', ')}."
+    end
+    unless (unknown_annotations - suppressed).empty?
       warnings << "TEF fingering codes without a known finger mapping are shown as TEF code labels."
     end
     unsupported_effects = unsupported_effect_codes(parsed[:notes])

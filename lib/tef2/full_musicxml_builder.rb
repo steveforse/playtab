@@ -14,6 +14,17 @@ module Tef2
     # Open G tuning: MIDI pitches for strings 1-5 (high to low)
     DEFAULT_TUNING = [ 62, 59, 55, 50, 67 ].freeze
 
+    # Verified TEF2 fingering annotation codes -> displayed finger number
+    # (2-5 = fingers 1-4; 18 = middle finger, verified against TefView "M").
+    # Code 6 is the thumb and renders as the "TEF fingering T" label.
+    FINGERING_ANNOTATIONS = { 2 => "1", 3 => "2", 4 => "3", 5 => "4", 18 => "2" }.freeze
+
+    # Annotation codes verified in TefView to have no useful visible meaning,
+    # omitted from the rendered score: 1 = enlarged fret number (display
+    # emphasis), 96 = stray unfilled down-triangle (likely accidental),
+    # 198 = no visible rendering at all.
+    SUPPRESSED_ANNOTATIONS = [ 1, 96, 198 ].freeze
+
     # Build MusicXML from FullParser output
     # @param parsed [Hash] output from FullParser.parse
     # @return [String] MusicXML document
@@ -506,11 +517,14 @@ module Tef2
           write_modern_fingerings(xml, note) if tab
 
           # TEF2 stores these as annotation payloads rather than as fret
-          # extensions.  Known codes become visible fingerings; other codes
-          # remain explicit technical metadata.
-          if tab && (ann = annotations[note[:index]])
-            if [ 2, 4 ].include?(ann)
-              xml.fingering(enclosure: "circle") { xml.text({ 2 => 1, 4 => 3 }.fetch(ann)) }
+          # extensions.  Verified codes become visible fingerings; suppressed
+          # codes have no useful visible meaning; other codes remain explicit
+          # technical metadata.
+          if tab && (ann = annotations[note[:index]]) && !SUPPRESSED_ANNOTATIONS.include?(ann)
+            if ann == 6
+              xml.send("other-technical") { xml.text "TEF fingering T" }
+            elsif (finger = FINGERING_ANNOTATIONS[ann])
+              xml.fingering(enclosure: "circle") { xml.text finger }
             else
               xml.send("other-technical") { xml.text "TEF fingering code #{ann}" }
             end
