@@ -236,7 +236,8 @@ module Tef2
           system[:measure_layouts] << { step: step, layout: layout }
           dotted_indices = dotted_event_indices(system, events, left, right)
           triplet_starts = triplet_event_starts(system, events, left, right)
-          rhythm_positions = if dotted_indices.empty? && triplet_starts.empty?
+          rhythm_positions = dotted_rhythm_positions(left, right, events, measure_ticks, step, dotted_indices)
+          rhythm_positions ||= if dotted_indices.empty? && triplet_starts.empty?
             beam_rhythm_positions(left, right, events, measure_ticks)
           end
           rhythm_positions ||= spacing_rhythm_positions(left, right, event_xs, measure_ticks, step,
@@ -477,7 +478,7 @@ module Tef2
 
           if item[:text].match?(/\A\(?\d{1,2}\)?\z/)
             { x: item[:x], y: item[:y], string: nearest, fret: item[:text].delete("()").to_i, dead: false,
-              ghost: parenthesized_note?(item, texts) }
+              ghost: parenthesized_note?(item, texts), dotted: duration_dot?(item, note_candidates) }
           elsif item[:text].upcase == "X"
             { x: item[:x], y: item[:y], string: nearest, fret: 0, dead: true, ghost: false }
           end
@@ -493,6 +494,7 @@ module Tef2
           end
         end
         events.each { |event| event[:beam_count] = beam_count_for_event(event[:x], segments, top) }
+        events.each { |event| event[:dotted] = event[:notes].any? { |note| note[:dotted] } }
         silent_stems = silent_stem_positions(segments, top, start, finish, events)
 
         result << {
@@ -551,6 +553,14 @@ module Tef2
           (candidate[:y] - item[:y]).abs <= 1.5
       end
       left && right
+    end
+
+    def duration_dot?(item, texts)
+      anchor = item[:end_x] || item[:x]
+      texts.any? do |candidate|
+        candidate[:text] == "." && candidate[:x] > anchor && candidate[:x] - anchor <= 8 &&
+          (candidate[:y] - item[:y]).abs <= 1.5
+      end
     end
 
     def repeat_barlines(raw_bars, curve_boxes, top, bottom, start, finish)
@@ -746,10 +756,63 @@ module Tef2
       positions
     end
 
+    # Duration dots are explicit evidence, but their glyphs are not always
+    # aligned with the printed spacing. Solve the dotted measure on the
+    # available rhythmic grid and require the durations to fill the measure.
+    # This also anchors a dotted opening note at the start of a measure whose
+    # clef or time-signature glyphs create a large visual left margin.
+    def dotted_rhythm_positions(left, right, events, measure_ticks, step, dotted_indices)
+      return if dotted_indices.empty? || events.empty? || step <= 0 || (measure_ticks % step).positive?
+
+      total_steps = measure_ticks / step
+      candidates = events.each_index.map do |index|
+        values = if dotted_indices.include?(index)
+          [ 3, 6, 12, 24 ]
+        else
+          [ 1, 2, 4, 8, 16, 32 ]
+        end
+        values.select { |value| value <= total_steps }
+      end
+      return if candidates.any?(&:empty?)
+
+      solutions = []
+      search = lambda do |index, pattern, sum|
+        return if solutions.length > 4096 || sum > total_steps
+
+        if index == candidates.length
+          solutions << [ pattern, gap_pattern_error(pattern, events) ] if sum == total_steps
+          return
+        end
+
+        remaining = candidates[index..]
+        minimum = remaining.sum { |options| options.min }
+        maximum = remaining.sum { |options| options.max }
+        return if sum + minimum > total_steps || sum + maximum < total_steps
+
+        candidates[index].each do |duration|
+          if index.positive? && dotted_indices.include?(index - 1) && !dotted_indices.include?(index)
+            next unless pattern.last && pattern.last == duration * 3
+          end
+          search.call(index + 1, pattern + [ duration ], sum + duration)
+        end
+      end
+      search.call(0, [], 0)
+      return if solutions.empty? || solutions.length > 4096
+
+      best_error = solutions.map(&:last).min
+      winners = solutions.select { |solution| (solution.last - best_error).abs < 0.0001 }
+      return unless winners.length == 1
+
+      positions = [ 0 ]
+      winners.first.first[0...-1].each { |duration| positions << positions.last + duration * step }
+      positions
+    end
+
     def dotted_event_indices(system, events, left, right)
       dots = curve_dot_centers(system[:curve_boxes])
       events.each_index.filter do |index|
         event = events[index]
+        next true if event[:dotted]
         next false unless event[:notes].any?
 
         dots.any? do |dot|

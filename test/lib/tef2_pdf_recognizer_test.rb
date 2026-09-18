@@ -303,6 +303,15 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal({ measure: 13, position: 384, string: 1, type: "slide", label: "Sl", confidence: "medium" }, slide)
   end
 
+  test "preserves Skeleton Dance's dotted opening measure when supplied" do
+    path = ENV["PLAYTAB_SKELETON_DANCE_PDF"]
+    skip "Set PLAYTAB_SKELETON_DANCE_PDF for the private Skeleton Dance regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    assert_equal [ 0, 192, 256, 448, 512, 768 ], score[:notes].select { |note| note[:measure] == 0 }.map { |note| note[:position] }.uniq
+    assert_empty score[:rests].select { |rest| rest[:measure] == 0 }
+  end
+
   test "uses the merged page text for technique markers" do
     recognizer = Tef2::PdfRecognizer.new
     system = {
@@ -455,6 +464,13 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     dotted_xs = [ 10.0, 35.0, 47.0, 65.0, 83.0, 101.0 ]
     assert_equal [ 0, 192, 256, 384, 512, 640 ], recognizer.send(
       :spacing_rhythm_positions, 0, 110, dotted_xs, 768, 64, dotted_indices: [ 0 ]
+    )
+    dotted_events = [
+      { x: 10, dotted: true }, { x: 35, dotted: false }, { x: 47, dotted: true },
+      { x: 65, dotted: false }, { x: 83, dotted: false }, { x: 101, dotted: false }
+    ]
+    assert_equal [ 0, 192, 256, 448, 512, 640 ], recognizer.send(
+      :dotted_rhythm_positions, 0, 110, dotted_events, 768, 64, [ 0, 2 ]
     )
     triplet_xs = [ 10.0, 27.0, 38.0, 49.0, 66.0, 77.0, 88.0, 99.0, 110.0, 117.9, 125.9 ]
     assert_equal [ 0, 128, 192, 256, 384, 448, 512, 576, 640, 672, 704 ], recognizer.send(
