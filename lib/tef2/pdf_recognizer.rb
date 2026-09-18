@@ -206,6 +206,9 @@ module Tef2
       # therefore top-to-bottom within each page.
       systems.sort_by! { |system| [ system[:page], -system[:top] ] }
       if systems.empty?
+        if pages.all? { |page| page[:texts].empty? }
+          raise Error, "No selectable text was found in this PDF, so no tablature can be recognized. Vector-drawing-only PDFs and scans are not supported."
+        end
         raise Error, "No five-line tablature systems were found. This PDF may be a scan or an unsupported layout."
       end
 
@@ -337,6 +340,11 @@ module Tef2
 
         { x: x, y: y, text: value }
       end
+      # A page with no selectable text carries no tablature. Vector-drawing-only
+      # PDFs can contain tens of thousands of paths that make staff detection
+      # prohibitively slow, so skip it for such pages entirely.
+      return { texts: texts, systems: [], time_signature: nil, segments: [], curve_boxes: [] } if texts.empty?
+
       receiver.flat_symbols.each do |symbol|
         texts.each do |item|
           next unless (item[:y] - symbol[:y]).abs <= 4

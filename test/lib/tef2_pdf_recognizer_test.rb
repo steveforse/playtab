@@ -158,6 +158,27 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "rejects vector-drawing-only PDFs without selectable text" do
+    # A full staff drawn as pure vector paths (no text runs): the recognizer must
+    # reject it with a clear message instead of running slow staff detection.
+    vector_only_page = FakePage.new(
+      [],
+      [ [ 20, 600, 580, 600 ], [ 20, 610, 580, 610 ], [ 20, 620, 580, 620 ], [ 20, 630, 580, 630 ], [ 20, 640, 580, 640 ],
+        [ 20, 600, 20, 640 ], [ 580, 600, 580, 640 ] ],
+      612, 792
+    )
+    with_reader([ vector_only_page ]) do
+      error = assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf") }
+      assert_equal "No selectable text was found in this PDF, so no tablature can be recognized. Vector-drawing-only PDFs and scans are not supported.", error.message
+    end
+
+    text_only_page = FakePage.new([ FakeRun.new(100, 750, "Demo", 20) ], [], 612, 792)
+    with_reader([ text_only_page ]) do
+      error = assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf") }
+      assert_equal "No five-line tablature systems were found. This PDF may be a scan or an unsupported layout.", error.message
+    end
+  end
+
   test "rejects PDFs without systems or notes" do
     no_systems = FakeReader.new([ empty_page ])
     with_reader(no_systems.pages) do
