@@ -87,6 +87,18 @@ test('renders a native thumb fingering below the tablature staff', async ({ page
   expect(position?.glyphY).toBeGreaterThan(position?.lowerGeometryY ?? Number.POSITIVE_INFINITY);
 });
 
+test('renders TEF index and middle finger annotations', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering I</other-technical><hammer-on type="start">H</hammer-on>')
+    .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF fingering M</other-technical><hammer-on type="stop"/>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'right-hand-fingering.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg text').filter({ hasText: /^I$/ })).toHaveCount(1);
+  await expect(notation.locator('svg text').filter({ hasText: /^M$/ })).toHaveCount(1);
+});
+
 test('renders section words below the tablature staff', async ({ page }) => {
   const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
     .replace('<note><pitch', '<direction><direction-type><words>Banjo Solo</words></direction-type></direction><note><pitch');
