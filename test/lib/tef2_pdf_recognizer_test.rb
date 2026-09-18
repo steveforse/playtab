@@ -82,6 +82,18 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "captures letter fingerings printed below the staff" do
+    page = staff_page(
+      note_texts: [ [ 40, 636.4, "2" ], [ 80, 636.4, "3" ] ],
+      extra_texts: [ [ 40, 670, "T" ], [ 80, 670, "I" ] ]
+    )
+    with_reader([ page ]) do
+      result = Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf")
+      assert_equal [ "I", "T" ], result[:fingerings].map { |item| item[:value] }.sort
+      assert_empty result[:sections]
+    end
+  end
+
   test "still reads isolated single-letter technique marks next to chord names" do
     page = staff_page(
       tuning: "gDGBD tuning",
@@ -492,6 +504,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     refute recognizer.send(:section_label?, system, { y: 570 }, "a" * 33)
     refute recognizer.send(:section_label?, system, { y: 570 }, "H")
     refute recognizer.send(:section_label?, system, { y: 570 }, "C min")
+    refute recognizer.send(:section_label?, system, { y: 570 }, "T I M")
     refute recognizer.send(:section_label?, system, { y: 570 }, "arranged by someone")
     assert recognizer.send(:technique_pair_valid?, { measure: 0, position: 0, string: 0, type: "hammer-on" }, [
       { measure: 0, position: 0, string: 0, fret: 0 }, { measure: 0, position: 128, string: 0, fret: 2 }
