@@ -26,7 +26,7 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
         { measure: 0, position: 0, string: 0, type: "hammer-on", label: "H" },
         { measure: 0, position: 512, string: 1, type: "thumb" }
       ],
-      fingerings: [ { measure: 0, position: 512, string: 2, value: "2" } ]
+      fingerings: [ { measure: 0, position: 512, string: 2, value: "2" }, { measure: 0, position: 0, string: 0, value: "I" } ]
     }
 
     xml = Tef2::PdfMusicxmlBuilder.build(score)
@@ -44,7 +44,8 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "0,2,0,1,0", document.at_xpath("//harmony[root/root-step='C'][root/root-alter='1']")["data-playtab-strings"]
     assert_equal 2, document.xpath("//barline/repeat").length
     assert_equal "2", document.xpath("//fingering").first.text
-    assert_equal "TEF fingering T", document.at_xpath("//other-technical").text
+    assert_equal "TEF fingering T", document.xpath("//other-technical").find { |item| item.text == "TEF fingering T" }.text
+    assert_equal "TEF fingering I", document.xpath("//other-technical").find { |item| item.text == "TEF fingering I" }.text
     assert_equal "hammer-on", document.at_xpath("//hammer-on").name
     assert_equal "x", document.at_xpath("//notehead[text()='x']").text
     assert_equal 1, document.xpath("//notehead[@parentheses='yes']").length

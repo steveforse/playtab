@@ -1150,7 +1150,8 @@ module Tef2
 
     def fingerings_for_system(system, texts)
       texts.filter_map do |item|
-        next unless item[:text].match?(/\A[1-4]\z/)
+        # TablEdit prints fingerings as letters (T/I/M/P) as well as digits.
+        next unless item[:text].match?(/\A[1-4TIMP]\z/)
         next if item[:y].between?(system[:top] - 8, system[:bottom] + 8)
         next unless item[:y].between?(system[:top] - 34, system[:bottom] + 34)
         next unless item[:x].between?(system[:bars].first - 18, system[:bars].last + 18)
@@ -1188,6 +1189,8 @@ module Tef2
       return false if item[:y] >= system[:top] - 8
       return false unless label.length.between?(2, 32) && label.match?(/[a-zA-Z]/)
       return false if technique_type(label) || !normalize_chord(label).empty?
+      # A row of fingering letters ("T I M") is not a section label.
+      return false if label.match?(/\A[TIMP](?:\s+[TIMP])*\z/)
       return false if label.match?(/(?:page\s+\d|tuning|arranged|clawhammerbanjo|\.net)/i)
 
       true

@@ -273,8 +273,8 @@ module Tef2
             xml.string((source[:string] + 1).to_s)
             xml.fret(source[:fret].to_s)
             if fingering
-              if fingering == "T"
-                xml.send("other-technical", "TEF fingering T")
+              if fingering.match?(/\A[A-Z]\z/)
+                xml.send("other-technical", "TEF fingering #{fingering}")
               else
                 xml.fingering(fingering, enclosure: "circle")
               end
