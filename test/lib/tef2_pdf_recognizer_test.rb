@@ -66,6 +66,81 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "does not read letter-spaced page words as technique marks" do
+    page = staff_page(
+      tuning: "gDGBD tuning",
+      note_texts: [ [ 40, 636.4, "0" ], [ 80, 636.4, "2" ] ],
+      extra_texts: [
+        [ 45, 605, "shanties" ],
+        [ 150, 605, "High solo" ],
+        [ 250, 605, "Verse" ]
+      ]
+    )
+    with_reader([ page ]) do
+      result = Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf")
+      assert_empty result[:techniques]
+    end
+  end
+
+  test "still reads isolated single-letter technique marks next to chord names" do
+    page = staff_page(
+      tuning: "gDGBD tuning",
+      note_texts: [ [ 40, 636.4, "0" ], [ 80, 636.4, "2" ] ],
+      extra_texts: [
+        [ 45, 605, "s" ],
+        [ 85, 610, "H" ],
+        [ 100, 610, "D" ],
+        [ 110, 610, "Maj" ]
+      ]
+    )
+    with_reader([ page ]) do
+      result = Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf")
+      assert_equal %w[hammer-on slide], result[:techniques].map { |technique| technique[:type] }.sort
+    end
+  end
+
+  test "splits clustered pull-off marks fused into one text token" do
+    page = staff_page(
+      tuning: "gDGBD tuning",
+      note_texts: [ [ 40, 636.4, "5" ], [ 55, 636.4, "3" ], [ 80, 636.4, "1" ] ],
+      extra_texts: [ [ 45, 623, "PoPo" ] ]
+    )
+    with_reader([ page ]) do
+      result = Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf")
+      assert_equal 2, result[:techniques].count { |technique| technique[:type] == "pull-off" }
+    end
+  end
+
+  test "does not split chord names or words into technique marks" do
+    page = staff_page(
+      tuning: "gDGBD tuning",
+      note_texts: [ [ 40, 636.4, "0" ], [ 80, 636.4, "2" ] ],
+      extra_texts: [
+        [ 45, 610, "Bb" ],
+        [ 150, 610, "High" ],
+        [ 250, 610, "Verse" ]
+      ]
+    )
+    with_reader([ page ]) do
+      result = Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf")
+      assert_empty result[:techniques]
+    end
+  end
+
+  test "decomposes clustered technique tokens conservatively" do
+    recognizer = Tef2::PdfRecognizer.new
+    assert_equal [ "po", "po" ], recognizer.send(:clustered_mark_pieces, "PoPo")
+    assert_equal [ "h", "po" ], recognizer.send(:clustered_mark_pieces, "HPo")
+    assert_equal [ "ho", "h" ], recognizer.send(:clustered_mark_pieces, "hoh")
+    assert_equal [ "h", "h" ], recognizer.send(:clustered_mark_pieces, "hh")
+    assert_equal [ "t", "t" ], recognizer.send(:clustered_mark_pieces, "tt")
+    assert_nil recognizer.send(:clustered_mark_pieces, "Po")
+    assert_nil recognizer.send(:clustered_mark_pieces, "Bb")
+    assert_nil recognizer.send(:clustered_mark_pieces, "High")
+    assert_nil recognizer.send(:clustered_mark_pieces, "Verse")
+    assert_nil recognizer.send(:clustered_mark_pieces, "shanties")
+  end
+
   test "handles validation and reader failures safely" do
     recognizer = Tef2::PdfRecognizer.new
     [ nil, "", "not a pdf", "%PDF-" + ("x" * 10_000_001) ].each do |value|
@@ -195,7 +270,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal({ measure: 13, position: 384, string: 1, type: "slide", label: "Sl", confidence: "medium" }, slide)
   end
 
-  test "uses the text captured with a system for technique metadata" do
+  test "uses the merged page text for technique markers" do
     recognizer = Tef2::PdfRecognizer.new
     system = {
       page: 0, top: 100, bottom: 140, bars: [ 20, 100 ], measure_start: 0, measure_ticks: 1024,
@@ -203,10 +278,11 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
         { x: 30, notes: [ { x: 30, string: 1, fret: 0 } ] },
         { x: 40, notes: [ { x: 40, string: 1, fret: 2 } ] }
       ],
-      texts: [ { x: 35, y: 144, text: "H" }, { x: 36, y: 155, text: "B" } ]
+      texts: []
     }
+    pages = [ { texts: [ { x: 35, y: 144, text: "H" }, { x: 36, y: 155, text: "B" } ], segments: [], curve_boxes: [], systems: [] } ]
 
-    metadata = recognizer.send(:metadata, [ { texts: [], segments: [], curve_boxes: [], systems: [] } ], [ system ])
+    metadata = recognizer.send(:metadata, pages, [ system ])
 
     assert_equal 1, metadata[:techniques].length
     assert_equal "hammer-on", metadata[:techniques].first[:type]
