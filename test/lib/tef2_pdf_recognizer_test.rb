@@ -312,6 +312,26 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_empty score[:rests].select { |rest| rest[:measure] == 0 }
   end
 
+  test "preserves Skeleton Dance's later dotted measures and right-hand fingerings when supplied" do
+    path = ENV["PLAYTAB_SKELETON_DANCE_PDF"]
+    skip "Set PLAYTAB_SKELETON_DANCE_PDF for the private Skeleton Dance regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    notes_for = ->(measure) { score[:notes].select { |note| note[:measure] == measure }.map { |note| note[:position] }.uniq }
+    fingerings_for = ->(measure) {
+      score[:fingerings].select { |fingering| fingering[:measure] == measure }
+        .sort_by { |fingering| fingering[:position] }
+        .map { |fingering| fingering[:value] }
+    }
+
+    assert_equal [ 0, 192, 256, 448, 512, 768 ], notes_for.call(1)
+    assert_equal [ 0, 192, 256, 448, 512, 704, 768, 960 ], notes_for.call(2)
+    assert_equal [ 0, 192, 256, 448, 512, 704, 768 ], notes_for.call(3)
+    assert_empty score[:rests].select { |rest| rest[:measure] < 4 }
+    assert_includes fingerings_for.call(0), "I"
+    assert_includes fingerings_for.call(3), "M"
+  end
+
   test "uses the merged page text for technique markers" do
     recognizer = Tef2::PdfRecognizer.new
     system = {

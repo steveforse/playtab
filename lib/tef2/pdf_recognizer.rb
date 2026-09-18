@@ -232,10 +232,11 @@ module Tef2
           events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
           event_xs = events.map { |event| event[:x] }
           step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
-          layout = position_layout(left, right, event_xs, measure_ticks, step)
-          system[:measure_layouts] << { step: step, layout: layout }
           dotted_indices = dotted_event_indices(system, events, left, right)
           triplet_starts = triplet_event_starts(system, events, left, right)
+          step = 64 if dotted_indices.any? && step > 64
+          layout = position_layout(left, right, event_xs, measure_ticks, step)
+          system[:measure_layouts] << { step: step, layout: layout }
           rhythm_positions = dotted_rhythm_positions(left, right, events, measure_ticks, step, dotted_indices)
           rhythm_positions ||= if dotted_indices.empty? && triplet_starts.empty?
             beam_rhythm_positions(left, right, events, measure_ticks)
@@ -456,6 +457,10 @@ module Tef2
           next unless (x1 - x2).abs < 0.8 && [ y1, y2 ].min <= top + 1 && [ y1, y2 ].max >= bottom - 1
 
           x = (x1 + x2) / 2.0
+          next if texts.any? do |item|
+            item[:text].match?(/\A(?:\(?\d{1,2}\)?\.?|X)\z/i) &&
+              item[:x].between?(x - 3.5, x + 3.5) && item[:y].between?(top - 5, bottom + 5)
+          end
           x if x.between?(start - 2, finish + 2)
         end
         repeat_barlines = repeat_barlines(raw_bars, curve_boxes, top, bottom, start, finish)

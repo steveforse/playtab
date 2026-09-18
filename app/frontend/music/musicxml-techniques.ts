@@ -37,6 +37,7 @@ export function extractTechniques(source: string) {
         if (tag.localName === 'other-technical') {
           const unresolved = tag.textContent?.match(/(?:Unresolved TEF fingering annotation code|TEF fingering code)\s+(\d+)/i);
           const thumb = tag.textContent?.match(/TEF fingering\s+T(?:humb)?$/i);
+          const rightHand = tag.textContent?.match(/TEF fingering\s+([IMP])$/i);
           const rake = tag.textContent?.match(/TEF rake/i);
           const printedTechnique = tag.textContent?.match(/TEF (slide|bend)\s+(.+)/i);
           if (rake) {
@@ -46,9 +47,9 @@ export function extractTechniques(source: string) {
             kind = `tef-${printedTechnique[1].toLowerCase()}`;
             number = printedTechnique[2].trim();
           } else {
-            if (!unresolved && !thumb) continue;
+            if (!unresolved && !thumb && !rightHand) continue;
             kind = 'tef-fingering';
-            number = unresolved?.[1] ?? 'T';
+            number = unresolved?.[1] ?? (thumb ? 'T' : rightHand![1].toUpperCase());
           }
         }
         if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'rake' && kind !== 'tef-slide' && kind !== 'tef-bend') continue;
@@ -87,6 +88,7 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
     }
     if (marker.kind === 'tef-fingering') {
       if (marker.number === '6' || marker.number === 'T') note.leftHandFinger = 0;
+      else if (/^[IMP]$/.test(marker.number)) note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
       else note.beat.text = [note.beat.text, `TEF ${marker.number}`].filter(Boolean).join(' ');
       continue;
     }

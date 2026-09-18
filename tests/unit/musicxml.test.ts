@@ -78,6 +78,16 @@ describe('MusicXML preview', () => {
     expect(note.leftHandFinger).not.toBe(baseline.leftHandFinger);
     expect(note.beat.text).toBeNull();
   });
+  it('shows TEF index and middle finger annotations', () => {
+    const annotated = techniques
+      .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering I</other-technical><hammer-on type="start">H</hammer-on>')
+      .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF fingering M</other-technical><hammer-on type="stop"/>');
+    const { score } = readMusicXml(annotated, 'right-hand-fingering.xml');
+    const first = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    const second = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(first.beat.text).toContain('I');
+    expect(second.beat.text).toContain('M');
+  });
   it('shows a PDF rake as an R annotation and arpeggio', () => {
     const annotated = techniques.replace(
       '<fret>3</fret>',
