@@ -328,6 +328,8 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal [ 0, 192, 256, 448, 512, 768 ], notes_for.call(1)
     assert_equal [ 0, 192, 256, 448, 512, 704, 768, 960 ], notes_for.call(2)
     assert_equal [ 0, 192, 256, 448, 512, 704, 768 ], notes_for.call(3)
+    assert_equal notes_for.call(4), notes_for.call(5)
+    assert_equal [ 0, 192, 256, 448, 512, 704, 768, 960 ], notes_for.call(6)
     assert_empty score[:rests].select { |rest| rest[:measure] < 4 }
     assert_includes fingerings_for.call(0), "I"
     assert_includes fingerings_for.call(3), "M"
@@ -644,6 +646,8 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
 
     duplicate = horizontal + [ [ 20, 600, 500, 600 ] ] + bars
     assert_equal 1, recognizer.send(:systems, [], duplicate).length
+    labeled_start = recognizer.send(:systems, [ { x: 18, y: 643, text: "5" } ], horizontal + bars)
+    assert_equal [ 20, 300, 580 ], labeled_start.first[:bars]
     uneven = [ 600, 610, 630, 640, 650 ].map { |y| [ 20, y, 580, y ] }
     assert_empty recognizer.send(:systems, [], uneven)
     narrow = [ [ 20, 600, 150, 600 ], [ 60, 610, 190, 610 ], [ 20, 620, 150, 620 ], [ 60, 630, 190, 630 ], [ 20, 640, 150, 640 ] ]

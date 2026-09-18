@@ -460,7 +460,7 @@ module Tef2
           next unless (x1 - x2).abs < 0.8 && [ y1, y2 ].min <= top + 1 && [ y1, y2 ].max >= bottom - 1
 
           x = (x1 + x2) / 2.0
-          next if texts.any? do |item|
+          next if !x.between?(start - 2, start + 6) && texts.any? do |item|
             item[:text].match?(/\A(?:\(?\d{1,2}\)?\.?|X)\z/i) &&
               item[:x].between?(x - 3.5, x + 3.5) && item[:y].between?(top - 5, bottom + 5)
           end
