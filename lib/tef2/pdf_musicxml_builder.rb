@@ -252,7 +252,8 @@ module Tef2
       xml.note do
         xml.chord if chord
         xml.pitch do
-          step, alter, octave = midi_pitch(tuning.fetch(source[:string]) + source[:fret])
+          open_pitch = tuning.fetch(tuning.length - source[:string] - 1)
+          step, alter, octave = midi_pitch(open_pitch + source[:fret])
           xml.step(step)
           xml.alter(alter.to_s) unless alter.zero?
           xml.octave(octave.to_s)
@@ -408,7 +409,17 @@ module Tef2
       tokens = label.scan(/[A-Ga-g](?:#|b|♭)?/)
       return DEFAULT_TUNING.dup unless tokens.length == 5
 
-      [ 4, 3, 3, 4, 4 ].each_with_index.map { |octave, index| pitch_from_token(tokens[index], octave) }
+      tuning = [
+        pitch_from_token(tokens[0], 4),
+        pitch_from_token(tokens[1], 3),
+        pitch_from_token(tokens[2], 3),
+        pitch_from_token(tokens[3], 3),
+        pitch_from_token(tokens[4], 4)
+      ]
+      second_string_candidates = [ pitch_from_token(tokens[3], 3), pitch_from_token(tokens[3], 4) ]
+      tuning[3] = second_string_candidates.find { |pitch| pitch > tuning[2] && pitch <= tuning[4] } ||
+        second_string_candidates.min_by { |pitch| (pitch - tuning[4]).abs }
+      tuning
     end
 
     def pitch_from_token(token, octave)

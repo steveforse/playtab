@@ -64,6 +64,30 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal [ 67, 50, 55, 59, 62 ], Tef2::PdfMusicxmlBuilder::DEFAULT_TUNING
   end
 
+  test "uses banjo string octaves and visual staff rows for PDF pitches" do
+    builder = Tef2::PdfMusicxmlBuilder.new
+    assert_equal [ 67, 50, 55, 59, 62 ], builder.send(:parse_tuning, "gDGBD")
+    assert_equal [ 67, 48, 55, 59, 62 ], builder.send(:parse_tuning, "gCGBD")
+    assert_equal [ 69, 50, 57, 62, 64 ], builder.send(:parse_tuning, "aDADE")
+    assert_equal [ 67, 55, 55, 62, 60 ], builder.send(:parse_tuning, "gGGDC")
+
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Tuning rows",
+      tuning_label: "gCGBD",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 0 },
+        { measure: 0, position: 256, string: 1, fret: 0 },
+        { measure: 0, position: 512, string: 3, fret: 0 }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+    assert_equal [ "G", "C", "G", "B", "D" ], document.xpath("//staff-tuning/tuning-step").map(&:text)
+    assert_equal [ "4", "3", "3", "3", "4" ], document.xpath("//staff-tuning/tuning-octave").map(&:text)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+    assert_equal [ [ "D", "4" ], [ "B", "3" ], [ "C", "3" ] ], notes.map { |note| [ note.at_xpath("./pitch/step").text, note.at_xpath("./pitch/octave").text ] }
+  end
+
   test "attaches a technique to the matching fret when notes share a position and string" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Shared position",
