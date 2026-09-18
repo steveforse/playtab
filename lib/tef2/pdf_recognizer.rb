@@ -830,7 +830,7 @@ module Tef2
         sections.concat(sections_for_system(system, page_texts))
         chords.concat(chords_for_system(system, page_texts))
         endings.concat(endings_for_system(system, page_texts))
-        techniques.concat(techniques_for_system(system, technique_texts))
+        techniques.concat(techniques_for_system(system, page_texts))
         fingerings.concat(fingerings_for_system(system, technique_texts))
       end
       {
@@ -1077,26 +1077,62 @@ module Tef2
 
     def techniques_for_system(system, texts)
       combined_marker_texts(texts).filter_map do |item|
-        label = item[:text].strip
-        technique = technique_type(label)
-        next unless technique && near_system?(system, item[:x], item[:y], 42)
-        next unless technique_marker_position?(system, item, technique)
+        technique_items_for(item).filter_map do |label, x|
+          technique = technique_type(label)
+          next unless technique && near_system?(system, x, item[:y], 42)
+          next unless technique_marker_position?(system, { x: x, y: item[:y] }, technique)
 
-        note = technique_note(system, item, technique)
-        target = metadata_system_for_overflow(system, item[:x])
-        note ||= technique_note(target, item, technique)
-        next unless note
+          note = technique_note(system, { x: x, y: item[:y] }, technique)
+          target = metadata_system_for_overflow(system, x)
+          note ||= technique_note(target, { x: x, y: item[:y] }, technique)
+          next unless note
 
-        measure, position = measure_position(target, note[:x])
-        {
-          measure: measure,
-          position: position,
-          string: note[:string],
-          type: technique,
-          label: item[:text].strip,
-          confidence: %w[slide bend].include?(technique) ? "medium" : "high"
-        }
+          measure, position = measure_position(target, note[:x])
+          {
+            measure: measure,
+            position: position,
+            string: note[:string],
+            type: technique,
+            label: label,
+            confidence: %w[slide bend].include?(technique) ? "medium" : "high"
+          }
+        end
+      end.flatten
+    end
+
+    # A merged text token can fuse several printed marks (two adjacent pull-offs
+    # read as "PoPo"). Split only unambiguous clusters — hammer-on/pull-off runs
+    # and thumb pairs — so chord names ("Bb") and words ("High", "Verse") never
+    # split into phantom marks.
+    def technique_items_for(item)
+      label = item[:text].strip
+      return [ [ label, item[:x] ] ] if technique_type(label)
+
+      pieces = clustered_mark_pieces(label)
+      return [] if pieces.nil? || pieces.length < 2
+
+      width = [ label.length * 6.0, 12.0 ].max
+      pieces.each_index.map { |index| [ pieces[index], item[:x] + (index + 0.5) * width / pieces.length ] }
+    end
+
+    def clustered_mark_pieces(value)
+      low = value.strip.downcase
+      pieces = []
+      if low =~ /\A(?:ho|po|h)+\z/
+        rest = low
+        while rest.length.positive?
+          if rest.start_with?("ho")
+            pieces << "ho"; rest = rest[2..]
+          elsif rest.start_with?("po")
+            pieces << "po"; rest = rest[2..]
+          else
+            pieces << "h"; rest = rest[1..]
+          end
+        end
+      elsif low =~ /\At{2,}\z/
+        pieces = low.chars
       end
+      pieces if pieces.length >= 2
     end
 
     def technique_marker_position?(system, item, technique = nil)
