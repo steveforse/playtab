@@ -270,6 +270,9 @@ module Tef2
       raise Error, "No tablature notes were recognized." if notes.empty?
 
       header_data = header(pages.first[:texts])
+      if header_data[:tuning].empty?
+        header_data = header_data.merge(tuning: systems.filter_map { |system| staff_tuning_label(system) }.first.to_s)
+      end
       metadata = metadata(pages, systems)
       timing_name = timing_steps.any? { |step| step <= 64 } ? "sixteenth-note" : "eighth-note"
       warnings = [
@@ -1550,6 +1553,26 @@ module Tef2
       arranger = top.select { |item| item[:text].match?(/arranged|clawhammerbanjo|\.net/i) }
         .sort_by { |item| -item[:y] }.map { |item| item[:text] }.join(" ")
       { title: title ? title[:text] : "", tuning: match ? match[1] : "", subtitle: subtitle ? subtitle[:text] : "", arranger: arranger }
+    end
+
+    def staff_tuning_label(system)
+      first_bar = system[:bars].first
+      return "" unless first_bar
+
+      row_positions = 5.times.map { |index| system[:bottom] - index * (system[:bottom] - system[:top]) / 4.0 }
+      candidates = system[:texts].select do |item|
+        item[:x].between?(first_bar - 2, first_bar + 30) &&
+          item[:y].between?(system[:top] - 5, system[:bottom] + 3) &&
+          item[:text].match?(/\A[A-Ga-g](?:#|b|♭)?\z/)
+      end
+      labels = row_positions.filter_map do |row_y|
+        candidate = candidates.min_by { |item| (item[:y] - row_y).abs }
+        candidate[:text] if candidate && (candidate[:y] - row_y).abs <= 5
+      end
+      return "" unless labels.length == 5
+
+      tokens = labels.reverse
+      [ tokens.first.downcase, *tokens.drop(1).map(&:upcase) ].join
     end
 
     def filename_without_extension(filename)

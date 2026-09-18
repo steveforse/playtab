@@ -308,6 +308,7 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     skip "Set PLAYTAB_SKELETON_DANCE_PDF for the private Skeleton Dance regression PDF." unless path && File.file?(path)
 
     score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    assert_equal "gCGBD", score[:tuning_label]
     assert_equal [ 0, 192, 256, 448, 512, 768 ], score[:notes].select { |note| note[:measure] == 0 }.map { |note| note[:position] }.uniq
     assert_empty score[:rests].select { |rest| rest[:measure] == 0 }
   end
@@ -349,6 +350,19 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal 1, metadata[:techniques].length
     assert_equal "hammer-on", metadata[:techniques].first[:type]
     assert_equal 0, metadata[:techniques].first[:measure]
+  end
+
+  test "infers tuning from the five labels beside the first tablature staff" do
+    recognizer = Tef2::PdfRecognizer.new
+    system = {
+      top: 100, bottom: 140, bars: [ 20, 100 ],
+      texts: [
+        { x: 27, y: 140, text: "D" }, { x: 27, y: 130, text: "B" }, { x: 27, y: 120, text: "G" },
+        { x: 27, y: 110, text: "C" }, { x: 27, y: 100, text: "G" }
+      ]
+    }
+
+    assert_equal "gCGBD", recognizer.send(:staff_tuning_label, system)
   end
 
   test "covers PDF timing regressions, metadata normalization, and layout helpers" do
