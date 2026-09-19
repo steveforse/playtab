@@ -218,6 +218,20 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "uses printed rest glyphs as timing events" do
+    page = staff_page(
+      note_texts: [ [ 40, 636.4, "0" ], [ 80, 636.4, "2" ] ],
+      extra_texts: [ [ 60, 620, "\uF051" ] ]
+    )
+
+    with_reader([ page ]) do
+      result = Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "rests.pdf")
+
+      assert_equal [ 0, 512 ], result[:notes].select { |note| note[:measure] == 0 }.map { |note| note[:position] }
+      assert_equal [ 256 ], result[:rests].select { |rest| rest[:measure] == 0 }.map { |rest| rest[:position] }
+    end
+  end
+
   test "keeps the Andy Griffith PDF rhythm, endings, pull-offs, and thumb target when supplied" do
     path = ENV["PLAYTAB_ANDY_GRIFFITH_PDF"]
     skip "Set PLAYTAB_ANDY_GRIFFITH_PDF for the private Andy Griffith regression PDF." unless path && File.file?(path)
@@ -340,6 +354,19 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_empty score[:rests].select { |rest| rest[:measure] < 4 }
     assert_includes fingerings_for.call(0), "I"
     assert_includes fingerings_for.call(3), "M"
+  end
+
+  test "preserves Skeleton Dance's final printed rests when supplied" do
+    path = ENV["PLAYTAB_SKELETON_DANCE_PDF"]
+    skip "Set PLAYTAB_SKELETON_DANCE_PDF for the private Skeleton Dance regression PDF." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+    notes_for = ->(measure) { score[:notes].select { |note| note[:measure] == measure }.map { |note| note[:position] }.uniq }
+
+    assert_equal [ 0, 512 ], notes_for.call(81)
+    assert_equal [ 256, 768 ], score[:rests].select { |rest| rest[:measure] == 81 }.map { |rest| rest[:position] }
+    assert_equal [ 0, 256 ], notes_for.call(82)
+    assert_equal [ 512 ], score[:rests].select { |rest| rest[:measure] == 82 }.map { |rest| rest[:position] }
   end
 
   test "uses the merged page text for technique markers" do
