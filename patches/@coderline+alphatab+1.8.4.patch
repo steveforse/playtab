@@ -122,7 +122,7 @@ index b6203da..8142180
  			voice.playingPreset = presetIndex;
  			voice.playingKey = key;
 +			voice.articulationOnly = articulationOnly;
-+			voice.articulationSamplesRemaining = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .035)) : 0;
++			voice.articulationSamplesRemaining = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .08)) : 0;
 +			voice.articulationFadeSamples = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .008)) : 0;
  			voice.playIndex = voicePlayIndex;
  			voice.noteGainDb = this.globalGainDb - region.attenuation - SynthHelper.gainToDecibels(1 / vel);
