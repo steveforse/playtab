@@ -62,12 +62,14 @@ module Tef2
             raise Invalid, "Native score contains an unsupported measure."
           end
           beat_ticks = TEF2_TICKS_PER_QUARTER * 4 / beats.length
+          measure_ticks = TEF2_TICKS_PER_QUARTER * 4
+          note_durations = { "q" => measure_ticks / 4, "8" => measure_ticks / 8, "16" => measure_ticks / 16 }
           beats.each_with_index do |beat, beat_index|
             Array(beat["notes"]).each do |note|
               notes << {
                 measure: measure_index,
                 position: beat_index * beat_ticks,
-                duration: beat_ticks,
+                duration: note_durations.fetch(note["duration"], beat_ticks),
                 string: note["string"].to_i - 1,
                 fret: note["fret"].to_i,
                 effect1: 0,
