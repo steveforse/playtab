@@ -186,7 +186,7 @@ index b6203da..8142180
 +		// destination can also be an origin in a chained H/PO passage; in that
 +		// case each transition updates the original held voice.
 +		if (note.hammerPullOrigin) {
-+			if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel);
++			if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel, noteStart);
 +			return;
 +		}
  		let initialBend = 0;
@@ -196,7 +196,7 @@ index b6203da..8142180
  			return;
  		}
  		if (note.hasBend) this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
-+		else if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel);
++		else if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel, noteStart);
  		else if (note.beat.hasWhammyBar && note.index === 0) this._generateWhammy(note.beat, noteStart, noteDuration, channel, tempoOnBeatStart);
  		else if (note.slideInType !== SlideInType.None || note.slideOutType !== SlideOutType.None) this._generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
  		else if (note.vibrato !== VibratoType.None || note.isTieDestination && note.tieOrigin.vibrato !== VibratoType.None) this._generateVibrato(note, noteStart, noteDuration, noteKey, channel);
@@ -220,11 +220,11 @@ index b6203da..8142180
  		} else if (note.slideOutType === SlideOutType.Legato) {
  			const endNote = note.slideTarget;
  			if (endNote) {
-@@ -43716,6 +43769,21 @@ class MidiFileGenerator {
+@@ -43716,6 +43769,22 @@ class MidiFileGenerator {
  	static getPitchWheel(bendValue) {
  		return SynthConstants.DefaultPitchWheel + bendValue / 2 * MidiFileGenerator._pitchValuePerSemitone;
  	}
-+	_generateHammerPull(note, noteKey, channel) {
++	_generateHammerPull(note, noteKey, channel, noteStart) {
 +		let origin = note;
 +		while (origin.hammerPullOrigin) origin = origin.hammerPullOrigin;
 +		const destination = note.hammerPullDestination;
@@ -237,7 +237,8 @@ index b6203da..8142180
 +		// per-note pitch step, unlike a legato slide's interpolated glide. The
 +		// private event flag lets alphaTab's own synth add a short bank-native
 +		// fret contact without creating another picked attack in the generated MIDI.
-+		this._handler.addNoteBend(track.index, destination.beat.absolutePlaybackStart, channel, originKey, bendValue, true, destinationKey);
++		const destinationOffset = destination.beat.absolutePlaybackStart - note.beat.absolutePlaybackStart;
++		this._handler.addNoteBend(track.index, noteStart + destinationOffset, channel, originKey, bendValue, true, destinationKey);
 +	}
  	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
  		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
