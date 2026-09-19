@@ -27,6 +27,9 @@ describe('technique playback contract', () => {
     ]);
     const transitions = bends.filter(b => b.value !== 2_147_483_648);
     expect(transitions.map(b => (b as midi.NoteBendEvent & { isHammerPull?: boolean }).isHammerPull)).toEqual([true, true]);
+    expect(transitions.map(b => (b as midi.NoteBendEvent & { hammerPullDestinationKey?: number }).hammerPullDestinationKey)).toEqual([
+      picked[1].noteKey, picked[3].noteKey,
+    ]);
     expect(transitions[0].value).toBeGreaterThan(2_147_483_648);
     expect(transitions[1].value).toBeLessThan(2_147_483_648);
   });
