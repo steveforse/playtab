@@ -45,4 +45,15 @@ describe('technique playback contract', () => {
     expect(new Set(pitch.map(e => e.value)).size).toBeGreaterThan(2);
     expect(pitch.some(e => (e as midi.NoteBendEvent & { isHammerPull?: boolean }).isHammerPull)).toBe(false);
   });
+  it.skipIf(!process.env.PLAYTAB_SKELETON_DANCE_XML)('plays the Skeleton Dance measure 64 pull-off at the open-note onset', () => {
+    const xml = fs.readFileSync(process.env.PLAYTAB_SKELETON_DANCE_XML!, 'utf8');
+    const transitions = events(xml).filter((e): e is midi.NoteBendEvent => e instanceof midi.NoteBendEvent)
+      .filter(e => (e as midi.NoteBendEvent & { isHammerPull?: boolean }).isHammerPull);
+
+    expect(transitions).toContainEqual(expect.objectContaining({
+      tick: 274560,
+      noteKey: 64,
+      hammerPullDestinationKey: 62,
+    }));
+  });
 });
