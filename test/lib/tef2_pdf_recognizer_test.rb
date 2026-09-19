@@ -699,6 +699,29 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "collapses multi-stroke double barlines into one measure boundary" do
+    recognizer = Tef2::PdfRecognizer.new
+    # A thick-thin double barline prints as three close strokes: a thick line
+    # (two strokes) plus a thin line. The cluster is wider than the 4pt
+    # merge tolerance, so representative-based dedupe left the thin stroke
+    # behind as a phantom sliver measure.
+    horizontal = [ 600, 610, 620, 630, 640 ].map { |y| [ 20, y, 580, y ] }
+    double_barline = [ [ 300, 600, 300, 640 ], [ 303.6, 600, 303.6, 640 ], [ 305.76, 600, 305.76, 640 ] ]
+    bars = [ [ 20, 600, 20, 640 ] ] + double_barline + [ [ 580, 600, 580, 640 ] ]
+    texts = [ { x: 40, y: 636.4, text: "1" }, { x: 400, y: 636.4, text: "2" } ]
+    result = recognizer.send(:systems, texts, horizontal + bars)
+    assert_equal [ 20, 300.0, 580 ], result.first[:bars]
+    bars_list = result.first[:bars]
+    per_bar = (1...bars_list.length).map do |bar|
+      result.first[:events].select { |event| event[:x] >= bars_list[bar - 1] && event[:x] < bars_list[bar] }
+        .flat_map { |event| event[:notes].map { |note| note[:fret] } }
+    end
+    assert_equal [ [ 1 ], [ 2 ] ], per_bar
+
+    assert_equal [ 361.97, 470.0 ], recognizer.send(:chained_unique_sorted, [ 367.73, 361.97, 365.57, 470.0 ], 4.0)
+    assert_equal [ 10.0, 60.0 ], recognizer.send(:chained_unique_sorted, [ 60.0, 10.0, 12.4 ], 4.0)
+  end
+
   test "page receiver records transformed line pairs" do
     receiver = Tef2::PdfRecognizer::PageReceiver.new
     state = Object.new

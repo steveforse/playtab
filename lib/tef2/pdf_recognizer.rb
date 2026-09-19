@@ -467,10 +467,12 @@ module Tef2
           x if x.between?(start - 2, finish + 2)
         end
         repeat_barlines = repeat_barlines(raw_bars, curve_boxes, top, bottom, start, finish)
-        # TablEdit commonly draws a barline as two very close vertical
-        # strokes. Treat that pair as one boundary or it becomes a phantom
-        # measure and shifts every following note.
-        bars = unique_sorted(raw_bars, 4.0)
+        # A printed barline can be two (TablEdit) or three (thick-thin
+        # double) very close vertical strokes. Treat the whole cluster as one
+        # boundary or it becomes a phantom measure and shifts every following
+        # note. Chain the merge against the previous raw stroke, not the kept
+        # representative, so a 3-stroke cluster fully collapses.
+        bars = chained_unique_sorted(raw_bars, 4.0)
         if bars.length < 2
           cursor += 5
           next
@@ -1584,6 +1586,22 @@ module Tef2
       values.sort.each_with_object([]) do |value, result|
         result << value if result.empty? || (value - result.last).abs > tolerance
       end
+    end
+
+    # Like unique_sorted, but a value is merged when it is within tolerance of
+    # the previous raw value (greedy chaining) rather than the kept
+    # representative. This fully collapses multi-stroke barline clusters whose
+    # total width exceeds tolerance even though consecutive strokes do not.
+    def chained_unique_sorted(values, tolerance)
+      result = []
+      previous = nil
+      values.sort.each do |value|
+        if result.empty? || (value - previous).abs > tolerance
+          result << value
+        end
+        previous = value
+      end
+      result
     end
   end
 end
