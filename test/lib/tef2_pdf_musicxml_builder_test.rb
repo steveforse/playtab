@@ -251,6 +251,28 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "stop", document.at_xpath("//measure[2]/barline[@location='right']/ending")["type"]
   end
 
+  test "writes PDF triplet timing and MusicXML time modification" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Triplet",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 0 },
+        { measure: 0, position: 256, string: 0, fret: 1, tuplet: true },
+        { measure: 0, position: 341, string: 1, fret: 2, tuplet: true },
+        { measure: 0, position: 427, string: 2, fret: 3, tuplet: true },
+        { measure: 0, position: 512, string: 0, fret: 2 },
+        { measure: 0, position: 768, string: 0, fret: 0 }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+
+    assert_equal [ "960", "319", "322", "319", "960", "960" ], notes.map { |note| note.at_xpath("./duration").text }
+    assert_equal [ "eighth", "eighth", "eighth" ], notes[1, 3].map { |note| note.at_xpath("./type").text }
+    assert_equal 3, document.xpath("//measure[1]/note/time-modification").length
+    assert_equal [ "3", "2" ], document.xpath("//measure[1]/note[2]/time-modification/*").map(&:text)
+  end
+
   test "writes explicit PDF silence stems as rests at their positions" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Silence stems",

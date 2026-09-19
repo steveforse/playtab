@@ -329,6 +329,9 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     assert_equal [ 0, 192, 256, 448, 512, 704, 768, 960 ], notes_for.call(2)
     assert_equal [ 0, 192, 256, 448, 512, 704, 768 ], notes_for.call(3)
     assert_equal notes_for.call(4), notes_for.call(5)
+    assert_equal [ 0, 256, 341, 427, 512, 768 ], notes_for.call(45)
+    assert_equal [ 256, 341, 427 ], score[:notes].select { |note| note[:measure] == 45 && note[:tuplet] }.map { |note| note[:position] }.uniq
+    assert_equal notes_for.call(45), notes_for.call(69)
     assert_equal [ 0, 192, 256, 448, 512, 704, 768, 960 ], notes_for.call(6)
     assert_empty score[:rests].select { |rest| rest[:measure] < 4 }
     assert_includes fingerings_for.call(0), "I"
@@ -526,10 +529,14 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
     triplet_system = { top: 100, texts: [ { x: 30, y: 70, text: "3" } ] }
     triplet_events = [
       { x: 20, notes: [ { string: 0 } ] }, { x: 30, notes: [ { string: 0 } ] },
-      { x: 40, notes: [ { string: 0 } ] }, { x: 60, notes: [ { string: 1 } ] }
+      { x: 40, notes: [ { string: 1 } ] }, { x: 60, notes: [ { string: 2 } ] }
     ]
     assert_equal [ 0 ], recognizer.send(:triplet_event_starts, triplet_system, triplet_events, 0, 100)
     assert_empty recognizer.send(:triplet_event_starts, { top: 100, texts: [] }, triplet_events, 0, 100)
+    assert_equal [ 0, 256, 341, 427, 512, 768 ], recognizer.send(
+      :triplet_rhythm_positions,
+      [ 10, 20, 30, 40, 50, 60 ].map { |x| { x: x } }, 1024, [ 1 ]
+    )
 
     silent_segments = [ [ 35, 85, 35, 95 ], [ 50, 85, 50, 95 ], [ 70, 85, 70, 95 ] ]
     silent_events = [ { x: 50, notes: [ { string: 0 } ] } ]

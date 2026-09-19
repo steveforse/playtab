@@ -259,6 +259,7 @@ module Tef2
           xml.octave(octave.to_s)
         end
         write_duration(xml, duration)
+        write_time_modification(xml, source)
         if source[:ghost]
           xml.notehead(parentheses: "yes") { xml.text "normal" }
         elsif source[:dead]
@@ -300,6 +301,15 @@ module Tef2
       type, dots = duration_components(duration)
       xml.type(type)
       dots.times { xml.dot }
+    end
+
+    def write_time_modification(xml, source)
+      return unless source[:tuplet]
+
+      xml.send("time-modification") do
+        xml.send("actual-notes", "3")
+        xml.send("normal-notes", "2")
+      end
     end
 
     def techniques_by_note(score, notes)
@@ -393,6 +403,7 @@ module Tef2
       type = {
         120 => "32nd",
         240 => "16th",
+        320 => "eighth",
         360 => "16th",
         480 => "eighth",
         720 => "eighth",

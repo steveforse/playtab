@@ -238,6 +238,8 @@ module Tef2
           layout = position_layout(left, right, event_xs, measure_ticks, step)
           system[:measure_layouts] << { step: step, layout: layout }
           rhythm_positions = dotted_rhythm_positions(left, right, events, measure_ticks, step, dotted_indices)
+          triplet_rhythm = triplet_rhythm_positions(events, measure_ticks, triplet_starts)
+          rhythm_positions ||= triplet_rhythm
           rhythm_positions ||= if dotted_indices.empty? && triplet_starts.empty?
             beam_rhythm_positions(left, right, events, measure_ticks)
           end
@@ -247,6 +249,7 @@ module Tef2
           timing_steps << step
           event_positions = rhythm_positions || events.map { |event| position(event[:x], left, right, step: step,
             event_xs: event_xs, measure_ticks: measure_ticks, layout: layout) }
+          triplet_event_indexes = triplet_rhythm ? triplet_starts.flat_map { |start| (start..(start + 2)).to_a }.to_set : Set.new
           events.each_with_index do |event, event_index|
             position = event_positions.fetch(event_index)
             event[:notes].each do |note|
@@ -256,7 +259,8 @@ module Tef2
                 string: note[:string],
                 fret: note[:fret],
                 dead: note[:dead],
-                ghost: note[:ghost]
+                ghost: note[:ghost],
+                tuplet: triplet_event_indexes.include?(event_index)
               }
             end
           end
@@ -766,6 +770,50 @@ module Tef2
       positions
     end
 
+    # A printed triplet bracket is stronger timing evidence than the local x
+    # spacing. The PDF uses a three-note eighth-note triplet to fill one
+    # quarter-note span, so solve the remaining events against that fixed
+    # duration pattern and retain the triplet metadata for MusicXML.
+    def triplet_rhythm_positions(events, measure_ticks, triplet_starts)
+      return if triplet_starts.empty? || events.empty?
+
+      quarter_ticks = MEASURE_TICKS / 4.0
+      triplet_unit = quarter_ticks / 3.0
+      durations = Array.new(events.length)
+      triplet_starts.each do |start|
+        return if start.negative? || start + 2 >= events.length
+        return if (start...(start + 3)).any? { |index| durations[index] }
+
+        3.times { |offset| durations[start + offset] = triplet_unit }
+      end
+
+      remaining = durations.each_index.select { |index| durations[index].nil? }
+      candidates = [ quarter_ticks, quarter_ticks / 2.0, quarter_ticks / 4.0 ]
+      assignments = remaining.reduce([ [] ]) do |patterns, _index|
+        patterns.flat_map { |pattern| candidates.map { |candidate| pattern + [ candidate ] } }
+      end
+      solutions = assignments.filter_map do |assignment|
+        candidate_durations = durations.dup
+        remaining.each_with_index { |index, assignment_index| candidate_durations[index] = assignment[assignment_index] }
+        next unless (candidate_durations.sum - measure_ticks).abs < 0.5
+
+        [ candidate_durations, gap_pattern_error(candidate_durations, events) ]
+      end
+      return if solutions.empty?
+
+      best_error = solutions.map(&:last).min
+      winners = solutions.select { |solution| (solution.last - best_error).abs < 0.0001 }
+      return unless winners.length == 1
+
+      positions = [ 0 ]
+      cursor = 0.0
+      winners.first.first[0...-1].each do |duration|
+        cursor += duration
+        positions << cursor.round
+      end
+      positions
+    end
+
     # Duration dots are explicit evidence, but their glyphs are not always
     # aligned with the printed spacing. Solve the dotted measure on the
     # available rhythmic grid and require the durations to fill the measure.
@@ -858,7 +906,6 @@ module Tef2
       labels.filter_map do |label|
         candidates = events.each_cons(3).with_index.filter_map do |group, index|
           next unless group.all? { |event| event[:notes].any? }
-          next unless group.map { |event| event[:notes].map { |note| note[:string] } }.reduce(:&).any?
           next unless label[:x].between?(group.first[:x] - 8, group.last[:x] + 8)
 
           [ ((group.first[:x] + group.last[:x]) / 2.0 - label[:x]).abs, index ]
