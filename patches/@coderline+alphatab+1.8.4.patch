@@ -86,7 +86,7 @@ index b6203da..8142180
  				perNotePitchWheel = perNotePitchWheel * SynthConstants.MaxPitchWheel / SynthConstants.MaxPitchWheel20;
 -				this.channelSetPerNotePitchWheel(noteBend.channel, noteBend.noteKey, perNotePitchWheel);
 +				this.channelSetPerNotePitchWheel(noteBend.channel, noteKey, perNotePitchWheel);
-+				if (isHammerPull) this.channelNoteOn(noteBend.channel, destinationKey >= 0 ? destinationKey : noteKey, .75, true);
++				if (isHammerPull) this.channelNoteOn(noteBend.channel, destinationKey >= 0 ? destinationKey : noteKey, .625, true);
  				break;
  		}
  	}
