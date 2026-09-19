@@ -25,6 +25,7 @@ module Tef2
     MAX_SYSTEM_EDGE_VARIANCE = 8
     MAX_MULTI_DIGIT_FRET_GAP = 6.5
     TIME_SIGNATURE_CODES = (33..37).freeze
+    PDF_REST_GLYPHS = [ "\uF051" ].freeze
 
     SECTION_LABELS = %w[
       intro verse verses chorus bridge high\ solo low\ solo solo outro tag break ending
@@ -231,24 +232,34 @@ module Tef2
           system[:measure_ticks_by_measure] << measure_ticks
           events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
           event_xs = events.map { |event| event[:x] }
-          step = position_step(left, right, event_xs, measure_ticks: measure_ticks)
+          rest_xs = printed_rest_xs(system, left, right)
+          timing_xs = (event_xs + rest_xs).sort
+          step = position_step(left, right, timing_xs, measure_ticks: measure_ticks)
           dotted_indices = dotted_event_indices(system, events, left, right)
           triplet_starts = triplet_event_starts(system, events, left, right)
           step = 64 if dotted_indices.any? && step > 64
-          layout = position_layout(left, right, event_xs, measure_ticks, step)
+          layout = position_layout(left, right, timing_xs, measure_ticks, step)
           system[:measure_layouts] << { step: step, layout: layout }
           rhythm_positions = dotted_rhythm_positions(left, right, events, measure_ticks, step, dotted_indices)
           triplet_rhythm = triplet_rhythm_positions(events, measure_ticks, triplet_starts)
           rhythm_positions ||= triplet_rhythm
-          rhythm_positions ||= if dotted_indices.empty? && triplet_starts.empty?
-            beam_rhythm_positions(left, right, events, measure_ticks)
+          timed_events = if rest_xs.any? && dotted_indices.empty? && triplet_starts.empty? &&
+                            events.all? { |event| event[:beam_count].nil? }
+            (events + rest_xs.map { |x| { x: x, notes: [], beam_count: nil } }).sort_by { |event| event[:x] }
+          else
+            events
           end
-          rhythm_positions ||= spacing_rhythm_positions(left, right, event_xs, measure_ticks, step,
+          rhythm_positions ||= if dotted_indices.empty? && triplet_starts.empty?
+            beam_rhythm_positions(left, right, timed_events, measure_ticks)
+          end
+          rhythm_positions ||= spacing_rhythm_positions(left, right, timed_events.map { |event| event[:x] }, measure_ticks, step,
             dotted_indices: dotted_indices, triplet_starts: triplet_starts)
-          system[:measure_rhythm_positions] << rhythm_positions
+          timing_events = timed_events
+          timing_positions = rhythm_positions || timing_events.map { |event| position(event[:x], left, right, step: step,
+            event_xs: timing_xs, measure_ticks: measure_ticks, layout: layout) }
+          system[:measure_rhythm_positions] << timing_positions.values_at(*events.map { |event| timing_events.index(event) })
           timing_steps << step
-          event_positions = rhythm_positions || events.map { |event| position(event[:x], left, right, step: step,
-            event_xs: event_xs, measure_ticks: measure_ticks, layout: layout) }
+          event_positions = events.map { |event| timing_positions.fetch(timing_events.index(event)) }
           triplet_event_indexes = triplet_starts.flat_map do |start|
             if start == events.length - 1
               [ start ]
@@ -269,6 +280,15 @@ module Tef2
                 tuplet: triplet_event_indexes.include?(event_index)
               }
             end
+          end
+          rest_xs.each do |x|
+            rest_index = timing_events.index { |event| (event[:x] - x).abs < 0.1 }
+            rest_position = if rest_index
+              timing_positions.fetch(rest_index)
+            else
+              position(x, left, right, step: step, event_xs: timing_xs, measure_ticks: measure_ticks, layout: layout)
+            end
+            rests << { measure: measure_index + measure_offset, position: rest_position }
           end
           triplet_rest_positions(events, event_positions, measure_ticks, triplet_starts).each do |position|
             rests << { measure: measure_index + measure_offset, position: position, tuplet: true }
@@ -419,6 +439,16 @@ module Tef2
         end
       end
       result
+    end
+
+    def printed_rest_xs(system, left, right)
+      system.fetch(:texts, []).filter_map do |item|
+        next unless PDF_REST_GLYPHS.include?(item[:text].to_s)
+        next unless item[:x].between?(left + 4, right - 2)
+        next unless item[:y].between?(system[:top] - 5, system[:bottom] + 5)
+
+        item[:x]
+      end.uniq
     end
 
     def single_digit_fret?(item)
