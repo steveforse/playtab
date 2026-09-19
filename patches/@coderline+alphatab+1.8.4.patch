@@ -83,7 +83,7 @@ index b6203da..2cbc70a
  				perNotePitchWheel = perNotePitchWheel * SynthConstants.MaxPitchWheel / SynthConstants.MaxPitchWheel20;
 -				this.channelSetPerNotePitchWheel(noteBend.channel, noteBend.noteKey, perNotePitchWheel);
 +				this.channelSetPerNotePitchWheel(noteBend.channel, noteKey, perNotePitchWheel);
-+				if (isHammerPull) this.channelNoteOn(noteBend.channel, noteKey, .12, true);
++				if (isHammerPull) this.channelNoteOn(noteBend.channel, noteKey, .32, true);
  				break;
  		}
  	}
@@ -121,8 +121,8 @@ index b6203da..2cbc70a
  			voice.playingPreset = presetIndex;
  			voice.playingKey = key;
 +			voice.articulationOnly = articulationOnly;
-+			voice.articulationSamplesRemaining = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .018)) : 0;
-+			voice.articulationFadeSamples = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .005)) : 0;
++			voice.articulationSamplesRemaining = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .035)) : 0;
++			voice.articulationFadeSamples = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .008)) : 0;
  			voice.playIndex = voicePlayIndex;
  			voice.noteGainDb = this.globalGainDb - region.attenuation - SynthHelper.gainToDecibels(1 / vel);
  			if (this._channels) this._channels.setupVoice(this, voice);
