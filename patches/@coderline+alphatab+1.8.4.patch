@@ -243,9 +243,6 @@ index b6203da..8142180
  	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
  		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
  		const playedBendPoints = [];
-@@ -50742,1 +50811,1 @@
--		return new TextGlyph(0, 0, `Capo. fret ${beat.voice.bar.staff.capo}`, renderer.resources.elementFonts.get(NotationElement.EffectCapo), TextAlign.Left);
-+		return new TextGlyph(0, 0, `Capo. Fret ${beat.voice.bar.staff.capo}`, renderer.resources.elementFonts.get(NotationElement.EffectCapo), TextAlign.Left);
 @@ -51996,7 +52064,9 @@ class MarkerEffectInfo extends EffectInfo {
  		return beat.voice.bar.staff.index === 0 && beat.voice.index === 0 && beat.index === 0 && beat.voice.bar.masterBar.isSectionStart;
  	}
