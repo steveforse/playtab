@@ -64,6 +64,19 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal [ 67, 50, 55, 59, 62 ], Tef2::PdfMusicxmlBuilder::DEFAULT_TUNING
   end
 
+  test "writes tuplet timing metadata on inferred silent triplet slots" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Silent triplet",
+      measures: 1,
+      notes: [ { measure: 0, position: 768, string: 0, fret: 0, tuplet: true } ],
+      rests: [ { measure: 0, position: 853, tuplet: true }, { measure: 0, position: 939, tuplet: true } ]
+    )
+    document = Nokogiri::XML(xml)
+    assert_equal 2, document.xpath("//note[rest]/time-modification").length
+    assert_equal 1, document.xpath("//note[not(rest)]/time-modification").length
+    assert_equal 960, document.xpath("//measure[1]/note[time-modification]/duration").sum { |duration| duration.text.to_i }
+  end
+
   test "uses banjo string octaves and visual staff rows for PDF pitches" do
     builder = Tef2::PdfMusicxmlBuilder.new
     assert_equal [ 67, 50, 55, 59, 62 ], builder.send(:parse_tuning, "gDGBD")

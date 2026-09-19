@@ -249,7 +249,13 @@ module Tef2
           timing_steps << step
           event_positions = rhythm_positions || events.map { |event| position(event[:x], left, right, step: step,
             event_xs: event_xs, measure_ticks: measure_ticks, layout: layout) }
-          triplet_event_indexes = triplet_rhythm ? triplet_starts.flat_map { |start| (start..(start + 2)).to_a }.to_set : Set.new
+          triplet_event_indexes = triplet_starts.flat_map do |start|
+            if start == events.length - 1
+              [ start ]
+            else
+              (start..(start + 2)).to_a
+            end
+          end.to_set
           events.each_with_index do |event, event_index|
             position = event_positions.fetch(event_index)
             event[:notes].each do |note|
@@ -263,6 +269,9 @@ module Tef2
                 tuplet: triplet_event_indexes.include?(event_index)
               }
             end
+          end
+          triplet_rest_positions(events, event_positions, measure_ticks, triplet_starts).each do |position|
+            rests << { measure: measure_index + measure_offset, position: position, tuplet: true }
           end
           silent_positions(system, left, right, events, event_positions, step, measure_ticks).each do |position|
             rests << { measure: measure_index + measure_offset, position: position }
@@ -814,6 +823,24 @@ module Tef2
       positions
     end
 
+    # A triplet bracket can end at a barline with only its first note printed;
+    # the remaining two slots are silent stems. Keep those rests explicit so
+    # the printed note gets the first triplet duration instead of a quarter.
+    def triplet_rest_positions(events, event_positions, measure_ticks, triplet_starts)
+      return [] unless events.any? && event_positions.length == events.length
+
+      triplet_unit = (MEASURE_TICKS / 4.0) / 3.0
+      triplet_starts.filter_map do |start|
+        next unless start == events.length - 1
+
+        first_position = event_positions.fetch(start)
+        positions = [ 1, 2 ].map { |offset| (first_position + offset * triplet_unit).round }
+        next unless (first_position + 3 * triplet_unit - measure_ticks).abs < 0.5
+
+        positions
+      end.flatten
+    end
+
     # Duration dots are explicit evidence, but their glyphs are not always
     # aligned with the printed spacing. Solve the dotted measure on the
     # available rhythmic grid and require the durations to fill the measure.
@@ -900,10 +927,13 @@ module Tef2
 
     def triplet_event_starts(system, events, left, right)
       labels = system[:texts].to_a.select do |item|
-        item[:text].to_s.strip == "3" && item[:x].between?(left - 8, right + 8) &&
-          item[:y] < system[:top] - 5 && item[:y] >= system[:top] - 45
+        triplet_marker_label?(system, item, events, left, right)
       end
       labels.filter_map do |label|
+        if events.any? && label[:x] > events.last[:x] + 5
+          next events.length - 1
+        end
+
         candidates = events.each_cons(3).with_index.filter_map do |group, index|
           next unless group.all? { |event| event[:notes].any? }
           next unless label[:x].between?(group.first[:x] - 8, group.last[:x] + 8)
@@ -913,6 +943,26 @@ module Tef2
         match = candidates.min_by(&:first)
         match.last if match && match.first <= 12
       end.uniq
+    end
+
+    def triplet_marker_label?(system, item, events, left, right)
+      return false unless item[:text].to_s.strip == "3" && item[:x].between?(left - 8, right + 8)
+
+      top = system[:top].to_f
+      bottom = system.fetch(:bottom, top).to_f
+      below_staff = item[:y].between?(top - 45, top - 5)
+      end_of_measure = if system[:bars].to_a.length >= 2
+        system[:bars].each_cons(2).any? do |measure_left, measure_right|
+          next false unless item[:x].between?(measure_left - 8, measure_right + 8)
+
+          measure_events = events.select { |event| event[:x].between?(measure_left + 4, measure_right - 2) }
+          measure_events.any? && item[:x] > measure_events.last[:x] + 5
+        end
+      else
+        events.any? && item[:x] > events.last[:x] + 5
+      end
+      above_staff_end_marker = item[:y].between?(bottom + 5, bottom + 45) && end_of_measure
+      below_staff || above_staff_end_marker
     end
 
     def silent_positions(system, left, right, events, event_positions, step, measure_ticks)
@@ -1272,6 +1322,7 @@ module Tef2
       texts.filter_map do |item|
         # TablEdit prints fingerings as letters (T/I/M/P) as well as digits.
         next unless item[:text].match?(/\A[1-4TIMP]\z/)
+        next if triplet_marker_label?(system, item, system[:events].to_a, system[:bars].first, system[:bars].last)
         next if item[:y].between?(system[:top] - 8, system[:bottom] + 8)
         next unless item[:y].between?(system[:top] - 34, system[:bottom] + 34)
         next unless item[:x].between?(system[:bars].first - 18, system[:bars].last + 18)

@@ -89,7 +89,8 @@ module Tef2
 
           measure_notes = notes.select { |note| note[:measure] == measure_index }
           events = measure_notes.each_with_object({}) { |note, result| (result[note[:position]] ||= []) << note }
-          rest_positions = rests.fetch(measure_index, []).map { |rest| rest[:position].to_i }
+          rest_entries = rests.fetch(measure_index, [])
+          rest_positions = rest_entries.map { |rest| rest[:position].to_i }
           cursor = 0
           positions = (events.keys + rest_positions).uniq.sort
           positions.each_with_index do |position, event_index|
@@ -112,7 +113,8 @@ module Tef2
                 )
               end
             else
-              write_rest(xml, duration)
+              rest_entry = rest_entries.find { |rest| rest[:position].to_i == position }
+              write_rest(xml, duration, tuplet: rest_entry&.fetch(:tuplet, false))
             end
             cursor = target + duration
           end
@@ -241,10 +243,11 @@ module Tef2
       "other"
     end
 
-    def write_rest(xml, duration)
+    def write_rest(xml, duration, tuplet: false)
       xml.note do
         xml.rest
         write_duration(xml, duration)
+        write_time_modification(xml, { tuplet: tuplet })
       end
     end
 
