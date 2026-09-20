@@ -15,7 +15,6 @@ module Tef2
 
     DPI = 300
     RASTER_TIMEOUT = 90
-    RASTER_PAGE_LIMIT = 1
     DARK_PIXEL = 180
     OCR_PIXEL = 150
     MIN_STAFF_COVERAGE = 0.45
@@ -41,10 +40,9 @@ module Tef2
         Dir.mktmpdir("playtab-pdf-raster") do |directory|
           pdf_path = File.join(directory, "source.pdf")
           File.binwrite(pdf_path, data)
-          source_pages = reader.pages.first(RASTER_PAGE_LIMIT)
-          render_pages(pdf_path, directory, source_pages.length)
+          render_pages(pdf_path, directory, reader.page_count)
 
-          pages = source_pages.each_with_index.map do |page, page_index|
+          pages = reader.pages.each_with_index.map do |page, page_index|
             image_path = File.join(directory, "page-#{page_index + 1}.png")
             image = Vips::Image.new_from_file(image_path, access: :random)
             scale_x = page.width.to_f / image.width
@@ -57,9 +55,6 @@ module Tef2
           systems.sort_by! { |system| [ system[:page], -system[:top] ] }
           time_signature = pages.filter_map { |page| page[:time_signature] }.first || { numerator: 4, denominator: 4 }
           score = send(:build_score, pages, systems, filename, time_signature: time_signature, raster: true)
-          if reader.page_count > source_pages.length
-            score[:warnings] << "Only the first raster PDF page was imported; additional pages were omitted."
-          end
           apply_raster_metadata_fallbacks(score, pages)
         end
       end
