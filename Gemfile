@@ -35,7 +35,7 @@ gem "ttfunk", "~> 1.7"
 
 group :development, :test do
   # Measures Ruby line coverage and enforces the project-wide threshold in CI.
-  gem "simplecov", "~> 0.22", require: false
+  gem "simplecov", "~> 1.3", require: false
 
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
