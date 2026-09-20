@@ -133,7 +133,7 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_equal "FOGGY MOUNTAIN BREAKDOWN", score[:title]
     assert_equal "gDGBD", score[:tuning_label]
     assert_equal({ numerator: 2, denominator: 4 }, score[:time_signature])
-    assert_equal 99, score[:measures]
+    assert_equal 22, score[:measures]
     assert_operator score[:notes].length, :>, 0
     notes_for = ->(measure) {
       score[:notes].select { |note| note[:measure] == measure }.map { |note| [ note[:string], note[:fret] ] }
@@ -166,6 +166,7 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_includes score[:repeats], { measure: 16, location: "left", direction: "forward", confidence: "high" }
     assert_includes score[:repeats], { measure: 16, location: "right", direction: "backward", confidence: "high" }
     assert_equal [ "1", "2" ], score[:endings].sort_by { |ending| ending[:measure] }.map { |ending| ending[:number] }
+    assert_includes score[:warnings], "Only the first raster PDF page was imported; additional pages were omitted."
     assert score[:warnings].any? { |warning| warning.start_with?("Raster PDF") }
   end
 end
