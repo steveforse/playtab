@@ -264,6 +264,8 @@ module Tef2
     end
 
     def write_note(xml, source, duration, tuning, chord, techniques, printed_markers, fingering, rake, strum, ties)
+      write_grace_note(xml, source, tuning) if source[:grace_note_fret]
+
       xml.note do
         xml.chord if chord
         xml.pitch do
@@ -313,6 +315,29 @@ module Tef2
             end
             xml.send("other-technical", "TEF rake") if rake
             xml.send("other-technical", "TEF strum #{strum}") if strum
+          end
+        end
+      end
+    end
+
+    def write_grace_note(xml, source, tuning)
+      string = source.fetch(:string).to_i
+      fret = source.fetch(:grace_note_fret).to_i
+      open_pitch = tuning.fetch(tuning.length - string - 1)
+      step, alter, octave = midi_pitch(open_pitch + fret)
+      xml.note do
+        xml.grace(slash: "yes")
+        xml.pitch do
+          xml.step(step)
+          xml.alter(alter.to_s) unless alter.zero?
+          xml.octave(octave.to_s)
+        end
+        xml.voice("1")
+        xml.type("eighth")
+        xml.notations do
+          xml.technical do
+            xml.string((string + 1).to_s)
+            xml.fret(fret.to_s)
           end
         end
       end

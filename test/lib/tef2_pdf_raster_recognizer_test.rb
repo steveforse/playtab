@@ -135,6 +135,38 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_equal({ numerator: 2, denominator: 4 }, score[:time_signature])
     assert_equal 22, score[:measures]
     assert_operator score[:notes].length, :>, 0
+    notes_for = ->(measure) {
+      score[:notes].select { |note| note[:measure] == measure }
+        .sort_by { |note| [ note[:position], note[:string] ] }
+        .map { |note| note.slice(:position, :string, :fret, :grace_note_fret) }
+    }
+    assert_equal [
+      { position: 0, string: 0, fret: 0 }, { position: 0, string: 2, fret: 0 },
+      { position: 128, string: 3, fret: 0 }, { position: 256, string: 3, fret: 2 },
+      { position: 384, string: 3, fret: 4 }
+    ], notes_for.call(0)
+    assert_equal [
+      { position: 0, string: 2, fret: 0 }, { position: 128, string: 0, fret: 0 },
+      { position: 128, string: 4, fret: 0 }, { position: 256, string: 1, fret: 0 },
+      { position: 384, string: 0, fret: 0 }, { position: 384, string: 4, fret: 0 }
+    ], notes_for.call(1)
+    assert_equal [
+      { position: 0, string: 2, fret: 2 }, { position: 64, string: 1, fret: 0 },
+      { position: 64, string: 2, fret: 4 }, { position: 128, string: 4, fret: 0 },
+      { position: 192, string: 0, fret: 0 }, { position: 256, string: 2, fret: 3 },
+      { position: 320, string: 2, fret: 2 }, { position: 384, string: 1, fret: 0 },
+      { position: 448, string: 2, fret: 0 }
+    ], notes_for.call(2)
+    assert_equal [
+      { position: 0, string: 2, fret: 2 }, { position: 64, string: 1, fret: 1 },
+      { position: 128, string: 0, fret: 2 }, { position: 192, string: 4, fret: 0 },
+      { position: 256, string: 0, fret: 2 }, { position: 320, string: 1, fret: 1 },
+      { position: 384, string: 2, fret: 2 }, { position: 448, string: 0, fret: 4, grace_note_fret: 3 }
+    ], notes_for.call(3)
+    techniques = score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) }
+    assert_includes techniques, { measure: 2, position: 0, string: 2, type: "slide" }
+    assert_includes techniques, { measure: 2, position: 256, string: 2, type: "pull-off" }
+    assert_includes techniques, { measure: 3, position: 448, string: 0, type: "slide-in" }
   end
 
   test "recognizes the private scanned Foggy Mountain PDF when supplied" do

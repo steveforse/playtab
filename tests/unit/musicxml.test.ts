@@ -136,6 +136,17 @@ describe('MusicXML preview', () => {
     expect(note.slideInType).toBe(model.SlideInType.IntoFromBelow);
     expect(note.beat.text).toBeNull();
   });
+  it('imports a MusicXML grace note without rejecting its tab technical data', () => {
+    const firstNote = '    <note><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>4</string><fret>0</fret><hammer-on type="start">H</hammer-on></technical></notations></note>';
+    const grace = '    <note><grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><voice>1</voice><type>eighth</type><notations><technical><string>4</string><fret>2</fret></technical></notations></note>';
+    const annotated = techniques.replace(firstNote.trimStart(), `${grace.trimStart()}\n${firstNote.trimStart()}`);
+    const preview = readMusicXml(annotated, 'grace.xml');
+    const beats = preview.score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
+    const graceBeat = beats.find(beat => beat.graceType !== model.GraceType.None);
+
+    expect(graceBeat).toBeDefined();
+    expect(graceBeat?.notes[0].fret).toBe(2);
+  });
   it('maps the TEF code for finger 1 to a circled fingering', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><fingering enclosure="circle">1</fingering>');
     const { score } = readMusicXml(annotated, 'finger-one.xml');

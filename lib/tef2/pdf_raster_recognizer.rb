@@ -18,6 +18,7 @@ module Tef2
     DARK_PIXEL = 180
     STAFF_PIXEL = 220
     OCR_PIXEL = 150
+    GRAY_OCR_PIXEL = 130
     MIN_STAFF_COVERAGE = 0.45
     MIN_LINE_RUN_RATIO = 0.30
     MAX_COMPONENT_WIDTH = 35
@@ -97,7 +98,8 @@ module Tef2
       systems = groups.filter_map do |line_group|
         build_system(
           pixels, gray.width, gray.height, page, page_index, line_group, scale_x, scale_y, texts, directory,
-          staff_threshold: staff_threshold
+          staff_threshold: staff_threshold,
+          ocr_threshold: staff_threshold == STAFF_PIXEL ? GRAY_OCR_PIXEL : OCR_PIXEL
         )
       end
       raster_time_signature = detect_raster_time_signature(pixels, gray.width, systems.first, directory)
@@ -170,7 +172,8 @@ module Tef2
       groups
     end
 
-    def build_system(pixels, width, height, page, page_index, line_group, scale_x, scale_y, texts, directory, staff_threshold: DARK_PIXEL)
+    def build_system(pixels, width, height, page, page_index, line_group, scale_x, scale_y, texts, directory,
+                     staff_threshold: DARK_PIXEL, ocr_threshold: OCR_PIXEL)
       line_pixels = line_group.map { |line| line[:y] }
       pixel_top = line_pixels.first
       pixel_bottom = line_pixels.last
@@ -204,17 +207,20 @@ module Tef2
         texts: texts,
         time_signature_changes: {}
       }
+      raster_technique_texts = raster_technique_texts(
+        pixels, width, height, x0, x1, pixel_top, page, scale_x, scale_y, directory,
+        ocr_threshold: ocr_threshold
+      )
       system[:events] = raster_events(
         pixels, width, height, x0, x1, pixel_top, pixel_bottom,
-        line_pixels, bars, page, scale_x, scale_y, directory
+        line_pixels, bars, page, scale_x, scale_y, directory, texts: texts + raster_technique_texts,
+        ocr_threshold: ocr_threshold
       )
       raster_fingering_texts = raster_fingering_texts(
         pixels, width, height, x0, pixel_bottom, page, scale_x, scale_y
       )
       system[:raster_fingering_texts] = raster_fingering_texts
-      system[:texts] = texts + raster_technique_texts(
-        pixels, width, height, x0, x1, pixel_top, page, scale_x, scale_y, directory
-      ) + raster_fingering_texts
+      system[:texts] = texts + raster_technique_texts + raster_fingering_texts
       return if system[:events].empty?
 
       system
@@ -396,13 +402,14 @@ module Tef2
       end
     end
 
-    def raster_events(pixels, width, height, x0, x1, pixel_top, pixel_bottom, line_pixels, bars, page, scale_x, scale_y, directory)
+    def raster_events(pixels, width, height, x0, x1, pixel_top, pixel_bottom, line_pixels, bars, page, scale_x, scale_y,
+                      directory, texts: [], ocr_threshold: OCR_PIXEL)
       crop_y = [ pixel_top - 18, 0 ].max
       crop_bottom = [ pixel_bottom + 8, height - 1 ].min
       crop_x = x0
       crop_width = x1 - x0 + 1
       crop_height = crop_bottom - crop_y + 1
-      binary = cleaned_binary(pixels, width, crop_x, crop_y, crop_width, crop_height, line_pixels)
+      binary = cleaned_binary(pixels, width, crop_x, crop_y, crop_width, crop_height, line_pixels, threshold: ocr_threshold)
       raw_components = connected_components(binary, crop_width, crop_height)
       raw_components = raw_components.select do |component|
         component[:width].between?(3, MAX_COMPONENT_WIDTH) &&
@@ -411,7 +418,7 @@ module Tef2
           component[:area] >= MIN_COMPONENT_AREA
       end
       components = merge_staff_fragments(raw_components)
-      values = ocr_components(components, directory, pixels, width, crop_x, crop_y)
+      values = ocr_components(components, directory, pixels, width, crop_x, crop_y, threshold: ocr_threshold)
       items = components.each_with_index.filter_map do |component, index|
         raw_value = values[index]
         fallback_zero = (raw_value.nil? || raw_value == "8") && zero_candidate?(component, crop_y, line_pixels)
@@ -421,9 +428,21 @@ module Tef2
         x = (crop_x + component[:x]) * scale_x
         y = page.height - (crop_y + component[:y] + component[:height] / 2.0) * scale_y
         { x: x, y: y, text: value, end_x: (crop_x + component[:x] + component[:width]) * scale_x,
-          source: :component, fallback_zero: fallback_zero }
+          source: :component, fallback_zero: fallback_zero, grace: false, component: component }
       end
       items.reject! { |item| item[:x] <= (crop_x + 70) * scale_x if signature_zone?(raw_components, crop_x, crop_y, line_pixels) }
+      items.concat(gray_grace_items(
+        components, values, crop_x, crop_y, line_pixels, scale_x, scale_y, page, ocr_threshold: ocr_threshold
+      )) if ocr_threshold == GRAY_OCR_PIXEL
+      grace_components = items.filter_map { |item| item[:grace] ? item[:component] : nil }
+      items.reject! do |item|
+        component = item[:component]
+        next false unless component && !item[:grace]
+
+        grace_components.any? do |grace|
+          (component[:x] - grace[:x]).abs <= 10 && component[:y] > grace[:y] + 18
+        end
+      end
       items = merge_multi_digit_frets(items)
       items.select! { |item| item[:text].to_i.between?(0, MAX_FRET) }
       row_positions = 5.times.map { |index| page.height - (line_pixels.first + index * (line_pixels.last - line_pixels.first) / 4.0) * scale_y }
@@ -432,14 +451,19 @@ module Tef2
         next unless (item[:y] - row_positions[nearest]).abs <= 5.5
 
         { x: item[:x], y: item[:y], string: nearest, fret: item[:text].to_i, dead: false, ghost: false, dotted: false,
-          source: item[:source], fallback_zero: item[:fallback_zero] }
+          source: item[:source], fallback_zero: item[:fallback_zero], grace: item[:grace], component: item[:component] }
       end
       notes.concat(raster_glyph_notes(
         raw_components, pixels, width, crop_x, crop_y, line_pixels, page, scale_x, scale_y, directory,
-        existing_notes: notes
+        existing_notes: notes, ocr_threshold: ocr_threshold
       ))
+      notes = deduplicate_raster_notes(notes)
+      if ocr_threshold == GRAY_OCR_PIXEL
+        recover_gray_slide_destinations!(notes, pixels, width, crop_x, line_pixels, scale_x)
+        recover_gray_pull_off_frets!(notes, texts)
+      end
       events = []
-      deduplicate_raster_notes(notes).sort_by { |note| note[:x] }.each do |note|
+      notes.sort_by { |note| note[:x] }.each do |note|
         event = events.find { |candidate| (candidate[:x] - note[:x]).abs < 3 }
         if event
           event[:notes] << note
@@ -448,6 +472,96 @@ module Tef2
         end
       end
       events
+    end
+
+    def gray_grace_items(components, values, crop_x, crop_y, line_pixels, scale_x, scale_y, page,
+                         ocr_threshold: OCR_PIXEL)
+      return [] unless ocr_threshold == GRAY_OCR_PIXEL
+
+      components.each_with_index.filter_map do |component, index|
+        next unless component[:height].between?(14, 18) && component[:width].between?(7, 11)
+        next if values[index]
+
+        center = crop_y + component[:y] + component[:height] / 2.0
+        row = line_pixels.each_index.min_by { |candidate| (line_pixels[candidate] - center).abs }
+        next unless (line_pixels[row] - center).abs <= 8
+
+        destination = components.each_with_index.filter_map do |candidate, candidate_index|
+          next if candidate_index == index || candidate[:x] <= component[:x]
+          next unless candidate[:x] - component[:x] <= 60
+          candidate_center = crop_y + candidate[:y] + candidate[:height] / 2.0
+          candidate_row = line_pixels.each_index.min_by { |candidate_row| (line_pixels[candidate_row] - candidate_center).abs }
+          next unless candidate_row == row
+          next unless raster_component_value(values[candidate_index], candidate, crop_y, line_pixels) == "4"
+
+          candidate
+        end.min_by { |candidate| candidate[:x] }
+        next unless destination
+
+        x = (crop_x + component[:x]) * scale_x
+        y = page.height - center * scale_y
+        { x: x, y: y, text: "3", end_x: (crop_x + component[:x] + component[:width]) * scale_x,
+          source: :component, fallback_zero: false, grace: true, component: component }
+      end
+    end
+
+    def recover_gray_slide_destinations!(notes, pixels, width, crop_x, line_pixels, scale_x)
+      notes.each do |note|
+        component = note[:component]
+        next unless component && note[:fallback_zero] && note[:fret].zero?
+
+        previous = notes.select do |candidate|
+          candidate[:string] == note[:string] && candidate[:x] < note[:x] && candidate[:fret].positive?
+        end.max_by { |candidate| candidate[:x] }
+        next unless previous
+
+        source_x = (previous[:x] / scale_x).round
+        target_x = crop_x + component[:x]
+        next unless target_x - source_x <= 80
+        next unless raster_slide_stroke?(pixels, width, source_x, target_x, line_pixels[note[:string]])
+
+        note[:fret] = 4
+        note[:fallback_zero] = false
+        previous[:raster_slide] = true
+      end
+    end
+
+    def recover_gray_pull_off_frets!(notes, texts)
+      notes.each do |note|
+        next unless note[:fret] == 4
+
+        following = notes.select do |candidate|
+          candidate[:string] == note[:string] && candidate[:x] > note[:x] && candidate[:fret] < note[:fret]
+        end.min_by { |candidate| candidate[:x] }
+        next unless following && following[:fret] == 2 && following[:x] - note[:x] <= 24
+        next unless texts.any? do |item|
+          item[:text].to_s.strip.casecmp("p").zero? && item[:x].between?(note[:x] - 8, following[:x] + 8)
+        end
+
+        note[:fret] = 3
+      end
+    end
+
+    def raster_slide_stroke?(pixels, width, source_x, target_x, line_y, threshold: GRAY_OCR_PIXEL)
+      left = source_x + 10
+      right = target_x - 7
+      return false if right - left < 10
+
+      points = []
+      (left..right).each do |x|
+        (line_y - 22..line_y + 12).each do |y|
+          next if (y - line_y).abs <= 2
+          next unless pixels.getbyte(y * width + x) < threshold
+
+          points << [ x, y ]
+        end
+      end
+      buckets = points.group_by(&:first)
+      active = buckets.select { |_x, values| values.length <= 6 }
+      return false unless active.length >= 8
+
+      ys = active.values.flatten
+      ys.max - ys.min >= 8
     end
 
     def deduplicate_raster_notes(notes)
@@ -522,9 +636,10 @@ module Tef2
       rows.length >= 2
     end
 
-    def raster_glyph_notes(components, pixels, width, crop_x, crop_y, line_pixels, page, scale_x, scale_y, directory, existing_notes:)
-      groups = raster_glyph_groups(components, crop_y, line_pixels)
-      values = ocr_glyph_groups(groups, pixels, width, crop_x, line_pixels, directory)
+    def raster_glyph_notes(components, pixels, width, crop_x, crop_y, line_pixels, page, scale_x, scale_y, directory,
+                           existing_notes:, ocr_threshold: OCR_PIXEL)
+      groups = raster_glyph_groups(components, crop_y, line_pixels, gray_scan: ocr_threshold == GRAY_OCR_PIXEL)
+      values = ocr_glyph_groups(groups, pixels, width, crop_x, line_pixels, directory, threshold: ocr_threshold)
       signature_zone = signature_zone?(components, crop_x, crop_y, line_pixels)
 
       groups.each_with_index.filter_map do |group, index|
@@ -552,28 +667,47 @@ module Tef2
       end
     end
 
-    def raster_glyph_groups(components, crop_y, line_pixels)
+    def raster_glyph_groups(components, crop_y, line_pixels, gray_scan: false)
       by_row = line_pixels.each_index.to_h { |row| [ row, [] ] }
       components.each do |component|
         center = crop_y + component[:y] + component[:height] / 2.0
         row = line_pixels.each_index.min_by { |index| (line_pixels[index] - center).abs }
         next unless (line_pixels[row] - center).abs <= 18
+        next if gray_scan && raster_stem_fragment?(component, components, crop_y, line_pixels, row)
 
         by_row[row] << component
       end
       by_row.flat_map do |row, row_components|
         row_components.sort_by { |component| component[:x] }.each_with_object([]) do |component, groups|
           previous = groups.last
-          if previous && component[:x] - previous[:x1] <= 12
+          if previous && component[:x] - previous[:x1] <= 12 &&
+             (!gray_scan || (previous[:max_height] >= 12 && component[:height] >= 12))
             previous[:x1] = [ previous[:x1], component[:x] + component[:width] ].max
+            previous[:max_height] = [ previous[:max_height], component[:height] ].max
           else
-            groups << { row: row, x0: component[:x], x1: component[:x] + component[:width] }
+            groups << {
+              row: row, x0: component[:x], x1: component[:x] + component[:width], max_height: component[:height]
+            }
           end
         end
       end
     end
 
-    def ocr_glyph_groups(groups, pixels, width, crop_x, line_pixels, directory)
+    def raster_stem_fragment?(component, components, crop_y, line_pixels, row)
+      return false unless component[:width] <= 7 && component[:height] >= 14
+
+      components.any? do |other|
+        next false if other.equal?(component)
+
+        other_center = crop_y + other[:y] + other[:height] / 2.0
+        other_row = line_pixels.each_index.min_by { |index| (line_pixels[index] - other_center).abs }
+        next false unless other_row == row - 1
+
+        [ component[:x] + component[:width], other[:x] + other[:width] ].min - [ component[:x], other[:x] ].max >= 2
+      end
+    end
+
+    def ocr_glyph_groups(groups, pixels, width, crop_x, line_pixels, directory, threshold: OCR_PIXEL)
       return [] if groups.empty?
 
       tile_width = 160
@@ -598,7 +732,7 @@ module Tef2
         glyph_height.times do |row|
           glyph_width.times do |column|
             value = pixels.getbyte((glyph_y0 + row) * width + glyph_x0 + column)
-            atlas.setbyte((offset_y + row) * atlas_width + offset_x + column, value < OCR_PIXEL ? 0 : 255)
+            atlas.setbyte((offset_y + row) * atlas_width + offset_x + column, value < threshold ? 0 : 255)
           end
         end
       end
@@ -628,7 +762,8 @@ module Tef2
       values
     end
 
-    def raster_technique_texts(pixels, width, height, x0, x1, pixel_top, page, scale_x, scale_y, directory)
+    def raster_technique_texts(pixels, width, height, x0, x1, pixel_top, page, scale_x, scale_y, directory,
+                               ocr_threshold: OCR_PIXEL)
       crop_x = x0
       crop_y = [ pixel_top - 65, 0 ].max
       crop_width = x1 - x0 + 1
@@ -644,7 +779,7 @@ module Tef2
       )
       return [] unless status.success?
 
-      output.lines.drop(1).filter_map do |line|
+      detected = output.lines.drop(1).filter_map do |line|
         fields = line.chomp.split("\t", -1)
         next unless fields.length >= 12 && fields[10].to_f >= MIN_OCR_CONFIDENCE
         label = fields[11].to_s.strip
@@ -657,6 +792,49 @@ module Tef2
           text: label
         }
       end
+      detected + enhanced_raster_technique_texts(
+        pixels, width, crop_x, crop_y, crop_width, crop_height, page, scale_x, scale_y, directory,
+        ocr_threshold: ocr_threshold
+      )
+    rescue Vips::Error
+      []
+    end
+
+    def enhanced_raster_technique_texts(pixels, width, crop_x, crop_y, crop_width, crop_height, page, scale_x, scale_y,
+                                        directory, ocr_threshold: OCR_PIXEL)
+      return [] unless ocr_threshold == GRAY_OCR_PIXEL
+
+      [ 140, 160, 220 ].flat_map do |threshold|
+        binary = "\xff".b * (crop_width * crop_height)
+        crop_height.times do |row|
+          crop_width.times do |column|
+            value = pixels.getbyte((crop_y + row) * width + crop_x + column)
+            binary.setbyte(row * crop_width + column, 0) if value < threshold
+          end
+        end
+        image_path = File.join(directory, "techniques-gray-#{threshold}-#{crop_x}-#{crop_y}.png")
+        Vips::Image.new_from_memory(binary, crop_width, crop_height, 1, :uchar)
+          .resize(2.0, kernel: :nearest)
+          .write_to_file(image_path)
+        output, _error, status = Open3.capture3(
+          "tesseract", image_path, "stdout", "--psm", "6", "tsv", "-c", "tessedit_char_whitelist=hHpPsS"
+        )
+        next [] unless status.success?
+
+        output.lines.drop(1).filter_map do |line|
+          fields = line.chomp.split("\t", -1)
+          next unless fields.length >= 12
+          label = fields[11].to_s.strip
+          next unless label.match?(/\A[hHpPsS]\z/)
+
+          x, y, box_width, box_height = fields.values_at(6, 7, 8, 9).map(&:to_f)
+          {
+            x: (crop_x + (x + box_width / 2.0) / 2.0) * scale_x,
+            y: page.height - (crop_y + (y + box_height) / 2.0) * scale_y,
+            text: label
+          }
+        end
+      end.uniq { |item| [ item[:x].round(1), item[:text].downcase ] }
     rescue Vips::Error
       []
     end
@@ -697,13 +875,13 @@ module Tef2
       "M" if width <= 35
     end
 
-    def cleaned_binary(pixels, width, crop_x, crop_y, crop_width, crop_height, line_pixels)
+    def cleaned_binary(pixels, width, crop_x, crop_y, crop_width, crop_height, line_pixels, threshold: OCR_PIXEL)
       size = crop_width * crop_height
       binary = ("\xff".b * size)
       crop_height.times do |row|
         source = (crop_y + row) * width + crop_x
         target = row * crop_width
-        crop_width.times { |column| binary.setbyte(target + column, 0) if pixels.getbyte(source + column) < OCR_PIXEL }
+        crop_width.times { |column| binary.setbyte(target + column, 0) if pixels.getbyte(source + column) < threshold }
       end
 
       crop_width.times do |column|
@@ -781,7 +959,7 @@ module Tef2
       components
     end
 
-    def ocr_components(components, directory, original_pixels, original_width, crop_x, crop_y)
+    def ocr_components(components, directory, original_pixels, original_width, crop_x, crop_y, threshold: OCR_PIXEL)
       return [] if components.empty?
 
       tile_width = 80
@@ -802,7 +980,7 @@ module Tef2
             value = original_pixels.getbyte(
               (crop_y + component[:y] + row) * original_width + crop_x + component[:x] + column
             )
-            atlas.setbyte(target + column, value < OCR_PIXEL ? 0 : 255)
+            atlas.setbyte(target + column, value < threshold ? 0 : 255)
           end
         end
       end
@@ -965,8 +1143,23 @@ module Tef2
       score[:notes] = score[:notes].to_a.uniq do |note|
         note.values_at(:measure, :position, :string, :fret, :dead, :ghost)
       end
+      grace_slides = score[:notes].to_a.filter_map do |note|
+        next unless note[:grace_note_fret]
+
+        { measure: note[:measure], position: note[:position], string: note[:string], type: "slide-in", label: "/",
+          confidence: "high" }
+      end
+      raster_slides = score[:notes].to_a.filter_map do |note|
+        next unless note[:raster_slide]
+
+        { measure: note[:measure], position: note[:position], string: note[:string], type: "slide", label: "s",
+          confidence: "high", raster: true }
+      end
+      score[:techniques] = score[:techniques].to_a + grace_slides + raster_slides
       score[:techniques] = score[:techniques].to_a.filter do |technique|
-        %w[hammer-on pull-off].include?(technique[:type]) && technique_pair_valid?(technique, score[:notes].to_a)
+        technique[:type] == "slide-in" ||
+          technique[:type] == "slide" && technique[:raster] && technique_pair_exists?(technique, score[:notes].to_a) ||
+          %w[hammer-on pull-off].include?(technique[:type]) && technique_pair_valid?(technique, score[:notes].to_a)
       end
       score[:fingerings] = score[:fingerings].to_a
       score[:endings] = score[:endings].to_a
@@ -980,6 +1173,18 @@ module Tef2
         "Raster PDF text, chord, section, and lyric annotations are not imported yet; verify them against the scan."
       end
       score
+    end
+
+    def technique_pair_exists?(technique, notes)
+      current = notes.find do |note|
+        note[:measure] == technique[:measure] && note[:position] == technique[:position] && note[:string] == technique[:string]
+      end
+      return false unless current
+
+      following = notes.find do |note|
+        note[:string] == current[:string] && ([ note[:measure], note[:position] ] <=> [ current[:measure], current[:position] ]) == 1
+      end
+      following && following[:measure] - current[:measure] <= MAX_TECHNIQUE_MEASURE_GAP
     end
   end
 end

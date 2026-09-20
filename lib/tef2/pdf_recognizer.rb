@@ -292,6 +292,9 @@ module Tef2
           events.each_with_index do |event, event_index|
             position = event_positions.fetch(event_index)
             event[:notes].each do |note|
+              next if note[:grace]
+
+              grace_note = grace_note_for(events, event_index, note)
               notes << {
                 measure: measure_index + measure_offset,
                 position: position,
@@ -299,8 +302,15 @@ module Tef2
                 fret: note[:fret],
                 dead: note[:dead],
                 ghost: note[:ghost],
-                tuplet: triplet_event_indexes.include?(event_index)
+                tuplet: triplet_event_indexes.include?(event_index),
+                grace_note_fret: grace_note&.fetch(:fret, nil),
+                raster_slide: note[:raster_slide]
               }
+              if grace_note
+                notes.last[:grace_note_fret] = grace_note[:fret]
+              else
+                notes.last.delete(:grace_note_fret)
+              end
             end
           end
           ties.concat(ties_for_measure(system, measure_index + measure_offset, events, event_positions, left, right))
@@ -380,6 +390,14 @@ module Tef2
         ties: ties,
         warnings: warnings
       }
+    end
+
+    def grace_note_for(events, event_index, note)
+      previous_event = events[event_index - 1]
+      return unless previous_event && previous_event[:x] < events[event_index][:x]
+      return unless events[event_index][:x] - previous_event[:x] <= 60
+
+      previous_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
     end
 
     def validate_upload!(data)

@@ -239,6 +239,24 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_empty document.xpath("//measure[1]/note[1]/notations/slide")
   end
 
+  test "writes a scanned slide-in grace note before its destination" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Grace slide",
+      measures: 1,
+      notes: [ { measure: 0, position: 448, string: 0, fret: 4, grace_note_fret: 3 } ],
+      techniques: [ { measure: 0, position: 448, string: 0, type: "slide-in", label: "/" } ]
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+
+    assert_equal 2, notes.length
+    assert_equal "yes", notes.first.at_xpath("./grace")['slash']
+    assert_equal "1", notes.first.at_xpath("./notations/technical/string").text
+    assert_equal "3", notes.first.at_xpath("./notations/technical/fret").text
+    assert_equal "4", notes[1].at_xpath("./notations/technical/fret").text
+    assert_equal "TEF slide /", notes[1].at_xpath("./notations/technical/other-technical").text
+  end
+
   test "writes PDF ties on both ends of each tied note" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Tie",
