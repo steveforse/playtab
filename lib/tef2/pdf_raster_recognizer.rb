@@ -167,7 +167,10 @@ module Tef2
       x0, x1 = horizontal_extent(pixels, width, line_pixels)
       return if x1 - x0 < width * 0.25
 
-      bars = vertical_boundaries(pixels, width, height, pixel_top, pixel_bottom, x0, x1, line_pixels)
+      boundary_clusters = raster_boundary_clusters(
+        pixels, width, height, pixel_top, pixel_bottom, x0, x1, line_pixels
+      )
+      bars = boundary_clusters.map { |cluster| cluster.sum.fdiv(cluster.length) }
       return if bars.length < 2
 
       bars_in_points = bars.map { |x| x * scale_x }
@@ -180,7 +183,10 @@ module Tef2
         bars: bars_in_points,
         pixel_x0: x0,
         pixel_line_pixels: line_pixels,
-        repeat_barlines: [],
+        repeat_barlines: raster_repeat_barlines(pixels, width, line_pixels, boundary_clusters, scale_x),
+        raster_endings: raster_ending_spans(pixels, width, pixel_top, x0, x1, bars),
+        raster: true,
+        page_texts: texts,
         events: [],
         silent_stems: [],
         segments: [],
@@ -192,9 +198,13 @@ module Tef2
         pixels, width, height, x0, x1, pixel_top, pixel_bottom,
         line_pixels, bars, page, scale_x, scale_y, directory
       )
+      raster_fingering_texts = raster_fingering_texts(
+        pixels, width, height, x0, pixel_bottom, page, scale_x, scale_y
+      )
+      system[:raster_fingering_texts] = raster_fingering_texts
       system[:texts] = texts + raster_technique_texts(
         pixels, width, height, x0, x1, pixel_top, page, scale_x, scale_y, directory
-      )
+      ) + raster_fingering_texts
       return if system[:events].empty?
 
       system
@@ -225,6 +235,11 @@ module Tef2
     end
 
     def vertical_boundaries(pixels, width, height, pixel_top, pixel_bottom, x0, x1, line_pixels)
+      raster_boundary_clusters(pixels, width, height, pixel_top, pixel_bottom, x0, x1, line_pixels)
+        .map { |cluster| cluster.sum.fdiv(cluster.length) }
+    end
+
+    def raster_boundary_clusters(pixels, width, height, pixel_top, pixel_bottom, x0, x1, line_pixels)
       first_y = [ pixel_top - 6, 0 ].max
       last_y = [ pixel_bottom + 6, height - 1 ].min
       minimum_run = ((pixel_bottom - pixel_top) * 0.94).round
@@ -236,7 +251,100 @@ module Tef2
 
         x
       end
-      cluster_pixels(candidates, 4).map { |cluster| cluster.sum.fdiv(cluster.length) }
+      cluster_pixels(candidates, 16)
+    end
+
+    def raster_repeat_barlines(pixels, width, line_pixels, boundary_clusters, scale_x = 1)
+      boundary_clusters.filter_map do |cluster|
+        next unless cluster.length >= 2
+
+        direction = if raster_repeat_dots?(pixels, width, line_pixels, cluster, side: :right)
+          "forward"
+        elsif raster_repeat_dots?(pixels, width, line_pixels, cluster, side: :left)
+          "backward"
+        end
+        next unless direction
+
+        { boundary: cluster.sum.fdiv(cluster.length) * scale_x, direction: direction }
+      end
+    end
+
+    def raster_repeat_dots?(pixels, width, line_pixels, cluster, side:)
+      edge = side == :left ? cluster.first : cluster.last
+      range = if side == :left
+        (edge - 22)..(edge - 3)
+      else
+        (edge + 3)..(edge + 22)
+      end
+      components = raster_dot_components(pixels, width, line_pixels, range)
+      components.count { |component| component[:width].between?(3, 12) && component[:height].between?(3, 12) } >= 2
+    end
+
+    def raster_dot_components(pixels, width, line_pixels, x_range)
+      first_x = [ x_range.begin, 0 ].max
+      last_x = [ x_range.end, width - 1 ].min
+      first_y = [ line_pixels.first - 4, 0 ].max
+      last_y = line_pixels.last + 4
+      points = {}
+      (first_y..last_y).each do |y|
+        next if line_pixels.any? { |line| (y - line).abs <= 4 }
+
+        (first_x..last_x).each do |x|
+          points[[ x, y ]] = true if pixels.getbyte(y * width + x) < DARK_PIXEL
+        end
+      end
+      components = []
+      until points.empty?
+        start = points.keys.first
+        points.delete(start)
+        stack = [ start ]
+        min_x = max_x = start[0]
+        min_y = max_y = start[1]
+        area = 0
+        until stack.empty?
+          x, y = stack.pop
+          area += 1
+          min_x = x if x < min_x
+          max_x = x if x > max_x
+          min_y = y if y < min_y
+          max_y = y if y > max_y
+          [ [ x - 1, y ], [ x + 1, y ], [ x, y - 1 ], [ x, y + 1 ] ].each do |neighbor|
+            next unless points.delete(neighbor)
+
+            stack << neighbor
+          end
+        end
+        components << { width: max_x - min_x + 1, height: max_y - min_y + 1, area: area }
+      end
+      components
+    end
+
+    def raster_ending_spans(pixels, width, pixel_top, x0, x1, bars)
+      first_y = [ pixel_top - 160, 0 ].max
+      last_y = [ pixel_top - 8, first_y ].max
+      minimum_length = (x1 - x0) * 0.18
+      spans = []
+      (first_y..last_y).each do |y|
+        run_start = nil
+        (x0..x1).each do |x|
+          dark = pixels.getbyte(y * width + x) < DARK_PIXEL
+          if dark
+            run_start ||= x
+          elsif run_start
+            spans << [ run_start, x - 1 ] if x - run_start >= minimum_length
+            run_start = nil
+          end
+        end
+        spans << [ run_start, x1 ] if run_start && x1 + 1 - run_start >= minimum_length
+      end
+      spans.filter_map do |start_x, end_x|
+        left_index = bars.each_index.min_by { |index| (bars[index] - start_x).abs }
+        right_index = bars.each_index.min_by { |index| (bars[index] - end_x).abs }
+        next unless (bars[left_index] - start_x).abs <= 24 && (bars[right_index] - end_x).abs <= 24
+        next unless right_index > left_index
+
+        { first_measure: left_index, last_measure: right_index - 1 }
+      end.uniq.sort_by { |span| [ span[:first_measure], span[:last_measure] ] }
     end
 
     def note_stem_extension?(pixels, width, x, pixel_top, pixel_bottom)
@@ -543,6 +651,42 @@ module Tef2
       []
     end
 
+    def raster_fingering_texts(pixels, width, height, x0, pixel_bottom, page, scale_x, scale_y)
+      crop_y = pixel_bottom + 45
+      crop_bottom = [ pixel_bottom + 100, height - 1 ].min
+      crop_width = [ width - x0, 0 ].max
+      crop_height = crop_bottom - crop_y + 1
+      return [] if crop_width <= 0 || crop_height <= 0
+
+      binary = "\xff".b * (crop_width * crop_height)
+      crop_height.times do |row|
+        crop_width.times do |column|
+          value = pixels.getbyte((crop_y + row) * width + x0 + column)
+          binary.setbyte(row * crop_width + column, 0) if value < OCR_PIXEL
+        end
+      end
+      components = connected_components(binary, crop_width, crop_height).select do |component|
+        component[:width].between?(3, 35) && component[:height].between?(14, 35) && component[:area] >= 20
+      end
+      merge_staff_fragments(components).filter_map do |component|
+        value = raster_fingering_value(component[:width])
+        next unless value
+
+        {
+          x: (x0 + component[:x] + component[:width] / 2.0) * scale_x,
+          y: page.height - (crop_y + component[:y] + component[:height] / 2.0) * scale_y,
+          text: value
+        }
+      end
+    end
+
+    def raster_fingering_value(width)
+      return "I" if width <= 10
+      return "T" if width <= 21
+
+      "M" if width <= 35
+    end
+
     def cleaned_binary(pixels, width, crop_x, crop_y, crop_width, crop_height, line_pixels)
       size = crop_width * crop_height
       binary = ("\xff".b * size)
@@ -808,12 +952,15 @@ module Tef2
       score[:chords] = []
       score[:chord_diagrams] = []
       score[:lyrics] = nil
+      score[:notes] = score[:notes].to_a.uniq do |note|
+        note.values_at(:measure, :position, :string, :fret, :dead, :ghost)
+      end
       score[:techniques] = score[:techniques].to_a.filter do |technique|
         %w[hammer-on pull-off].include?(technique[:type]) && technique_pair_valid?(technique, score[:notes].to_a)
       end
-      score[:fingerings] = []
-      score[:endings] = []
-      score[:repeats] = []
+      score[:fingerings] = score[:fingerings].to_a
+      score[:endings] = score[:endings].to_a
+      score[:repeats] = score[:repeats].to_a
       score[:ties] = []
       score[:tempo] = nil
       score[:warnings].reject! { |warning| warning.match?(/PDF legato mark\(s\)/) }

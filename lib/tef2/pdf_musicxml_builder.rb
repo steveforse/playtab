@@ -293,8 +293,8 @@ module Tef2
             if fingering
               if fingering.match?(/\A[mt]\z/)
                 xml.send("other-technical", "TEF right-hand fingering #{fingering}")
-              elsif fingering.match?(/\A[A-Z]\z/)
-                xml.send("other-technical", "TEF fingering #{fingering}")
+              elsif fingering.match?(/\A[A-Z]+\z/)
+                fingering.each_char { |value| xml.send("other-technical", "TEF fingering #{value}") }
               else
                 xml.fingering(fingering, enclosure: "circle")
               end
@@ -420,16 +420,21 @@ module Tef2
     end
 
     def fingerings_by_note(score, notes)
-      result = {}
+      values = Hash.new { |hash, key| hash[key] = [] }
       (score[:fingerings] || []).each do |item|
         note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
-        result[note_key(note)] = item[:value] if note
+        next unless note
+
+        value = item[:value].to_s
+        values[note_key(note)] << value unless value.empty? || values[note_key(note)].include?(value)
       end
       (score[:techniques] || []).select { |item| item[:type] == "thumb" }.each do |item|
         note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
-        result[note_key(note)] = "T" if note
+        next unless note
+
+        values[note_key(note)] << "T" unless values[note_key(note)].include?("T")
       end
-      result
+      values.transform_values { |items| items.join }
     end
 
     def add_technique(result, key, technique)

@@ -85,10 +85,14 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_equal({ numerator: 2, denominator: 4 }, recognizer.send(:detect_time_signature, [ system ]))
   end
 
-  test "keeps raster annotation guesses out of the MusicXML preview" do
+  test "keeps unsupported raster annotations out while preserving structural metadata" do
     recognizer = Tef2::PdfRasterRecognizer.new
     score = {
       tuning_label: "",
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 0, dead: false, ghost: false },
+        { measure: 0, position: 0, string: 0, fret: 0, dead: false, ghost: false }
+      ],
       sections: [ { text: "Verse" } ],
       chords: [ { name: "G" } ],
       chord_diagrams: [ { name: "G" } ],
@@ -109,10 +113,11 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_empty result[:chords]
     assert_empty result[:chord_diagrams]
     assert_nil result[:lyrics]
+    assert_equal 1, result[:notes].length
     assert_empty result[:techniques]
-    assert_empty result[:fingerings]
-    assert_empty result[:endings]
-    assert_empty result[:repeats]
+    assert_equal [ { value: "T" } ], result[:fingerings]
+    assert_equal [ { number: "1" } ], result[:endings]
+    assert_equal [ { start: 0 } ], result[:repeats]
     assert_empty result[:ties]
     assert_nil result[:tempo]
     assert result[:warnings].none? { |warning| warning.include?("legato") }
@@ -128,7 +133,7 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_equal "FOGGY MOUNTAIN BREAKDOWN", score[:title]
     assert_equal "gDGBD", score[:tuning_label]
     assert_equal({ numerator: 2, denominator: 4 }, score[:time_signature])
-    assert_operator score[:measures], :>, 0
+    assert_equal 99, score[:measures]
     assert_operator score[:notes].length, :>, 0
     notes_for = ->(measure) {
       score[:notes].select { |note| note[:measure] == measure }.map { |note| [ note[:string], note[:fret] ] }
@@ -149,6 +154,18 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
       { measure: 1, position: 0, string: 1, type: "hammer-on" }
     assert_includes score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) },
       { measure: 3, position: 320, string: 2, type: "pull-off" }
+    fingerings_for = ->(measure) {
+      score[:fingerings].select { |fingering| fingering[:measure] == measure }
+        .sort_by { |fingering| [ fingering[:position], fingering[:string] ] }
+        .map { |fingering| fingering[:value] }
+    }
+    assert_equal %w[M I], fingerings_for.call(0)
+    assert_equal %w[I T M T I M T], fingerings_for.call(1)
+    assert_equal %w[I T M T I M T], fingerings_for.call(2)
+    assert_equal %w[I T M T I M T], fingerings_for.call(3)
+    assert_includes score[:repeats], { measure: 16, location: "left", direction: "forward", confidence: "high" }
+    assert_includes score[:repeats], { measure: 16, location: "right", direction: "backward", confidence: "high" }
+    assert_equal [ "1", "2" ], score[:endings].sort_by { |ending| ending[:measure] }.map { |ending| ending[:number] }
     assert score[:warnings].any? { |warning| warning.start_with?("Raster PDF") }
   end
 end

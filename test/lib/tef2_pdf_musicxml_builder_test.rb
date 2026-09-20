@@ -66,6 +66,22 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal [ 67, 50, 55, 59, 62 ], Tef2::PdfMusicxmlBuilder::DEFAULT_TUNING
   end
 
+  test "writes stacked fingerings as separate technical annotations" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Stacked fingering",
+      measures: 1,
+      notes: [ { measure: 0, position: 0, string: 0, fret: 0 } ],
+      fingerings: [
+        { measure: 0, position: 0, string: 0, value: "M" },
+        { measure: 0, position: 0, string: 0, value: "I" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal [ "TEF fingering M", "TEF fingering I" ],
+      document.xpath("//measure[1]/note//other-technical").map(&:text)
+  end
+
   test "writes tuplet timing metadata on inferred silent triplet slots" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Silent triplet",

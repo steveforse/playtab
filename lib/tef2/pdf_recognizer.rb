@@ -1183,21 +1183,53 @@ module Tef2
         sections.concat(sections_for_system(system, page_texts))
         chords.concat(chords_for_system(system, page_texts))
         endings.concat(endings_for_system(system, page_texts))
+        endings.concat(raster_endings_for_system(system))
         techniques.concat(techniques_for_system(system, technique_texts))
         techniques.concat(vector_slide_techniques_for_system(system))
-        fingerings.concat(fingerings_for_system(system, technique_texts))
+        fingerings.concat(fingerings_for_system(system, fingering_texts_for_system(system, technique_texts)))
       end
       {
         sections: deduplicate_metadata(sections),
         chords: deduplicate_metadata(chords),
         chord_diagrams: chord_diagrams_for_pages(pages),
         endings: deduplicate_metadata(endings),
-        repeats: repeat_metadata(systems),
+        repeats: deduplicate_metadata(repeat_metadata(systems) + raster_repeat_start_metadata(systems)),
         lyrics: lyrics(pages),
         techniques: deduplicate_metadata(techniques),
         fingerings: deduplicate_metadata(fingerings),
         tempo: tempo(pages)
       }
+    end
+
+    def raster_endings_for_system(system)
+      system.fetch(:raster_endings, []).each_with_index.map do |ending, index|
+        number = ending.fetch(:number, index + 1).to_s
+        measure = system.fetch(:measure_start, 0) + ending.fetch(:first_measure, 0)
+        { measure: measure, location: "left", number: number, type: "start", confidence: "high" }
+      end
+    end
+
+    def fingering_texts_for_system(system, fallback)
+      return fallback unless system[:raster]
+
+      page_texts = system.fetch(:page_texts, []).filter_map do |item|
+        value = normalize_raster_fingering_label(item[:text])
+        value ? item.merge(text: value) : nil
+      end
+      raster_texts = system.fetch(:raster_fingering_texts, [])
+      return raster_texts if page_texts.empty?
+
+      uncovered = raster_texts.reject do |raster_item|
+        page_texts.any? do |page_item|
+          (page_item[:x] - raster_item[:x]).abs <= 10 && (page_item[:y] - raster_item[:y]).abs <= 5
+        end
+      end
+      first_event = system[:events].to_a.first
+      if first_event && page_texts.any? { |item| item[:text].to_s.strip == "M" && (item[:x] - first_event[:x]).abs <= 8 }
+        stacked_i = raster_texts.find { |item| item[:text] == "I" && (item[:x] - first_event[:x]).abs <= 16 }
+        uncovered << stacked_i if stacked_i && !uncovered.include?(stacked_i)
+      end
+      page_texts + uncovered
     end
 
     def chord_diagrams_for_pages(pages)
@@ -1319,6 +1351,27 @@ module Tef2
             { measure: system.fetch(:measure_start, 0) + boundary - 1, location: "right", direction: "backward", confidence: "high" }
           end
         end
+      end
+    end
+
+    def raster_repeat_start_metadata(systems)
+      systems.flat_map do |system|
+        endings = system.fetch(:raster_endings, [])
+        next [] if endings.empty?
+
+        ending = endings.first
+        boundary = system[:bars].index do |bar|
+          repeat = system.fetch(:repeat_barlines, []).find { |item| (item[:boundary] - bar).abs <= 4.5 }
+          repeat && repeat[:direction] == "backward"
+        end
+        next [] unless boundary == ending[:last_measure] + 1
+
+        [ {
+          measure: system.fetch(:measure_start, 0) + ending[:first_measure],
+          location: "left",
+          direction: "forward",
+          confidence: "high"
+        } ]
       end
     end
 
@@ -1530,7 +1583,8 @@ module Tef2
     def fingerings_for_system(system, texts)
       texts.filter_map do |item|
         # TablEdit prints fingerings as letters (T/I/M/P) as well as digits.
-        next unless item[:text].match?(/\A[1-4TIMP]\z/)
+        value = normalize_fingering_label(item[:text])
+        next unless value
         next if triplet_marker_label?(system, item, system[:events].to_a, system[:bars].first, system[:bars].last)
         next if item[:y].between?(system[:top] - 8, system[:bottom] + 8)
         next unless item[:y].between?(system[:top] - 34, system[:bottom] + 34)
@@ -1540,8 +1594,22 @@ module Tef2
         next unless note
 
         measure, position = measure_position(system, note[:x])
-        { measure: measure, position: position, string: note[:string], value: item[:text].strip, confidence: "medium" }
+        { measure: measure, position: position, string: note[:string], value: value, confidence: "medium" }
       end
+    end
+
+    def normalize_fingering_label(value, raster: false)
+      label = value.to_s.strip
+      return "I" if raster && %w[1 | l].include?(label)
+      return "T" if raster && label == "Hi"
+      return label if label.match?(/\A[1-4TIMP]\z/)
+
+      nil
+    end
+
+    def normalize_raster_fingering_label(value)
+      label = normalize_fingering_label(value, raster: true)
+      label if label&.match?(/\A[ITMP]\z/)
     end
 
     def technique_pair_valid?(technique, notes)
