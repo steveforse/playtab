@@ -242,6 +242,21 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal 1, document.xpath("//measure[1]/note[2]/notations/tied[@type='stop']").length
   end
 
+  test "drops a self tie before writing MusicXML" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Self tie",
+      measures: 1,
+      notes: [ { measure: 0, position: 0, string: 1, fret: 0 } ],
+      ties: [
+        { measure: 0, position: 0, string: 1, type: "start" },
+        { measure: 0, position: 0, string: 1, type: "stop" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_empty document.xpath("//measure[1]/note/notations/tied")
+  end
+
   test "writes a native PDF capo effect when the recognizer supplies one" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Capo",

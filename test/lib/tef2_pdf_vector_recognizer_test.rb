@@ -223,6 +223,21 @@ class Tef2PdfVectorRecognizerTest < ActiveSupport::TestCase
     end
   end
 
+  test "does not attach a tie to two notes at the same onset" do
+    recognizer = Tef2::PdfVectorRecognizer.new
+    system = { top: 100, bottom: 140, x0: 10, x1: 200, lines: [ 100, 110, 120, 130, 140 ] }
+    receiver = Receiver.new([], [ { x: 50, y: 115, width: 10, height: 5 } ], [])
+    notes = [
+      { x: 48, measure: 0, position: 0, string: 1 },
+      { x: 48, measure: 0, position: 0, string: 1 }
+    ]
+    ties = []
+
+    recognizer.send(:ties_for_system, receiver, system, notes, ties)
+
+    assert_empty ties
+  end
+
   test "recovers the five vector tuning labels in low-to-high order" do
     recognizer = Tef2::PdfVectorRecognizer.new
     receiver = Receiver.new([], [], [])

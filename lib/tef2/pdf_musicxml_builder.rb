@@ -388,6 +388,13 @@ module Tef2
         marker = { type: tie.fetch(:type) }
         result[key] << marker unless result[key].include?(marker)
       end
+      # A recognizer error must not be allowed to emit both ends of a tie on
+      # one MusicXML note. alphaTab treats that as a tie whose destination is
+      # itself and recurses while generating playback MIDI.
+      result.delete_if do |_key, markers|
+        types = markers.map { |marker| marker[:type] }
+        types.include?("start") && types.include?("stop")
+      end
       result
     end
 

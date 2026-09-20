@@ -1000,7 +1000,13 @@ module Tef2
         right = arc[:x] + arc[:width] / 2.0
         nearby = notes.select { |note| note[:x] && note[:x].between?(left - 10, right + 10) }
         nearby.group_by { |note| note[:string] }.each do |string, string_notes|
-          pair = string_notes.sort_by { |note| note[:x] }.each_cons(2).first
+          # A curve can overlap several digits at one rhythmic position. A
+          # tie must connect two different note onsets; pairing equal x
+          # coordinates creates a MusicXML self-tie, which makes alphaTab
+          # recurse forever while resolving the tie destination.
+          pair = string_notes.sort_by { |note| note[:x] }.each_cons(2).find do |first, second|
+            second[:x] > first[:x] + 0.5
+          end
           next unless pair
 
           first, second = pair
