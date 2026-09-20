@@ -57,8 +57,11 @@ module Tef2
       measure_signatures = score[:measure_signatures].to_a
       notes = score[:notes] || []
       technique_map = techniques_by_note(score, notes)
+      printed_marker_map = printed_markers_by_note(score, notes)
+      tie_map = ties_by_note(score, notes)
       rake_map = rakes_by_note(score, notes)
       fingering_map = fingerings_by_note(score, notes)
+      strum_map = strums_by_note(score, notes)
       sections = metadata_by_measure(score[:sections] || [])
       chords = metadata_by_measure(score[:chords] || [])
       rests = metadata_by_measure(score[:rests] || [])
@@ -71,7 +74,7 @@ module Tef2
         pdf_measure_ticks = pdf_measure_ticks(measure_signature)
         xml.measure(number: (measure_index + 1).to_s) do
           if measure_index.zero?
-            write_attributes(xml, measure_signature, tuning)
+            write_attributes(xml, measure_signature, tuning, capo: score[:capo])
             write_tempo(xml, score[:tempo]) if score[:tempo]
           elsif measure_signature != previous_measure_signature
             xml.attributes { write_time_signature(xml, measure_signature) }
@@ -108,8 +111,11 @@ module Tef2
                   tuning,
                   note_index.positive?,
                   technique_map[note_key(note)],
+                  printed_marker_map[note_key(note)],
                   fingering_map[note_key(note)],
-                  rake_map[note_key(note)]
+                  rake_map[note_key(note)],
+                  strum_map[note_key(note)],
+                  tie_map[note_key(note)]
                 )
               end
             else
@@ -124,7 +130,7 @@ module Tef2
       end
     end
 
-    def write_attributes(xml, time_signature, tuning)
+    def write_attributes(xml, time_signature, tuning, capo: 0)
       xml.attributes do
         xml.divisions(DIVISIONS.to_s)
         write_time_signature(xml, time_signature)
@@ -142,6 +148,7 @@ module Tef2
               xml.send("tuning-octave", octave.to_s)
             end
           end
+          xml.capo(capo.to_s) if capo.to_i.positive?
         end
       end
     end
@@ -221,7 +228,12 @@ module Tef2
           location_endings.each do |ending|
             xml.ending(number: ending.fetch(:number).to_s, type: ending.fetch(:type))
           end
-          location_repeats.each { |repeat| xml.repeat(direction: repeat.fetch(:direction)) }
+          location_repeats.each do |repeat|
+            direction = { "start" => "forward", "end" => "backward" }.fetch(
+              repeat.fetch(:direction).to_s, repeat.fetch(:direction).to_s
+            )
+            xml.repeat(direction: direction)
+          end
         end
       end
     end
@@ -251,7 +263,7 @@ module Tef2
       end
     end
 
-    def write_note(xml, source, duration, tuning, chord, techniques, fingering, rake)
+    def write_note(xml, source, duration, tuning, chord, techniques, printed_markers, fingering, rake, strum, ties)
       xml.note do
         xml.chord if chord
         xml.pitch do
@@ -269,6 +281,7 @@ module Tef2
           xml.notehead("x")
         end
         xml.notations do
+          ties.to_a.each { |tie| xml.tied(type: tie[:type]) }
           techniques.to_a.select { |technique| technique[:xml_type] == "slide" }.each do |technique|
             attributes = { type: technique[:marker_type] }
             xml.slide(technique[:marker_type] == "start" ? technique[:label] : nil, **attributes)
@@ -278,7 +291,9 @@ module Tef2
             xml.string((source[:string] + 1).to_s)
             xml.fret(source[:fret].to_s)
             if fingering
-              if fingering.match?(/\A[A-Z]\z/)
+              if fingering.match?(/\A[mt]\z/)
+                xml.send("other-technical", "TEF right-hand fingering #{fingering}")
+              elsif fingering.match?(/\A[A-Z]\z/)
                 xml.send("other-technical", "TEF fingering #{fingering}")
               else
                 xml.fingering(fingering, enclosure: "circle")
@@ -293,7 +308,11 @@ module Tef2
             techniques.to_a.select { |technique| technique[:xml_type] == "slide" && technique[:marker_type] == "start" }.each do |technique|
               xml.send("other-technical", "TEF slide #{technique[:label]}")
             end
+            printed_markers.to_a.each do |marker|
+              xml.send("other-technical", "TEF slide #{marker[:label]}") if marker[:type] == "slide-in"
+            end
             xml.send("other-technical", "TEF rake") if rake
+            xml.send("other-technical", "TEF strum #{strum}") if strum
           end
         end
       end
@@ -347,11 +366,48 @@ module Tef2
       result
     end
 
+    def printed_markers_by_note(score, notes)
+      result = {}
+      (score[:techniques] || []).select { |item| item[:type] == "slide-in" }.each do |item|
+        note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
+        next unless note
+
+        add_technique(result, note_key(note), item.slice(:type, :label))
+      end
+      result
+    end
+
+    def ties_by_note(score, notes)
+      result = {}
+      (score[:ties] || []).each do |tie|
+        note = notes.find { |candidate| note_location_key(candidate) == note_location_key(tie) }
+        next unless note
+
+        key = note_key(note)
+        result[key] ||= []
+        marker = { type: tie.fetch(:type) }
+        result[key] << marker unless result[key].include?(marker)
+      end
+      result
+    end
+
     def rakes_by_note(score, notes)
       result = {}
       (score[:techniques] || []).select { |item| item[:type] == "rake" }.each do |item|
         note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
         result[note_key(note)] = true if note
+      end
+      result
+    end
+
+    def strums_by_note(score, notes)
+      result = {}
+      (score[:strums] || []).each do |item|
+        direction = item[:direction].to_s.downcase
+        next unless %w[up down].include?(direction)
+
+        note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
+        result[note_key(note)] = direction if note
       end
       result
     end

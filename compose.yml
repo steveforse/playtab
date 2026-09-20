@@ -14,7 +14,7 @@ services:
   web:
     image: ruby:3.4
     working_dir: /app
-    command: bash -c "apt-get update -qq && apt-get install --no-install-recommends -y libvips && rm -rf /var/lib/apt/lists/* && bundle install && bundle exec rails db:prepare && rm -f tmp/pids/server.pid && bundle exec rails server -b 0.0.0.0"
+    command: bash -c "apt-get update -qq && apt-get install --no-install-recommends -y libvips poppler-utils tesseract-ocr && rm -rf /var/lib/apt/lists/* && bundle install && bundle exec rails db:prepare && rm -f tmp/pids/server.pid && bundle exec rails server -b 0.0.0.0"
     environment:
       PGHOST: db
       VITE_RUBY_HOST: vite

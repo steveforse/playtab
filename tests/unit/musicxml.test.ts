@@ -88,6 +88,16 @@ describe('MusicXML preview', () => {
     expect(first.beat.text).toContain('I');
     expect(second.beat.text).toContain('M');
   });
+  it('shows vector PDF right-hand m and t annotations below the notes', () => {
+    const annotated = techniques
+      .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF right-hand fingering m</other-technical><hammer-on type="start">H</hammer-on>')
+      .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF right-hand fingering t</other-technical><hammer-on type="stop"/>');
+    const { score } = readMusicXml(annotated, 'pdf-right-hand-fingering.xml');
+    const first = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    const second = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(first.beat.text).toContain('m');
+    expect(second.beat.text).toContain('t');
+  });
   it('shows a PDF rake as an R annotation and arpeggio', () => {
     const annotated = techniques.replace(
       '<fret>3</fret>',
@@ -98,6 +108,15 @@ describe('MusicXML preview', () => {
     expect(note.beat.text).toBe('R');
     expect(note.beat.brushType).toBe(model.BrushType.ArpeggioDown);
   });
+  it('maps PDF strum direction markers to brush direction', () => {
+    const up = techniques.replace('<fret>3</fret>', '<fret>3</fret><other-technical>TEF strum up</other-technical>');
+    const down = techniques.replace('<fret>3</fret>', '<fret>3</fret><other-technical>TEF strum down</other-technical>');
+    const upNote = readMusicXml(up, 'strum-up.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    const downNote = readMusicXml(down, 'strum-down.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+
+    expect(upNote.beat.brushType).toBe(model.BrushType.BrushDown);
+    expect(downNote.beat.brushType).toBe(model.BrushType.BrushUp);
+  });
   it('preserves a PDF slide label beside the native slide notation', () => {
     const annotated = techniques.replace(
       '<notations><technical><string>4</string><fret>0</fret>',
@@ -106,6 +125,16 @@ describe('MusicXML preview', () => {
     const { score } = readMusicXml(annotated, 'slide.xml');
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
     expect(note.beat.text).toBe('Sl');
+  });
+  it('maps a standalone PDF slide-in slash to AlphaTab slide-in notation', () => {
+    const annotated = techniques.replace(
+      '<fret>3</fret>',
+      '<fret>3</fret><other-technical>TEF slide /</other-technical>',
+    );
+    const { score } = readMusicXml(annotated, 'slide-in.xml');
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(note.slideInType).toBe(model.SlideInType.IntoFromBelow);
+    expect(note.beat.text).toBeNull();
   });
   it('maps the TEF code for finger 1 to a circled fingering', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><fingering enclosure="circle">1</fingering>');
