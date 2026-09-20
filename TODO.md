@@ -64,8 +64,8 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Render pages at a controlled resolution, deskew and clean the images, then recognize tablature staff lines, fret numbers, rhythms, lyrics, chords, sections, and techniques.
   - Attach confidence scores and provide a review workflow for uncertain recognition before creating MusicXML.
   - Build a labeled, private evaluation corpus and enforce resource, timeout, and upload limits for OCR/OMR processing.
-  - In progress on `feature/scanned-pdf-recognition`: image-only pages now use a 300-DPI Ruby `ruby-vips`/Tesseract pipeline for staff geometry and fret-digit recovery, while the existing vector recognizer remains the first path. Raster imports preserve title and tuning when recognized and warn before omitting uncertain annotations.
-  - Remaining work is scan deskew, reliable time signatures/rhythm, confidence-aware review, and recognition of raster chords, lyrics, sections, techniques, and repeats.
+  - In progress on `feature/scanned-pdf-recognition`: image-only pages now use a 300-DPI Ruby `ruby-vips`/Tesseract pipeline for staff geometry and fret-digit recovery, while the existing vector recognizer remains the first path. Raster imports now detect printed time signatures, recover open strings split by staff lines, and preserve direction-validated hammer-on/pull-off marks; title and tuning are preserved when recognized.
+  - Remaining work is scan deskew, broader reliable rhythm recovery, confidence-aware review, and recognition of raster chords, lyrics, sections, fingerings, and repeats.
 
 ## Already completed
 

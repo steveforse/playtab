@@ -1177,11 +1177,12 @@ module Tef2
       fingerings = []
       systems.each do |system|
         page_texts = pages[system[:page]][:texts]
-        technique_texts = system[:texts] || page_texts
+        technique_texts = system[:texts].to_a
+        technique_texts = page_texts if technique_texts.empty?
         sections.concat(sections_for_system(system, page_texts))
         chords.concat(chords_for_system(system, page_texts))
         endings.concat(endings_for_system(system, page_texts))
-        techniques.concat(techniques_for_system(system, page_texts))
+        techniques.concat(techniques_for_system(system, technique_texts))
         techniques.concat(vector_slide_techniques_for_system(system))
         fingerings.concat(fingerings_for_system(system, technique_texts))
       end

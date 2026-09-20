@@ -27,6 +27,26 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_equal [ [ 10, 11, 12 ], [ 40, 45 ], [ 100 ] ], recognizer.send(:cluster_pixels, [ 12, 10, 11, 45, 40, 100 ], 5)
   end
 
+  test "merges digit fragments split by a staff line" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    fragments = [
+      { x: 10, y: 4, width: 14, height: 10, area: 40 },
+      { x: 11, y: 17, width: 13, height: 9, area: 36 },
+      { x: 50, y: 4, width: 12, height: 10, area: 40 }
+    ]
+
+    merged = recognizer.send(:merge_staff_fragments, fragments)
+
+    assert_equal [ { x: 10, y: 4, width: 14, height: 22, area: 76 }, fragments.last ], merged.sort_by { |item| item[:x] }
+  end
+
+  test "maps raster tab rows from the top staff line to the first string" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    component = { x: 10, y: 0, width: 16, height: 24, area: 100 }
+
+    assert_equal "0", recognizer.send(:raster_component_value, nil, component, 100, [ 100, 124, 148, 172, 196 ])
+  end
+
   test "detects a stacked two-four time signature from OCR labels" do
     recognizer = Tef2::PdfRasterRecognizer.new
     system = {
@@ -79,8 +99,17 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
 
     assert_equal "FOGGY MOUNTAIN BREAKDOWN", score[:title]
     assert_equal "gDGBD", score[:tuning_label]
+    assert_equal({ numerator: 2, denominator: 4 }, score[:time_signature])
     assert_operator score[:measures], :>, 0
     assert_operator score[:notes].length, :>, 0
+    notes_for = ->(measure) {
+      score[:notes].select { |note| note[:measure] == measure }.map { |note| [ note[:string], note[:fret] ] }
+    }
+    assert_equal [ [ 0, 0 ], [ 2, 0 ] ], notes_for.call(0)
+    assert_equal [ 0 ], score[:notes].select { |note| note[:measure] == 0 }.map { |note| note[:position] }.uniq
+    assert_equal [ [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 0, 0 ], [ 1, 3 ], [ 4, 0 ], [ 1, 0 ], [ 0, 0 ] ], notes_for.call(1)
+    assert_includes score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) },
+      { measure: 1, position: 0, string: 1, type: "hammer-on" }
     assert score[:warnings].any? { |warning| warning.start_with?("Raster PDF") }
   end
 end
