@@ -16,6 +16,7 @@ module Tef2
     DPI = 300
     RASTER_TIMEOUT = 90
     DARK_PIXEL = 180
+    STAFF_PIXEL = 220
     OCR_PIXEL = 150
     MIN_STAFF_COVERAGE = 0.45
     MIN_LINE_RUN_RATIO = 0.30
@@ -84,11 +85,20 @@ module Tef2
     def page_data(image, page, page_index, scale_x, scale_y, directory)
       gray = image.colourspace(:b_w)
       pixels = gray.write_to_memory
-      lines = horizontal_line_candidates(pixels, gray.width, gray.height)
+      staff_threshold = DARK_PIXEL
+      lines = horizontal_line_candidates(pixels, gray.width, gray.height, staff_threshold)
       groups = staff_groups(lines)
+      if groups.empty?
+        staff_threshold = STAFF_PIXEL
+        lines = horizontal_line_candidates(pixels, gray.width, gray.height, staff_threshold)
+        groups = staff_groups(lines)
+      end
       texts = page_texts(File.join(directory, "page-#{page_index + 1}.png"), page, scale_x, scale_y)
       systems = groups.filter_map do |line_group|
-        build_system(pixels, gray.width, gray.height, page, page_index, line_group, scale_x, scale_y, texts, directory)
+        build_system(
+          pixels, gray.width, gray.height, page, page_index, line_group, scale_x, scale_y, texts, directory,
+          staff_threshold: staff_threshold
+        )
       end
       raster_time_signature = detect_raster_time_signature(pixels, gray.width, systems.first, directory)
       align_first_raster_measure(systems.first) if raster_time_signature
@@ -102,7 +112,7 @@ module Tef2
       }
     end
 
-    def horizontal_line_candidates(pixels, width, height)
+    def horizontal_line_candidates(pixels, width, height, threshold = DARK_PIXEL)
       candidates = []
       (0...height).each do |y|
         base = y * width
@@ -111,7 +121,7 @@ module Tef2
         run = 0
         x = 0
         while x < width
-          if pixels.getbyte(base + x) < DARK_PIXEL
+          if pixels.getbyte(base + x) < threshold
             count += 1
             run += 1
             longest = run if run > longest
@@ -160,11 +170,11 @@ module Tef2
       groups
     end
 
-    def build_system(pixels, width, height, page, page_index, line_group, scale_x, scale_y, texts, directory)
+    def build_system(pixels, width, height, page, page_index, line_group, scale_x, scale_y, texts, directory, staff_threshold: DARK_PIXEL)
       line_pixels = line_group.map { |line| line[:y] }
       pixel_top = line_pixels.first
       pixel_bottom = line_pixels.last
-      x0, x1 = horizontal_extent(pixels, width, line_pixels)
+      x0, x1 = horizontal_extent(pixels, width, line_pixels, staff_threshold)
       return if x1 - x0 < width * 0.25
 
       boundary_clusters = raster_boundary_clusters(
@@ -210,9 +220,9 @@ module Tef2
       system
     end
 
-    def horizontal_extent(pixels, width, line_pixels)
+    def horizontal_extent(pixels, width, line_pixels, threshold = DARK_PIXEL)
       extents = line_pixels.filter_map do |y|
-        longest_run(pixels, width, y, 0, width - 1, DARK_PIXEL)
+        longest_run(pixels, width, y, 0, width - 1, threshold)
       end
       [ extents.map(&:first).min, extents.map(&:last).max ]
     end

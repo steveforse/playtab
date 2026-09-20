@@ -124,6 +124,19 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert result[:warnings].any? { |warning| warning.include?("not imported yet") }
   end
 
+  test "recognizes the private scanned Ballad of Jed Clampett PDF when supplied" do
+    path = ENV["PLAYTAB_BALLAD_OF_JED_CLAMPETT_PDF"]
+    skip "Set PLAYTAB_BALLAD_OF_JED_CLAMPETT_PDF for the private raster-PDF regression." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+
+    assert_equal "BALLAD OF JED CLAMPETT", score[:title]
+    assert_equal "gDGBD", score[:tuning_label]
+    assert_equal({ numerator: 2, denominator: 4 }, score[:time_signature])
+    assert_equal 22, score[:measures]
+    assert_operator score[:notes].length, :>, 0
+  end
+
   test "recognizes the private scanned Foggy Mountain PDF when supplied" do
     path = ENV["PLAYTAB_FOGGY_MOUNTAIN_BREAKDOWN_PDF"]
     skip "Set PLAYTAB_FOGGY_MOUNTAIN_BREAKDOWN_PDF for the private raster-PDF regression." unless path && File.file?(path)
