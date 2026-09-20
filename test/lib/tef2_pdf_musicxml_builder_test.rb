@@ -26,7 +26,8 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
         { measure: 0, position: 0, string: 0, type: "hammer-on", label: "H" },
         { measure: 0, position: 512, string: 1, type: "thumb" }
       ],
-      fingerings: [ { measure: 0, position: 512, string: 2, value: "2" }, { measure: 0, position: 0, string: 0, value: "I" } ]
+      fingerings: [ { measure: 0, position: 512, string: 2, value: "2" }, { measure: 0, position: 0, string: 0, value: "I" } ],
+      strums: [ { measure: 0, position: 0, string: 0, direction: "up" } ]
     }
 
     xml = Tef2::PdfMusicxmlBuilder.build(score)
@@ -46,6 +47,7 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "2", document.xpath("//fingering").first.text
     assert_equal "TEF fingering T", document.xpath("//other-technical").find { |item| item.text == "TEF fingering T" }.text
     assert_equal "TEF fingering I", document.xpath("//other-technical").find { |item| item.text == "TEF fingering I" }.text
+    assert_equal "TEF strum up", document.xpath("//other-technical").find { |item| item.text == "TEF strum up" }.text
     assert_equal "hammer-on", document.at_xpath("//hammer-on").name
     assert_equal "x", document.at_xpath("//notehead[text()='x']").text
     assert_equal 1, document.xpath("//notehead[@parentheses='yes']").length
@@ -178,6 +180,18 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "TEF rake", document.at_xpath("//other-technical").text
   end
 
+  test "writes a PDF upward strum marker on the selected note" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Strum",
+      measures: 1,
+      notes: [ { measure: 0, position: 0, string: 0, fret: 0 } ],
+      strums: [ { measure: 0, position: 0, string: 0, direction: "up" } ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal "TEF strum up", document.at_xpath("//other-technical").text
+  end
+
   test "writes a PDF slide as a native span with its printed label" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Slide",
@@ -194,6 +208,51 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "Sl", document.at_xpath("//measure[1]/note[1]/notations/slide").text
     assert_equal "TEF slide Sl", document.at_xpath("//measure[1]/note[1]/notations/technical/other-technical").text
     assert_empty document.xpath("//measure[1]/note[1]/notations/technical/slide")
+  end
+
+  test "writes a standalone PDF slide-in marker without a native span" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Slide in",
+      measures: 1,
+      notes: [ { measure: 0, position: 0, string: 1, fret: 2 } ],
+      techniques: [ { measure: 0, position: 0, string: 1, type: "slide-in", label: "/" } ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal "TEF slide /", document.at_xpath("//measure[1]/note[1]/notations/technical/other-technical").text
+    assert_empty document.xpath("//measure[1]/note[1]/notations/slide")
+  end
+
+  test "writes PDF ties on both ends of each tied note" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Tie",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 0, string: 1, fret: 0 },
+        { measure: 0, position: 256, string: 1, fret: 0 }
+      ],
+      ties: [
+        { measure: 0, position: 0, string: 1, type: "start" },
+        { measure: 0, position: 256, string: 1, type: "stop" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal 1, document.xpath("//measure[1]/note[1]/notations/tied[@type='start']").length
+    assert_equal 1, document.xpath("//measure[1]/note[2]/notations/tied[@type='stop']").length
+  end
+
+  test "writes a native PDF capo effect when the recognizer supplies one" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Capo",
+      capo: 2,
+      measures: 1,
+      notes: [ { measure: 0, position: 0, string: 1, fret: 0 } ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal [ "2" ], document.xpath("//measure[1]/attributes/staff-details/capo").map(&:text)
+    assert_empty document.xpath("//measure[1]/direction/direction-type/words")
   end
 
   test "does not pair a technique with a distant note" do

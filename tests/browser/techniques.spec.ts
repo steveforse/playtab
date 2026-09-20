@@ -7,6 +7,14 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+async function exportAs(page: import('@playwright/test').Page, format: string) {
+  const dialog = page.locator('.export-dialog');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('Export format').selectOption(format);
+  await dialog.getByRole('button', { name: 'Export file', exact: true }).click();
+}
+
 test('renders H and PO on technique slurs and retains them after resize and printing', async ({ page, context }) => {
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -27,7 +35,7 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   await page.screenshot({ path: 'tmp/techniques.png', fullPage: true });
   await context.addInitScript(() => { window.print = () => {}; });
   const popup = page.waitForEvent('popup');
-  await page.getByLabel('Export score').selectOption('pdf');
+  await exportAs(page, 'pdf');
   const printPreview = await popup;
   await expect(printPreview.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(1);
   await expect(printPreview.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
@@ -189,7 +197,7 @@ test('renders duration dots between the tablature staff and rhythm beams in scor
 
   await context.addInitScript(() => { window.print = () => {}; });
   const popup = page.waitForEvent('popup');
-  await page.getByLabel('Export score').selectOption('pdf');
+  await exportAs(page, 'pdf');
   const printPreview = await popup;
   await expect.poll(async () => (await readPositions(printPreview.locator('body')))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
   const printPosition = await readPositions(printPreview.locator('body'));

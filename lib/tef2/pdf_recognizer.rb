@@ -207,14 +207,20 @@ module Tef2
       # therefore top-to-bottom within each page.
       systems.sort_by! { |system| [ system[:page], -system[:top] ] }
       if systems.empty?
-        if pages.all? { |page| page[:texts].empty? }
-          raise Error, "No selectable text was found in this PDF, so no tablature can be recognized. Vector-drawing-only PDFs and scans are not supported."
+        vector_page = pages.any? { |page| page[:segments].any? }
+        if vector_page
+          # A page can contain a selectable title or footer while the staff
+          # itself is drawn as paths. Fall back whenever vector geometry is
+          # present, not only when the whole page has no text layer.
+          require "tef2/pdf_vector_recognizer"
+          return PdfVectorRecognizer.recognize(data, filename: filename)
         end
         raise Error, "No five-line tablature systems were found. This PDF may be a scan or an unsupported layout."
       end
 
       notes = []
       rests = []
+      ties = []
       measure_index = 0
       measure_signatures = []
       current_time_signature = time_signature
@@ -230,17 +236,19 @@ module Tef2
           measure_signatures << current_time_signature
           measure_ticks = pdf_measure_ticks(current_time_signature)
           system[:measure_ticks_by_measure] << measure_ticks
-          events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
+          events = system[:events].select { |event| left + 4 <= event[:x] && event[:x] < right - 2 }
           event_xs = events.map { |event| event[:x] }
           rest_xs = printed_rest_xs(system, left, right)
           timing_xs = (event_xs + rest_xs).sort
           step = position_step(left, right, timing_xs, measure_ticks: measure_ticks)
           dotted_indices = dotted_event_indices(system, events, left, right)
           triplet_starts = triplet_event_starts(system, events, left, right)
+          step = 32 if fine_dotted_grid?(dotted_indices, events) && step > 32
           step = 64 if dotted_indices.any? && step > 64
           layout = position_layout(left, right, timing_xs, measure_ticks, step)
           system[:measure_layouts] << { step: step, layout: layout }
-          rhythm_positions = dotted_rhythm_positions(left, right, events, measure_ticks, step, dotted_indices)
+          rhythm_positions = beamed_dotted_rhythm_positions(events, measure_ticks, step, dotted_indices)
+          rhythm_positions ||= dotted_rhythm_positions(left, right, events, measure_ticks, step, dotted_indices)
           triplet_rhythm = triplet_rhythm_positions(events, measure_ticks, triplet_starts)
           rhythm_positions ||= triplet_rhythm
           timed_events = if rest_xs.any? && dotted_indices.empty? && triplet_starts.empty? &&
@@ -281,6 +289,7 @@ module Tef2
               }
             end
           end
+          ties.concat(ties_for_measure(system, measure_index + measure_offset, events, event_positions, left, right))
           rest_xs.each do |x|
             rest_index = timing_events.index { |event| (event[:x] - x).abs < 0.1 }
             rest_position = if rest_index
@@ -347,6 +356,7 @@ module Tef2
         lyrics: metadata[:lyrics],
         techniques: metadata[:techniques],
         fingerings: metadata[:fingerings],
+        ties: ties,
         warnings: warnings
       }
     end
@@ -381,7 +391,7 @@ module Tef2
       # A page with no selectable text carries no tablature. Vector-drawing-only
       # PDFs can contain tens of thousands of paths that make staff detection
       # prohibitively slow, so skip it for such pages entirely.
-      return { texts: texts, systems: [], time_signature: nil, segments: [], curve_boxes: [] } if texts.empty?
+      return { texts: texts, systems: [], time_signature: nil, segments: receiver.segments, curve_boxes: receiver.curve_boxes } if texts.empty?
 
       receiver.flat_symbols.each do |symbol|
         texts.each do |item|
@@ -527,7 +537,7 @@ module Tef2
         end
         note_text = merge_multi_digit_frets(note_candidates).filter_map do |item|
           nearest = (0...5).min_by { |index| (item[:y] - row_positions[index]).abs }
-          next unless (item[:y] - row_positions[nearest] + 3.6).abs <= 5
+          next unless (item[:y] - row_positions[nearest] + 3.6).abs <= 5.5
 
           if item[:text].match?(/\A\(?\d{1,2}\)?\z/)
             { x: item[:x], y: item[:y], string: nearest, fret: item[:text].delete("()").to_i, dead: false,
@@ -552,7 +562,7 @@ module Tef2
 
         result << {
           page: 0, top: top, bottom: bottom, bars: bars, repeat_barlines: repeat_barlines,
-          events: events, silent_stems: silent_stems, curve_boxes: curve_boxes, texts: texts
+          events: events, silent_stems: silent_stems, segments: segments, curve_boxes: curve_boxes, texts: texts
         }
         cursor += 5
       end
@@ -932,9 +942,69 @@ module Tef2
 
         dots.any? do |dot|
           dot[:x].between?(event[:x] + 2, event[:x] + 10) &&
-            dot[:x].between?(left + 5, right - 2) && dot[:y].between?(system[:top] - 22, system[:top] + 5)
+            dot[:x].between?(left + 4, right - 2) && dot[:y].between?(system[:top] - 22, system[:top] + 5)
         end
       end
+    end
+
+    # A dotted 16th needs a 32nd-note grid. Dense dotted patterns are the
+    # reliable PDF evidence that the coarser spacing pass would otherwise miss
+    # that subdivision (the stems/beams themselves are often font outlines).
+    def fine_dotted_grid?(dotted_indices, events)
+      return false unless dotted_indices.length >= 3 && events.length >= 6
+
+      every_third = dotted_indices.each_cons(2).all? { |first, second| second - first == 3 }
+      dotted_pairs = dotted_indices.each_cons(2).any? { |first, second| second == first + 1 }
+      every_third || dotted_pairs
+    end
+
+    # Recover the two compact patterns used by TablEdit's beamed PDF output:
+    #
+    #   dotted 8th, 32nd, 32nd, dotted 8th, ...
+    #   dotted 16th, dotted 16th, 16th, ...
+    #
+    # The beam paths are not exposed as line segments by PDF::Reader, but the
+    # duration dots and repeated event shape are selectable text evidence.
+    def beamed_dotted_rhythm_positions(events, measure_ticks, step, dotted_indices)
+      return if step != 32 || dotted_indices.empty? || events.empty?
+
+      total_steps = measure_ticks / step
+      durations = Array.new(events.length)
+
+      if dotted_indices.each_cons(2).all? { |first, second| second - first == 3 }
+        dotted_indices.each { |index| durations[index] = 6 }
+        durations.each_index { |index| durations[index] ||= 1 }
+        return rhythm_positions_from_durations(durations, total_steps)
+      end
+
+      pair_starts = dotted_indices.select do |index|
+        dotted_indices.include?(index + 1) && !dotted_indices.include?(index + 2)
+      end
+      pair_starts.each do |index|
+        durations[index, 3] = [ 3, 3, 2 ]
+      end
+      return if durations.none?
+
+      remaining = durations.each_index.select { |index| durations[index].nil? }
+      assigned = durations.compact.sum
+      remainder = total_steps - assigned
+      if remaining.length.positive? && remainder.positive? && (remainder % remaining.length).zero?
+        value = remainder / remaining.length
+        return if value < 1
+
+        remaining.each { |index| durations[index] = value }
+        return rhythm_positions_from_durations(durations, total_steps)
+      end
+
+      nil
+    end
+
+    def rhythm_positions_from_durations(durations, total_steps)
+      return unless durations.all?(&:positive?) && durations.sum == total_steps
+
+      positions = [ 0 ]
+      durations[0...-1].each { |duration| positions << positions.last + duration * 32 }
+      positions
     end
 
     def curve_dot_centers(boxes)
@@ -996,7 +1066,7 @@ module Tef2
     end
 
     def silent_positions(system, left, right, events, event_positions, step, measure_ticks)
-      stems = system[:silent_stems].to_a.select { |x| x.between?(left + 5, right - 2) }
+      stems = system[:silent_stems].to_a.select { |x| x.between?(left + 4, right - 2) }
       return [] if stems.empty?
 
       note_indices = events.each_index.select { |index| events[index][:notes].any? }
@@ -1026,6 +1096,61 @@ module Tef2
       end.uniq
     end
 
+    # TablEdit renders ties as small Bézier curves. PDF::Reader exposes the
+    # curves as paired narrow boxes rather than as semantic marks, so pair the
+    # boxes with the two adjacent note events and use the curve's vertical
+    # offset to select the tied string.
+    def ties_for_measure(system, measure, events, event_positions, left, right)
+      spans = tie_spans(system).select do |span|
+        span[:left].between?(left + 4, right - 2) && span[:right].between?(left + 4, right + 4)
+      end
+      spans.flat_map do |span|
+        pair = events.each_cons(2).find do |first, second|
+          span[:left] > first[:x] + 3 && span[:left] < second[:x] &&
+            span[:right] >= second[:x] - 2 && span[:right] <= second[:x] + 5
+        end
+        next [] unless pair
+
+        first, second = pair
+        first_index = events.index(first)
+        second_index = events.index(second)
+        next [] unless first_index && second_index
+
+        common = first[:notes].filter_map do |source|
+          destination = second[:notes].find do |candidate|
+            candidate[:string] == source[:string] && candidate[:fret] == source[:fret]
+          end
+          next unless destination
+          next unless (span[:y] - source[:y]).between?(4, 11)
+
+          source[:string]
+        end
+        common.flat_map do |string|
+          [
+            { measure: measure, position: event_positions.fetch(first_index), string: string, type: "start" },
+            { measure: measure, position: event_positions.fetch(second_index), string: string, type: "stop" }
+          ]
+        end
+      end
+    end
+
+    def tie_spans(system)
+      boxes = system[:curve_boxes].to_a.select do |box|
+        box[:width].to_f.between?(5, 12) && box[:height].to_f <= 3 &&
+          box[:x].to_f.between?(system[:bars].first + 4, system[:bars].last + 4) &&
+          box[:y].to_f.between?(system[:top] - 5, system[:bottom] + 8)
+      end
+      boxes.combination(2).filter_map do |first, second|
+        first, second = [ first, second ].sort_by { |box| box[:x].to_f }
+        next unless (first[:y].to_f - second[:y].to_f).abs <= 2
+        next unless (second[:x].to_f - first[:x].to_f).between?(8, 16)
+        next unless (second[:x].to_f - first[:x].to_f - first[:width].to_f).between?(3, 8)
+
+        { left: first[:x].to_f, right: second[:x].to_f + second[:width].to_f,
+          y: (first[:y].to_f + second[:y].to_f) / 2.0 }
+      end.uniq { |span| span.values.map { |value| value.round(2) } }
+    end
+
     def metadata(pages, systems)
       sections = []
       chords = []
@@ -1039,6 +1164,7 @@ module Tef2
         chords.concat(chords_for_system(system, page_texts))
         endings.concat(endings_for_system(system, page_texts))
         techniques.concat(techniques_for_system(system, page_texts))
+        techniques.concat(vector_slide_techniques_for_system(system))
         fingerings.concat(fingerings_for_system(system, technique_texts))
       end
       {
@@ -1186,7 +1312,7 @@ module Tef2
       return time_signature unless system
 
       gaps = system[:bars].each_cons(2).flat_map do |left, right|
-        system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
+        system[:events].select { |event| left + 4 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
           .sort.each_cons(2).map { |first, second| second - first }
       end.select { |gap| gap > 1.5 }.sort
       return time_signature if gaps.empty?
@@ -1281,6 +1407,39 @@ module Tef2
       return root unless suffix
 
       suffix.match?(/\A(?:\d|maj\d|min\d|m\d|dim\d|aug\d)/i) ? "#{root}#{suffix}" : "#{root} #{suffix}"
+    end
+
+    # Short diagonal paths are the slash in compact PDF slide notation such
+    # as 0/5. They are separate from selectable text, so recover the slide
+    # origin from the two note events that straddle the path.
+    def vector_slide_techniques_for_system(system)
+      events = system[:events].to_a.sort_by { |event| event[:x] }
+      system[:segments].to_a.filter_map do |x1, y1, x2, y2|
+        dx = (x2 - x1).abs
+        dy = (y2 - y1).abs
+        next unless dx.between?(2, 5) && dy.between?(2, 6)
+        next unless [ y1, y2 ].min.between?(system[:top] - 2, system[:bottom] + 3)
+
+        center_x = (x1 + x2) / 2.0
+        previous = events.select { |event| event[:x] < center_x }.last
+        following = events.find { |event| event[:x] > center_x }
+        next unless previous && following && following[:x] - previous[:x] <= 15
+
+        candidates = previous[:notes].filter_map do |source|
+          destination = following[:notes].find do |candidate|
+            candidate[:string] == source[:string]
+          end
+          next unless destination
+          next unless (source[:y] - (y1 + y2) / 2.0 + 3).abs <= 4
+
+          [ (source[:y] - (y1 + y2) / 2.0 + 3).abs, source ]
+        end
+        source = candidates.min_by(&:first)&.last
+        next unless source
+
+        measure, position = measure_position(system, source[:x])
+        { measure: measure, position: position, string: source[:string], type: "slide", label: "s", confidence: "medium" }
+      end
     end
 
     def techniques_for_system(system, texts)
@@ -1467,7 +1626,7 @@ module Tef2
       right = bars[measure_offset + 1]
       measure_ticks = system[:measure_ticks_by_measure]&.[](measure_offset) ||
         system.fetch(:measure_ticks, MEASURE_TICKS)
-      event_xs = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
+      event_xs = system[:events].select { |event| left + 4 <= event[:x] && event[:x] < right - 2 }.map { |event| event[:x] }
       geometry = system[:measure_layouts]&.[](measure_offset)
       if geometry
         step = geometry[:step]
@@ -1477,7 +1636,7 @@ module Tef2
         layout = position_layout(left, right, event_xs, measure_ticks, step)
       end
 
-      matching_events = system[:events].select { |event| left + 5 <= event[:x] && event[:x] < right - 2 }
+      matching_events = system[:events].select { |event| left + 4 <= event[:x] && event[:x] < right - 2 }
       nearest_event = matching_events.min_by { |event| (event[:x] - x).abs }
       if nearest_event && (nearest_event[:x] - x).abs <= 3
         rhythm_positions = system[:measure_rhythm_positions]&.[](measure_offset)

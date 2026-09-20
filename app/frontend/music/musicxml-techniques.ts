@@ -38,21 +38,26 @@ export function extractTechniques(source: string) {
           const unresolved = tag.textContent?.match(/(?:Unresolved TEF fingering annotation code|TEF fingering code)\s+(\d+)/i);
           const thumb = tag.textContent?.match(/TEF fingering\s+T(?:humb)?$/i);
           const rightHand = tag.textContent?.match(/TEF fingering\s+([IMP])$/i);
+          const pdfRightHand = tag.textContent?.match(/TEF right-hand fingering\s+([mpt])$/i);
+          const pdfStrum = tag.textContent?.match(/TEF strum\s+(up|down)$/i);
           const rake = tag.textContent?.match(/TEF rake/i);
           const printedTechnique = tag.textContent?.match(/TEF (slide|bend)\s+(.+)/i);
           if (rake) {
             kind = 'rake';
             number = 'R';
+          } else if (pdfStrum) {
+            kind = 'tef-strum';
+            number = pdfStrum[1].toLowerCase();
           } else if (printedTechnique) {
             kind = `tef-${printedTechnique[1].toLowerCase()}`;
             number = printedTechnique[2].trim();
           } else {
-            if (!unresolved && !thumb && !rightHand) continue;
-            kind = 'tef-fingering';
-            number = unresolved?.[1] ?? (thumb ? 'T' : rightHand![1].toUpperCase());
+            if (!unresolved && !thumb && !rightHand && !pdfRightHand) continue;
+            kind = pdfRightHand ? 'tef-right-hand' : 'tef-fingering';
+            number = unresolved?.[1] ?? (thumb ? 'T' : rightHand ? rightHand[1].toUpperCase() : pdfRightHand![1].toLowerCase());
           }
         }
-        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'rake' && kind !== 'tef-slide' && kind !== 'tef-bend') continue;
+        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'tef-right-hand' && kind !== 'rake' && kind !== 'tef-strum' && kind !== 'tef-slide' && kind !== 'tef-bend') continue;
         if (child(item, 'grace')) throw new Error('Grace-note techniques are not supported by this preview yet.');
         markers.push({ bar, tick: onset, staff: Number(value(item, 'staff') || 1) - 1, voice: value(item, 'voice') || '1',
           string: Number(value(technical, 'string')), fret: Number(value(technical, 'fret')),
@@ -92,12 +97,26 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       else note.beat.text = [note.beat.text, `TEF ${marker.number}`].filter(Boolean).join(' ');
       continue;
     }
+    if (marker.kind === 'tef-right-hand') {
+      note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
+      continue;
+    }
     if (marker.kind === 'rake') {
       note.beat.text = [note.beat.text, 'R'].filter(Boolean).join(' ');
       note.beat.brushType = model.BrushType.ArpeggioDown;
       continue;
     }
+    if (marker.kind === 'tef-strum') {
+      // AlphaTab names brush direction by the stroke gesture; its BrushDown
+      // glyph is the one with the arrowhead at the top of the tab stem.
+      note.beat.brushType = marker.number === 'up' ? model.BrushType.BrushDown : model.BrushType.BrushUp;
+      continue;
+    }
     if (marker.kind === 'tef-slide' || marker.kind === 'tef-bend') {
+      if (marker.kind === 'tef-slide' && marker.number === '/') {
+        note.slideInType = model.SlideInType.IntoFromBelow;
+        continue;
+      }
       note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
       continue;
     }
