@@ -213,11 +213,24 @@ module Tef2
           # itself is drawn as paths. Fall back whenever vector geometry is
           # present, not only when the whole page has no text layer.
           require "tef2/pdf_vector_recognizer"
-          return PdfVectorRecognizer.recognize(data, filename: filename)
+          begin
+            return PdfVectorRecognizer.recognize(data, filename: filename)
+          rescue Error
+            # Image-only PDFs can expose incidental path data (for example
+            # image masks) without exposing vector staff geometry. Let the
+            # raster recognizer handle those pages after this probe fails.
+          end
         end
-        raise Error, "No five-line tablature systems were found. This PDF may be a scan or an unsupported layout."
+        require "tef2/pdf_raster_recognizer"
+        return PdfRasterRecognizer.recognize(data, filename: filename)
       end
 
+      build_score(pages, systems, filename, time_signature: time_signature)
+    end
+
+    private
+
+    def build_score(pages, systems, filename, time_signature:, raster: false)
       notes = []
       rests = []
       ties = []
@@ -317,10 +330,17 @@ module Tef2
       end
       metadata = metadata(pages, systems)
       timing_name = timing_steps.any? { |step| step <= 64 } ? "sixteenth-note" : "eighth-note"
-      warnings = [
-        "PDF note timing is inferred from horizontal layout and rounded to the nearest #{timing_name} position.",
-        "PDF recognition cannot guarantee hidden TEF duration, voice, repeat, or source metadata fidelity."
-      ]
+      warnings = if raster
+        [
+          "Raster PDF digits and staff geometry were recovered from a page image; verify the frets before publishing.",
+          "Raster PDF note timing is inferred from horizontal layout and rounded to the nearest #{timing_name} position."
+        ]
+      else
+        [
+          "PDF note timing is inferred from horizontal layout and rounded to the nearest #{timing_name} position.",
+          "PDF recognition cannot guarantee hidden TEF duration, voice, repeat, or source metadata fidelity."
+        ]
+      end
       warnings << "The PDF tuning label was not recognized; review the imported tuning." if header_data[:tuning].empty?
       warnings << "No section labels were confidently associated with tablature measures." if metadata[:sections].empty?
       warnings << "No chord names were confidently associated with tablature measures." if metadata[:chords].empty?
@@ -360,8 +380,6 @@ module Tef2
         warnings: warnings
       }
     end
-
-    private
 
     def validate_upload!(data)
       raise Error, "PDF upload is not binary data." unless data.is_a?(String)

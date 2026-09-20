@@ -91,7 +91,7 @@ export function App() {
       if (isTef || isPdf) {
         const form = new FormData();
         form.append('file', file);
-        const converted = await apiRequest(isPdf ? '/api/pdf_imports' : '/api/tef_imports', { method: 'POST', body: form, signal: AbortSignal.timeout(isPdf ? 30000 : 25000) });
+        const converted = await apiRequest(isPdf ? '/api/pdf_imports' : '/api/tef_imports', { method: 'POST', body: form, signal: AbortSignal.timeout(isPdf ? 120000 : 25000) });
         contents = converted.musicxml;
         conversionWarnings = converted.warnings;
       } else contents = await file.text();
@@ -143,14 +143,14 @@ export function App() {
     </main>
     <dialog ref={dialog} className="import-dialog">
       <div className="dialog-heading"><div><div className="eyebrow">BRING YOUR OWN MUSIC</div><h2>Import a tab</h2></div><button className="icon-button" aria-label="Close import" onClick={() => dialog.current?.close()}>×</button></div>
-      <p>Open a TEF or vector PDF to convert and play it, or preview uncompressed MusicXML. You can also paste simple five-string tablature below.</p>
+      <p>Open a TEF or PDF to convert and play it, or preview uncompressed MusicXML. You can also paste simple five-string tablature below.</p>
       <label className="file-picker">↥ Open a file <input aria-label="Choose tablature file" type="file" accept=".txt,.json,.xml,.musicxml,.tef,.pdf" disabled={reading} onChange={e => { void readFile(e.target.files?.[0]); e.target.value = ''; }} /></label>
       <div className="import-fields"><label>Title<input value={title} maxLength={160} onChange={e => setTitle(e.target.value)} /></label><label>Assume each note is<select value={duration} onChange={e => setDuration(Number(e.target.value) as 4 | 8 | 16)}><option value={4}>A quarter note</option><option value={8}>An eighth note</option><option value={16}>A sixteenth note</option></select></label></div>
       <label className="text-label">Tablature <span>Top to bottom: D · B · G · D · g</span><textarea aria-label="Plaintext tablature" spellCheck={false} value={text} onChange={e => setText(e.target.value)} /></label>
       <p className="import-help">4/4, open G, no capo. Only frets and barlines for now. Fifth-string fret numbers are relative to its own nut. Rhythm is assumed from your choice above; blank spacing does not encode rests.</p>
       {importError && <p className="alert" role="alert">{importError}</p>}
       {reading && <p role="status">Reading and converting your file…</p>}
-      <div className="dialog-footer"><span>TEF and vector PDF preview supported.</span><button className="primary" disabled={reading} onClick={importText}>Open in player →</button></div>
+      <div className="dialog-footer"><span>TEF and selectable or scanned PDF preview supported.</span><button className="primary" disabled={reading} onClick={importText}>Open in player →</button></div>
     </dialog>
   </div>;
 }

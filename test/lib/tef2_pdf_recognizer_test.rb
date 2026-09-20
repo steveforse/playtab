@@ -1,6 +1,7 @@
 require "test_helper"
 require "tef2/pdf_recognizer"
 require "tef2/pdf_musicxml_builder"
+require "tef2/pdf_raster_recognizer"
 
 class Tef2PdfRecognizerTest < ActiveSupport::TestCase
   FakeRun = Struct.new(:x, :y, :text, :width)
@@ -181,21 +182,27 @@ class Tef2PdfRecognizerTest < ActiveSupport::TestCase
       612, 792
     )
     with_reader([ vector_only_page ]) do
-      error = assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf") }
-      assert_equal "No five-line tablature systems were found in the vector data. This PDF may be a scan or an unsupported layout.", error.message
+      Tef2::PdfRasterRecognizer.stub(:recognize, ->(*) { raise Tef2::PdfRecognizer::Error, "raster fallback failed" }) do
+        error = assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf") }
+        assert_equal "raster fallback failed", error.message
+      end
     end
 
     text_only_page = FakePage.new([ FakeRun.new(100, 750, "Demo", 20) ], [], 612, 792)
     with_reader([ text_only_page ]) do
-      error = assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf") }
-      assert_equal "No five-line tablature systems were found. This PDF may be a scan or an unsupported layout.", error.message
+      Tef2::PdfRasterRecognizer.stub(:recognize, ->(*) { raise Tef2::PdfRecognizer::Error, "raster fallback failed" }) do
+        error = assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7 synthetic", filename: "Demo.pdf") }
+        assert_equal "raster fallback failed", error.message
+      end
     end
   end
 
   test "rejects PDFs without systems or notes" do
     no_systems = FakeReader.new([ empty_page ])
     with_reader(no_systems.pages) do
-      assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7") }
+      Tef2::PdfRasterRecognizer.stub(:recognize, ->(*) { raise Tef2::PdfRecognizer::Error, "raster fallback failed" }) do
+        assert_raises(Tef2::PdfRecognizer::Error) { Tef2::PdfRecognizer.recognize("%PDF-1.7") }
+      end
     end
 
     no_notes = FakeReader.new([ staff_page(note_texts: []) ])
