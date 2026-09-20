@@ -38,7 +38,7 @@ const scoreViews: Record<ScoreView, { label: string; width?: string; height?: st
   'letter-landscape': { label: 'Letter · Landscape', width: '11in', height: '8.5in', pageSize: 'letter landscape' },
 };
 
-function cssLengthInPixels(value: string) {
+export function cssLengthInPixels(value: string) {
   const match = value.match(/^([\d.]+)(mm|in|px)$/);
   if (!match) return Number.parseFloat(value) || 0;
   const amount = Number(match[1]);
@@ -106,7 +106,7 @@ export function paginateAlphaTabSurface(surface: HTMLElement, view: ScoreView, h
   surface.dataset.playtabOriginalPageTops = JSON.stringify(pageTops);
 }
 
-function paginatedPageForY(root: HTMLElement, originalY: number) {
+export function paginatedPageForY(root: HTMLElement, originalY: number) {
   const surface = root.matches('.at-surface') ? root : root.querySelector<HTMLElement>('.at-surface');
   if (!surface) return { page: undefined, pageIndex: 0, pageTops: [] as number[] };
   const pages = Array.from(surface.querySelectorAll<HTMLElement>('.score-page'));
@@ -121,7 +121,7 @@ function paginatedPageForY(root: HTMLElement, originalY: number) {
   return { page, pageIndex, pageTops };
 }
 
-function paginatedCursorPosition(root: HTMLElement, originalY: number) {
+export function paginatedCursorPosition(root: HTMLElement, originalY: number) {
   const { page, pageIndex, pageTops } = paginatedPageForY(root, originalY);
   if (!page) return { x: 0, y: originalY };
   const surface = page.parentElement;
@@ -132,7 +132,7 @@ function paginatedCursorPosition(root: HTMLElement, originalY: number) {
   };
 }
 
-function paginatedPoint(root: HTMLElement, event: MouseEvent) {
+export function paginatedPoint(root: HTMLElement, event: MouseEvent) {
   const surface = root.matches('.at-surface') ? root : root.querySelector<HTMLElement>('.at-surface');
   if (!surface) return null;
   const pages = Array.from(surface.querySelectorAll<HTMLElement>('.score-page'));
@@ -151,7 +151,7 @@ function paginatedPoint(root: HTMLElement, event: MouseEvent) {
   };
 }
 
-function createPaginatedInteractionHandlers(root: HTMLElement, api: AlphaTabApi) {
+export function createPaginatedInteractionHandlers(root: HTMLElement, api: AlphaTabApi) {
   let selectionStart: model.Beat | null = null;
   let interactionActive = false;
 
@@ -197,7 +197,7 @@ function createPaginatedInteractionHandlers(root: HTMLElement, api: AlphaTabApi)
   };
 }
 
-function mapPaginatedSelection(root: HTMLElement, blocks: Array<{ x: number; y: number }>) {
+export function mapPaginatedSelection(root: HTMLElement, blocks: Array<{ x: number; y: number }>) {
   const overlays = Array.from(root.querySelectorAll<HTMLElement>('.at-selection > *'));
   blocks.forEach((block, index) => {
     const overlay = overlays[index];
@@ -213,7 +213,7 @@ function mapPaginatedSelection(root: HTMLElement, blocks: Array<{ x: number; y: 
   });
 }
 
-function createPaginatedCursorHandler(root: HTMLElement) {
+export function createPaginatedCursorHandler(root: HTMLElement) {
   const handler: NonNullable<AlphaTabApi['customCursorHandler']> = {
     onAttach: () => {},
     onDetach: () => {},

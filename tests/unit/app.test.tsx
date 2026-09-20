@@ -8,7 +8,7 @@ import { exportAscii } from '../../app/frontend/music/ascii';
 
 const { readMusicXml } = vi.hoisted(() => ({ readMusicXml: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
-  Player: () => <div data-testid="player" />,
+  Player: ({ onPreferencesChange }: { onPreferencesChange?: (changes: any) => void }) => <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>,
   defaultPlayerPreferences: () => ({
     speed: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
     scoreView: 'continuous', scrollDirection: 'vertical', showChordDiagrams: false,
@@ -64,6 +64,9 @@ describe('workspace application', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/songs', expect.anything()));
     fireEvent.click(screen.getByRole('button', { name: /Practice demo/ }));
+    fireEvent.click(screen.getByTestId('player'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss practice tip' }));
+    expect(screen.queryByRole('note', { name: 'Practice tip' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Import a tab/ }));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Morning tune' } });
     fireEvent.change(screen.getByLabelText('Plaintext tablature'), { target: { value: exportAscii(demo) } });
@@ -114,6 +117,7 @@ describe('workspace application', () => {
     selectFile('notes.pdf', 'raw pdf');
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pdf_imports', expect.objectContaining({ method: 'POST' })));
     await waitFor(() => expect(screen.getByText('PDF warning')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss import warnings' }));
     openImport();
     selectFile('notes.mid');
     expect((await screen.findByRole('alert')).textContent).toContain('Choose a .tef');

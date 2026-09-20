@@ -42,7 +42,21 @@ vi.mock('@coderline/alphatab', () => ({
 }));
 vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlphaTab }));
 
-import { availableSoundFonts, createHorizontalPageScrollHandler, paginateAlphaTabSurface, Player, downloadBytes } from '../../app/frontend/Player';
+import {
+  availableSoundFonts,
+  createHorizontalPageScrollHandler,
+  createPaginatedCursorHandler,
+  createPaginatedInteractionHandlers,
+  cssLengthInPixels,
+  defaultPlayerPreferences,
+  downloadBytes,
+  mapPaginatedSelection,
+  paginateAlphaTabSurface,
+  paginatedCursorPosition,
+  paginatedPageForY,
+  paginatedPoint,
+  Player,
+} from '../../app/frontend/Player';
 
 Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
 
@@ -86,6 +100,8 @@ describe('notation player', () => {
     expect(api.renderScore).toHaveBeenCalled();
     expect(screen.getByRole('region', { name: 'Playback settings' })).toBeTruthy();
     expect(screen.getAllByText('Ready when you are')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss playback tips' }));
+    expect(screen.queryByRole('note', { name: 'Playback tips' })).toBeNull();
 
     act(() => {
       api.playerStateChanged.emit({ state: 1 });
@@ -162,6 +178,119 @@ describe('notation player', () => {
     expect(surface.dataset.playtabPaginationDirection).toBe('horizontal');
   });
 
+  it('covers pagination coordinate helpers, cursor placement, and selection mapping', () => {
+    expect(cssLengthInPixels('10mm')).toBeCloseTo(10 * 96 / 25.4);
+    expect(cssLengthInPixels('2in')).toBe(192);
+    expect(cssLengthInPixels('12px')).toBe(12);
+    expect(cssLengthInPixels('auto')).toBe(0);
+
+    const empty = document.createElement('div');
+    paginateAlphaTabSurface(empty, 'continuous');
+    expect(paginatedPageForY(empty, 10).page).toBeUndefined();
+    expect(paginatedCursorPosition(empty, 10)).toEqual({ x: 0, y: 10 });
+    expect(paginatedPoint(empty, new MouseEvent('mousemove'))).toBeNull();
+
+    const blankRoot = document.createElement('div');
+    const blankSurface = document.createElement('div');
+    blankSurface.className = 'at-surface';
+    blankRoot.append(blankSurface);
+    expect(paginatedPageForY(blankRoot, 10).page).toBeUndefined();
+
+    const root = document.createElement('div');
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    surface.style.marginLeft = '12px';
+    surface.dataset.playtabOriginalPageTops = JSON.stringify([0, 100]);
+    const firstPage = document.createElement('div');
+    firstPage.className = 'score-page';
+    const secondPage = document.createElement('div');
+    secondPage.className = 'score-page';
+    Object.defineProperties(firstPage, { offsetLeft: { value: 10 }, offsetTop: { value: 5 } });
+    Object.defineProperties(secondPage, { offsetLeft: { value: 210 }, offsetTop: { value: 10 } });
+    vi.spyOn(firstPage, 'getBoundingClientRect').mockReturnValue({ left: 0, right: 200, top: 0, bottom: 200 } as DOMRect);
+    vi.spyOn(secondPage, 'getBoundingClientRect').mockReturnValue({ left: 210, right: 410, top: 0, bottom: 200 } as DOMRect);
+    surface.append(firstPage, secondPage);
+    root.append(surface);
+
+    expect(paginatedPageForY(root, 150).page).toBe(secondPage);
+    expect(paginatedCursorPosition(root, 150)).toEqual({ x: 222, y: 60 });
+    expect(paginatedPoint(root, new MouseEvent('mousemove', { clientX: 220, clientY: 20 }))).toEqual({ x: 10, y: 120, pageIndex: 1 });
+    expect(paginatedPoint(root, new MouseEvent('mousemove', { clientX: 500, clientY: 20 }))).toBeNull();
+
+    const selection = document.createElement('div');
+    selection.className = 'at-selection';
+    const overlay = document.createElement('div');
+    overlay.style.transform = 'scale(0.5) translate(10px, 20px)';
+    selection.append(overlay);
+    root.append(selection);
+    mapPaginatedSelection(root, [{ x: 7, y: 150 }, { x: 8, y: 150 }]);
+    expect(overlay.style.left).toBe('229px');
+    expect(overlay.style.top).toBe('60px');
+    expect(overlay.style.transform).toBe('scale(0.5)');
+
+    const cursorHandler: any = createPaginatedCursorHandler(root);
+    cursorHandler.onAttach();
+    cursorHandler.onDetach();
+    const bounds = { barBounds: { masterBarBounds: { visualBounds: { x: 10, y: 50, w: 80, h: 30 } } } };
+    const barCursor = { setBounds: vi.fn() };
+    const beatCursor = { setBounds: vi.fn(), transitionToX: vi.fn() };
+    cursorHandler.placeBarCursor(barCursor, bounds);
+    cursorHandler.placeBeatCursor(beatCursor, bounds, 20);
+    cursorHandler.transitionBeatCursor(beatCursor, bounds, 20, 30, 100, 0);
+    expect(barCursor.setBounds).toHaveBeenCalledWith(32, 55, 80, 30);
+    expect(beatCursor.transitionToX).toHaveBeenCalled();
+  });
+
+  it('handles fixed-page mouse selection and cleans up its listeners', () => {
+    const root = document.createElement('div');
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    surface.dataset.playtabOriginalPageTops = JSON.stringify([0]);
+    const page = document.createElement('div');
+    page.className = 'score-page';
+    vi.spyOn(page, 'getBoundingClientRect').mockReturnValue({ left: 0, right: 200, top: 0, bottom: 200 } as DOMRect);
+    surface.append(page);
+    root.append(surface);
+    const api = new alphaTab.FakeAlphaTabApi();
+    const beat = {};
+    const lookup = vi.fn(() => beat);
+    (api as any).boundsLookup = { getBeatAtPos: lookup };
+    const detach = createPaginatedInteractionHandlers(root, api as any);
+
+    fireEvent.mouseMove(root, { clientX: 20, clientY: 20 });
+    fireEvent.mouseUp(window, { clientX: 20, clientY: 20 });
+    fireEvent.mouseDown(root, { button: 2, clientX: 20, clientY: 20 });
+    fireEvent.mouseDown(root, { button: 0, clientX: 20, clientY: 20 });
+    fireEvent.mouseMove(root, { clientX: 25, clientY: 25 });
+    fireEvent.mouseUp(window, { clientX: 25, clientY: 25 });
+    expect(api.highlightPlaybackRange).toHaveBeenCalled();
+    expect(api.applyPlaybackRangeFromHighlight).toHaveBeenCalledOnce();
+    const callCount = (api.highlightPlaybackRange as any).mock.calls.length;
+    detach();
+    fireEvent.mouseDown(root, { button: 0, clientX: 20, clientY: 20 });
+    expect((api.highlightPlaybackRange as any).mock.calls.length).toBe(callCount);
+  });
+
+  it('paginates after render and maps playback highlight callbacks', () => {
+    const preferences = { ...defaultPlayerPreferences(), scoreView: 'a4-portrait' as const };
+    render(<Player score={demo} preferences={preferences} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    screen.getByTestId('notation').append(surface);
+    const original = Object.getOwnPropertyDescriptor(window, 'requestAnimationFrame');
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: (callback: FrameRequestCallback) => { callback(0); return 0; } });
+    act(() => {
+      api.renderFinished.emit();
+      api.playbackRangeHighlightChanged.emit({ highlightBlocks: [] });
+    });
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: undefined });
+    act(() => api.renderFinished.emit());
+    if (original) Object.defineProperty(window, 'requestAnimationFrame', original);
+    else delete (window as any).requestAnimationFrame;
+    expect(api.renderScore).toHaveBeenCalled();
+  });
+
   it('scrolls fixed horizontal pages only when playback crosses a page', () => {
     const root = document.createElement('div');
     const surface = document.createElement('div');
@@ -195,6 +324,7 @@ describe('notation player', () => {
     expect(scrollTo).toHaveBeenCalledTimes(2);
     handler.forceScrollTo(beat(1_200, 300) as any);
     expect(scrollTo).toHaveBeenCalledTimes(3);
+    (handler as any)[Symbol.dispose]();
   });
 
   it('initializes persistent player preferences supplied by the host app', () => {
@@ -266,6 +396,23 @@ describe('notation player', () => {
     expect(api.downloadMidi).toHaveBeenCalledOnce();
     expect(api.print).toHaveBeenCalledOnce();
     vi.runAllTimers();
+  });
+
+  it('uses native dialog methods when the browser provides them', () => {
+    const originalShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+    const originalClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close');
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value() { this.open = true; } });
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
+    try {
+      readyPlayer();
+      exportScore('txt');
+      expect(document.querySelector('.export-dialog')).toBeTruthy();
+    } finally {
+      if (originalShowModal) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', originalShowModal);
+      else delete (HTMLDialogElement.prototype as any).showModal;
+      if (originalClose) Object.defineProperty(HTMLDialogElement.prototype, 'close', originalClose);
+      else delete (HTMLDialogElement.prototype as any).close;
+    }
   });
 
   it('exports imported MusicXML, configures lyrics, and reports blocked print windows', () => {
