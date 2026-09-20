@@ -27,6 +27,23 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_equal [ [ 10, 11, 12 ], [ 40, 45 ], [ 100 ] ], recognizer.send(:cluster_pixels, [ 12, 10, 11, 45, 40, 100 ], 5)
   end
 
+  test "rejects full-height note stems as raster barlines" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    width = 40
+    height = 90
+    pixels = "\xff".b * (width * height)
+    line_pixels = [ 20, 28, 36, 44, 52 ]
+
+    line_pixels.each do |y|
+      width.times { |x| pixels.setbyte(y * width + x, 0) }
+    end
+    (20..52).each { |y| pixels.setbyte(y * width + 10, 0) }
+    (14..68).each { |y| pixels.setbyte(y * width + 20, 0) }
+
+    assert_equal false, recognizer.send(:note_stem_extension?, pixels, width, 10, 20, 52)
+    assert_equal true, recognizer.send(:note_stem_extension?, pixels, width, 20, 20, 52)
+  end
+
   test "merges digit fragments split by a staff line" do
     recognizer = Tef2::PdfRasterRecognizer.new
     fragments = [
@@ -45,6 +62,17 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     component = { x: 10, y: 0, width: 16, height: 24, area: 100 }
 
     assert_equal "0", recognizer.send(:raster_component_value, nil, component, 100, [ 100, 124, 148, 172, 196 ])
+  end
+
+  test "deduplicates overlapping raster glyph notes on one string" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    notes = [
+      { x: 100, string: 0, fret: 0 },
+      { x: 103, string: 0, fret: 9 },
+      { x: 103, string: 1, fret: 2 }
+    ]
+
+    assert_equal [ notes[0], notes[2] ], recognizer.send(:deduplicate_raster_notes, notes)
   end
 
   test "detects a stacked two-four time signature from OCR labels" do
@@ -107,9 +135,20 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     }
     assert_equal [ [ 0, 0 ], [ 2, 0 ] ], notes_for.call(0)
     assert_equal [ 0 ], score[:notes].select { |note| note[:measure] == 0 }.map { |note| note[:position] }.uniq
-    assert_equal [ [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 0, 0 ], [ 1, 3 ], [ 4, 0 ], [ 1, 0 ], [ 0, 0 ] ], notes_for.call(1)
+    assert_equal [
+      [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 0, 0 ], [ 1, 3 ], [ 4, 0 ], [ 1, 0 ], [ 0, 0 ], [ 4, 0 ]
+    ], notes_for.call(1)
+    assert_equal [
+      [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 1, 3 ], [ 4, 0 ], [ 1, 0 ], [ 0, 0 ], [ 4, 0 ]
+    ], notes_for.call(2)
+    assert_equal [
+      [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 1, 3 ], [ 0, 0 ], [ 4, 0 ], [ 2, 3 ],
+      [ 0, 0 ], [ 2, 2 ], [ 4, 0 ]
+    ], notes_for.call(3)
     assert_includes score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) },
       { measure: 1, position: 0, string: 1, type: "hammer-on" }
+    assert_includes score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) },
+      { measure: 3, position: 320, string: 2, type: "pull-off" }
     assert score[:warnings].any? { |warning| warning.start_with?("Raster PDF") }
   end
 end

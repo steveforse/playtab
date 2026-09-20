@@ -35,6 +35,7 @@ module Tef2
       "h" => "hammer-on",
       "ho" => "hammer-on",
       "hammeron" => "hammer-on",
+      "p" => "pull-off",
       "po" => "pull-off",
       "pulloff" => "pull-off",
       "p/o" => "pull-off",

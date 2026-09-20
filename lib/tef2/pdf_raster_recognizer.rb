@@ -230,9 +230,20 @@ module Tef2
       minimum_run = ((pixel_bottom - pixel_top) * 0.94).round
       candidates = (x0..x1).filter_map do |x|
         run = longest_vertical_run(pixels, width, x, first_y, last_y)
-        x if run >= minimum_run && vertical_gap_coverage(pixels, width, x, line_pixels) == line_pixels.length - 1
+        next unless run >= minimum_run
+        next unless vertical_gap_coverage(pixels, width, x, line_pixels) == line_pixels.length - 1
+        next if note_stem_extension?(pixels, width, x, pixel_top, pixel_bottom)
+
+        x
       end
       cluster_pixels(candidates, 4).map { |cluster| cluster.sum.fdiv(cluster.length) }
+    end
+
+    def note_stem_extension?(pixels, width, x, pixel_top, pixel_bottom)
+      above = longest_vertical_run(pixels, width, x, [ pixel_top - 28, 0 ].max, pixel_top - 6)
+      below = longest_vertical_run(pixels, width, x, pixel_bottom + 7, pixel_bottom + 28)
+
+      above >= 5 || below >= 5
     end
 
     def vertical_gap_coverage(pixels, width, x, line_pixels)
@@ -284,12 +295,15 @@ module Tef2
       components = merge_staff_fragments(raw_components)
       values = ocr_components(components, directory, pixels, width, crop_x, crop_y)
       items = components.each_with_index.filter_map do |component, index|
-        value = raster_component_value(values[index], component, crop_y, line_pixels)
+        raw_value = values[index]
+        fallback_zero = (raw_value.nil? || raw_value == "8") && zero_candidate?(component, crop_y, line_pixels)
+        value = raster_component_value(raw_value, component, crop_y, line_pixels)
         next unless value&.match?(/\A\d\z/)
 
         x = (crop_x + component[:x]) * scale_x
-        y = page.height - (crop_y + component[:y] + component[:height]) * scale_y
-        { x: x, y: y, text: value, end_x: (crop_x + component[:x] + component[:width]) * scale_x }
+        y = page.height - (crop_y + component[:y] + component[:height] / 2.0) * scale_y
+        { x: x, y: y, text: value, end_x: (crop_x + component[:x] + component[:width]) * scale_x,
+          source: :component, fallback_zero: fallback_zero }
       end
       items.reject! { |item| item[:x] <= (crop_x + 70) * scale_x if signature_zone?(raw_components, crop_x, crop_y, line_pixels) }
       items = merge_multi_digit_frets(items)
@@ -297,16 +311,17 @@ module Tef2
       row_positions = 5.times.map { |index| page.height - (line_pixels.first + index * (line_pixels.last - line_pixels.first) / 4.0) * scale_y }
       notes = items.filter_map do |item|
         nearest = (0...5).min_by { |index| (item[:y] - row_positions[index]).abs }
-        next unless (item[:y] - row_positions[nearest] + 3.6).abs <= 5.5
+        next unless (item[:y] - row_positions[nearest]).abs <= 5.5
 
-        { x: item[:x], y: item[:y], string: nearest, fret: item[:text].to_i, dead: false, ghost: false, dotted: false }
+        { x: item[:x], y: item[:y], string: nearest, fret: item[:text].to_i, dead: false, ghost: false, dotted: false,
+          source: item[:source], fallback_zero: item[:fallback_zero] }
       end
       notes.concat(raster_glyph_notes(
         raw_components, pixels, width, crop_x, crop_y, line_pixels, page, scale_x, scale_y, directory,
         existing_notes: notes
       ))
       events = []
-      notes.sort_by { |note| note[:x] }.each do |note|
+      deduplicate_raster_notes(notes).sort_by { |note| note[:x] }.each do |note|
         event = events.find { |candidate| (candidate[:x] - note[:x]).abs < 3 }
         if event
           event[:notes] << note
@@ -315,6 +330,19 @@ module Tef2
         end
       end
       events
+    end
+
+    def deduplicate_raster_notes(notes)
+      notes.each_with_object([]) do |note, result|
+        duplicate = result.find { |candidate| candidate[:string] == note[:string] && (candidate[:x] - note[:x]).abs < 5 }
+        if duplicate
+          index = result.index(duplicate)
+          result[index] = note if duplicate[:fallback_zero] && note[:source] == :glyph && note[:fret] != 9
+          next
+        end
+
+        result << note
+      end
     end
 
     def merge_staff_fragments(components)
@@ -389,7 +417,8 @@ module Tef2
 
         x = (crop_x + group[:x0]) * scale_x
         string = group[:row]
-        next if existing_notes.any? { |note| note[:string] == string && (note[:x] - x).abs < 5 }
+        existing = existing_notes.find { |note| note[:string] == string && (note[:x] - x).abs < 5 }
+        next if existing && !(existing[:fallback_zero] && value.to_i.between?(1, 8))
 
         {
           x: x,
@@ -398,7 +427,9 @@ module Tef2
           fret: value.to_i,
           dead: false,
           ghost: false,
-          dotted: false
+          dotted: false,
+          source: :glyph,
+          fallback_zero: false
         }
       end
     end
