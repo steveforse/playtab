@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Player } from './Player';
+import { defaultPlayerPreferences, Player, type PlayerPreferences } from './Player';
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
@@ -31,12 +31,15 @@ export function App() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [showWarnings, setShowWarnings] = useState(false);
+  const [showPracticeTip, setShowPracticeTip] = useState(true);
   const dialog = useRef<HTMLDialogElement>(null);
   const [text, setText] = useState(initialText);
   const [title, setTitle] = useState('My banjo tab');
   const [duration, setDuration] = useState<4 | 8 | 16>(8);
   const [importError, setImportError] = useState('');
   const [reading, setReading] = useState(false);
+  const [playerPreferences, setPlayerPreferences] = useState<PlayerPreferences>(defaultPlayerPreferences);
 
   async function signOut() {
     const response = await fetch('/session', {
@@ -50,10 +53,10 @@ export function App() {
   useEffect(() => { apiRequest('/api/songs').then(setLibrary).catch(e => setError(e.message)); }, []);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null) {
     setPreview(null);
-    setScore(next); setSource(original); setWarnings(diagnostics); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
+    setScore(next); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null) {
-    setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
+    setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   async function openSong(id: number) {
     try {
@@ -113,21 +116,28 @@ export function App() {
       <a className="brand" href="/" aria-label="Playtab home"><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
       <div className="sidebar-section">YOUR WORKSPACE</div>
       <button className="nav-item active" onClick={() => document.getElementById('library-list')?.scrollIntoView()}>▤ <span>My library</span><span className="count">{library.length}</span></button>
-      <button className="nav-item" onClick={() => { load(demo, null); }}>♩ <span>Practice demo</span></button>
-      <div className="library-heading" id="library-list">SAVED TABS</div>
-      {library.length === 0 ? <p className="empty-library">A home for the tunes<br />you’re working on.</p> : <div className="library-list">{library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => openSong(item.id)}>{item.title}</button>)}</div>}
+      <div className="library-list" id="library-list">
+        {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={() => { load(demo, null); }}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => openSong(item.id)}>{item.title}</button>)}
+      </div>
+      <div id="playback-controls" className="sidebar-playback" />
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
     </aside>
     <main>
       <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={() => { void signOut().catch(e => setError(e.message)); }}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
       <div className="workspace">
         <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
-        <div className="title-row"><div><h1>{preview?.score.title ?? score.title}</h1><p className="subtitle">5-string banjo <span>·</span> {preview ? preview.tuningLabel : 'Open G tuning'} <span>·</span> {preview?.score.masterBars.length ?? score.measures.length} measures</p></div><button className="save-button" disabled={saving || !dirty} onClick={save}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : '＋ Save to library'}</button></div>
+        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><button className="save-button" disabled={saving || !dirty} onClick={save}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : '＋ Save to library'}</button></div>
         {error && <p className="alert" role="alert">{error}</p>}
         {message && <p className="success" role="status">{message}</p>}
-        {warnings.length > 0 && <details className="import-notice" open><summary>Check your import</summary>{warnings.map(warning => <p key={warning}>{warning}</p>)}</details>}
-        <div className="practice-note"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span></div>
-        <Player key={preview?.id ?? JSON.stringify(score)} score={score} preview={preview} />
+        {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}
+        {showPracticeTip && <aside className="practice-note" role="note" aria-label="Practice tip"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span><button type="button" className="tip-dismiss" aria-label="Dismiss practice tip" onClick={() => setShowPracticeTip(false)}>×</button></aside>}
+        <Player
+          key={preview?.id ?? JSON.stringify(score)}
+          score={score}
+          preview={preview}
+          preferences={playerPreferences}
+          onPreferencesChange={changes => setPlayerPreferences(current => ({ ...current, ...changes }))}
+        />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
     </main>

@@ -18,6 +18,8 @@ const alphaTab = vi.hoisted(() => {
     playerPositionChanged = new EventBus<{ currentTime: number; endTime: number }>();
     renderFinished = new EventBus<void>();
     error = new EventBus<{ message?: string }>();
+    playbackRangeHighlightChanged = new EventBus<any>();
+    boundsLookup = null;
     playbackSpeed = 1;
     isLooping = false;
     metronomeVolume = 0;
@@ -27,6 +29,8 @@ const alphaTab = vi.hoisted(() => {
     playPause = vi.fn();
     downloadMidi = vi.fn();
     print = vi.fn();
+    highlightPlaybackRange = vi.fn();
+    applyPlaybackRangeFromHighlight = vi.fn();
     constructor(_element: unknown, settings: unknown) { this.settings = settings; FakeAlphaTabApi.latest = this; }
   }
   return { FakeAlphaTabApi, toAlphaTab: vi.fn(() => ({ tracks: [] })) };
@@ -38,7 +42,7 @@ vi.mock('@coderline/alphatab', () => ({
 }));
 vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlphaTab }));
 
-import { availableSoundFonts, Player, downloadBytes } from '../../app/frontend/Player';
+import { availableSoundFonts, createHorizontalPageScrollHandler, paginateAlphaTabSurface, Player, downloadBytes } from '../../app/frontend/Player';
 
 Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
 
@@ -63,6 +67,12 @@ function readyPlayer(nextPreview: any = null) {
   return api;
 }
 
+function exportScore(format: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Export', exact: true }));
+  fireEvent.change(screen.getByLabelText('Export format'), { target: { value: format } });
+  fireEvent.click(screen.getByRole('button', { name: 'Export file', exact: true }));
+}
+
 describe('notation player', () => {
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {
     const api = readyPlayer();
@@ -70,16 +80,19 @@ describe('notation player', () => {
     expect((api.settings as any).player.soundFont).toBe(`/notation/soundfont/${availableSoundFonts[0].filename}`);
     expect((api.settings as any).display.barsPerRow).toBe(4);
     if (availableSoundFonts.length > 1) expect(screen.getByLabelText('Sound bank')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Lyrics & chords' })).toBeNull();
+    expect(screen.queryByText('5 strings')).toBeNull();
     expect((screen.getByLabelText('Hide TAB labels') as HTMLInputElement).checked).toBe(false);
     expect(api.renderScore).toHaveBeenCalled();
-    expect(screen.getAllByText('Ready when you are')).toHaveLength(2);
+    expect(screen.getByRole('region', { name: 'Playback settings' })).toBeTruthy();
+    expect(screen.getAllByText('Ready when you are')).toHaveLength(1);
 
     act(() => {
       api.playerStateChanged.emit({ state: 1 });
       api.playerPositionChanged.emit({ currentTime: 61_000, endTime: 125_000 });
     });
-    expect(screen.getAllByText('Playing')).toHaveLength(2);
-    expect(screen.getAllByText('1:01 / 2:05')).toHaveLength(2);
+    expect(screen.getAllByText('Playing')).toHaveLength(1);
+    expect(screen.getAllByText('1:01 / 2:05')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     expect(api.stop).toHaveBeenCalledOnce();
@@ -94,6 +107,120 @@ describe('notation player', () => {
 
     act(() => api.error.emit({ message: '' }));
     expect(screen.getByRole('alert').textContent).toContain('Notation or audio could not load.');
+  });
+
+  it('offers paper-size views and horizontal score scrolling', () => {
+    const api = readyPlayer();
+    expect((screen.getByLabelText('Score view') as HTMLSelectElement).value).toBe('continuous');
+    expect((screen.getByLabelText('Scroll direction') as HTMLSelectElement).value).toBe('vertical');
+    expect((api.settings as any).display.layoutMode).toBe('page');
+
+    fireEvent.change(screen.getByLabelText('Score view'), { target: { value: 'a4-portrait' } });
+    expect(screen.getByLabelText('Banjo tablature').classList.contains('score-paper-a4-portrait')).toBe(true);
+    fireEvent.change(screen.getByLabelText('Scroll direction'), { target: { value: 'horizontal' } });
+    expect(screen.getByLabelText('Banjo tablature').classList.contains('score-paper-horizontal')).toBe(true);
+    expect(screen.getByLabelText('Banjo tablature').classList.contains('score-paper-paginated')).toBe(true);
+    expect((alphaTab.FakeAlphaTabApi.latest.settings as any).display.layoutMode).toBe('page');
+    fireEvent.change(screen.getByLabelText('Score view'), { target: { value: 'continuous' } });
+    expect((alphaTab.FakeAlphaTabApi.latest.settings as any).display.layoutMode).toBe('horizontal');
+    expect((alphaTab.FakeAlphaTabApi.latest.settings as any).player.scrollElement).toBe(screen.getByTestId('notation').closest('.score-viewport'));
+  });
+
+  it('splits rendered alphaTab systems into page-sized HTML sheets', () => {
+    const surface = document.createElement('div');
+    for (const [top, height] of [[10, 80], [500, 80], [1_050, 80], [1_170, 80]]) {
+      const system = document.createElement('div');
+      system.style.position = 'absolute';
+      system.style.top = `${top}px`;
+      system.style.height = `${height}px`;
+      surface.append(system);
+    }
+    paginateAlphaTabSurface(surface, 'a4-portrait');
+    expect(surface.querySelectorAll('.score-page')).toHaveLength(2);
+    expect(surface.querySelector('[data-page-number="2"]')?.querySelector('[data-playtab-page="2"]')).toBeTruthy();
+    expect(surface.querySelector('[data-page-number="2"]')?.children[1]).toBeTruthy();
+    expect((surface.querySelector('[data-page-number="2"]')?.children[1] as HTMLElement).style.top).toBe('120px');
+    expect(surface.dataset.playtabPaginated).toBe('a4-portrait');
+    expect(JSON.parse(surface.dataset.playtabOriginalPageTops || '[]')).toEqual([0, 1_050]);
+  });
+
+  it('keeps fixed pages side by side in horizontal mode', () => {
+    const surface = document.createElement('div');
+    surface.style.width = '740px';
+    for (const [top, height] of [[10, 80], [1_050, 80], [1_170, 80]]) {
+      const system = document.createElement('div');
+      system.style.position = 'absolute';
+      system.style.top = String(top) + 'px';
+      system.style.height = String(height) + 'px';
+      surface.append(system);
+    }
+    paginateAlphaTabSurface(surface, 'a4-portrait', true);
+    expect(surface.querySelectorAll('.score-page')).toHaveLength(2);
+    expect(surface.style.height).toBe(String(297 * 96 / 25.4 - 48) + 'px');
+    expect(surface.querySelector('.score-page')?.style.width).toBe('794px');
+    expect((surface.querySelector('[data-page-number="2"]')?.children[1] as HTMLElement).style.top).toBe('120px');
+    expect(surface.dataset.playtabPaginationDirection).toBe('horizontal');
+  });
+
+  it('scrolls fixed horizontal pages only when playback crosses a page', () => {
+    const root = document.createElement('div');
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    surface.dataset.playtabOriginalPageTops = JSON.stringify([0, 1_000]);
+    const firstPage = document.createElement('div');
+    firstPage.className = 'score-page';
+    const secondPage = document.createElement('div');
+    secondPage.className = 'score-page';
+    surface.append(firstPage, secondPage);
+    root.append(surface);
+    const viewport = document.createElement('div');
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 400 });
+    Object.defineProperty(viewport, 'scrollLeft', { configurable: true, writable: true, value: 0 });
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0 } as DOMRect);
+    vi.spyOn(firstPage, 'getBoundingClientRect').mockReturnValue({ left: 0 } as DOMRect);
+    vi.spyOn(secondPage, 'getBoundingClientRect').mockReturnValue({ left: 800 } as DOMRect);
+    const scrollTo = vi.fn();
+    Object.defineProperty(viewport, 'scrollTo', { configurable: true, value: scrollTo });
+    const handler = createHorizontalPageScrollHandler(root, viewport);
+    const beat = (y: number, x = 100) => ({ barBounds: { masterBarBounds: { visualBounds: { x, y } } } });
+
+    handler.onBeatCursorUpdating(beat(100) as any, undefined, 0 as any, 0, 0, 0);
+    handler.onBeatCursorUpdating(beat(200, 200) as any, undefined, 0 as any, 0, 0, 0);
+    expect(scrollTo).toHaveBeenCalledOnce();
+    expect(scrollTo).toHaveBeenNthCalledWith(1, { left: 0, behavior: 'smooth' });
+    handler.onBeatCursorUpdating(beat(1_100) as any, undefined, 0 as any, 0, 0, 0);
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    expect(scrollTo).toHaveBeenNthCalledWith(2, { left: 800, behavior: 'smooth' });
+    handler.onBeatCursorUpdating(beat(1_200, 300) as any, undefined, 0 as any, 0, 0, 0);
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    handler.forceScrollTo(beat(1_200, 300) as any);
+    expect(scrollTo).toHaveBeenCalledTimes(3);
+  });
+
+  it('initializes persistent player preferences supplied by the host app', () => {
+    const preferences = {
+      speed: 0.75, loop: true, metronome: true, barsPerRow: 2, lyricsColumns: 3,
+      scoreView: 'letter-landscape' as const, scrollDirection: 'horizontal' as const,
+      showChordDiagrams: true, hideTabClef: true, soundFontId: availableSoundFonts[0].id,
+    };
+    render(<Player score={demo} preview={preview} preferences={preferences} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    act(() => {
+      api.playerReady.emit();
+      api.renderFinished.emit();
+    });
+    expect((screen.getByLabelText('Playback speed') as HTMLInputElement).value).toBe('0.75');
+    expect((screen.getByRole('button', { name: /Loop/ }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
+    expect((screen.getByLabelText('Measures per line') as HTMLSelectElement).value).toBe('2');
+    expect((screen.getByLabelText('Score view') as HTMLSelectElement).value).toBe('letter-landscape');
+    expect((screen.getByLabelText('Scroll direction') as HTMLSelectElement).value).toBe('horizontal');
+    expect((screen.getByLabelText('Hide TAB labels') as HTMLInputElement).checked).toBe(true);
+    expect((api.settings as any).display).toMatchObject({ barsPerRow: 2, layoutMode: 'page' });
+    expect(api.playbackSpeed).toBe(0.75);
+    expect(api.isLooping).toBe(true);
+    expect(api.metronomeVolume).toBe(0.6);
+    expect((api as any).customCursorHandler).toBeTruthy();
+    expect((api as any).customScrollHandler).toBeTruthy();
   });
 
   it('switches between available comparison sound banks', async () => {
@@ -131,11 +258,10 @@ describe('notation player', () => {
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
 
-    const select = screen.getByLabelText('Export score');
-    fireEvent.change(select, { target: { value: 'txt' } });
-    fireEvent.change(select, { target: { value: 'json' } });
-    fireEvent.change(select, { target: { value: 'midi' } });
-    fireEvent.change(select, { target: { value: 'pdf' } });
+    exportScore('txt');
+    exportScore('json');
+    exportScore('midi');
+    exportScore('pdf');
     expect(createObjectURL).toHaveBeenCalledTimes(2);
     expect(api.downloadMidi).toHaveBeenCalledOnce();
     expect(api.print).toHaveBeenCalledOnce();
@@ -145,7 +271,23 @@ describe('notation player', () => {
   it('exports imported MusicXML, configures lyrics, and reports blocked print windows', () => {
     let api = readyPlayer(preview);
     expect((screen.getByLabelText('Measures per line') as HTMLSelectElement).value).toBe('4');
+    expect(screen.queryByLabelText('Lyrics columns')).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Lyrics & chords' })).toBeTruthy();
+    expect((screen.getByLabelText('Lyrics and chords') as HTMLElement).hidden).toBe(true);
+    fireEvent.click(screen.getByRole('tab', { name: 'Lyrics & chords' }));
+    expect((screen.getByLabelText('Banjo tablature') as HTMLElement).hidden).toBe(true);
+    expect((screen.getByLabelText('Lyrics and chords') as HTMLElement).hidden).toBe(false);
+    expect(screen.queryByLabelText('Measures per line')).toBeNull();
+    expect(screen.queryByLabelText('Score view')).toBeNull();
+    expect(screen.queryByLabelText('Scroll direction')).toBeNull();
+    expect(screen.queryByLabelText('Hide TAB labels')).toBeNull();
     expect((screen.getByLabelText('Lyrics columns') as HTMLSelectElement).value).toBe('2');
+    expect(screen.getByText('Column')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Lyrics columns'), { target: { value: '3' } });
+    expect((screen.getByLabelText('Lyrics columns') as HTMLSelectElement).value).toBe('3');
+    fireEvent.click(screen.getByRole('tab', { name: 'Tablature' }));
+    expect(screen.queryByLabelText('Lyrics columns')).toBeNull();
+    expect(screen.getByLabelText('Measures per line')).toBeTruthy();
     const createObjectURL = vi.fn(() => 'blob:musicxml');
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
     fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '0.75' } });
@@ -156,14 +298,10 @@ describe('notation player', () => {
       api.playerReady.emit();
       api.renderFinished.emit();
     });
-    fireEvent.change(screen.getByLabelText('Lyrics columns'), { target: { value: '3' } });
-    expect((screen.getByLabelText('Lyrics columns') as HTMLSelectElement).value).toBe('3');
-
-    const select = screen.getByLabelText('Export score');
-    fireEvent.change(select, { target: { value: 'musicxml' } });
+    exportScore('musicxml');
     expect(createObjectURL).toHaveBeenCalledOnce();
     vi.spyOn(window, 'open').mockReturnValue(null);
-    fireEvent.change(select, { target: { value: 'pdf' } });
+    exportScore('pdf');
     expect(screen.getByRole('alert').textContent).toContain('print preview window was blocked');
   });
 
@@ -198,14 +336,13 @@ describe('notation player', () => {
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
     readyPlayer(preview);
 
-    const select = screen.getByLabelText('Export score');
-    fireEvent.change(select, { target: { value: 'tef2' } });
+    exportScore('tef2');
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ version: 'tef2' });
     expect(screen.getByRole('status').textContent).toContain('Lyrics are not represented.');
 
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ filename: 'tune.tef', content: btoa('TEF3'), warnings: [] }) });
-    fireEvent.change(select, { target: { value: 'tef3' } });
+    exportScore('tef3');
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(screen.getByRole('status').textContent).toContain('TEF export completed.');
     expect(createObjectURL).toHaveBeenCalledTimes(2);
@@ -220,10 +357,9 @@ describe('notation player', () => {
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new Error('not json'); } });
     vi.stubGlobal('fetch', fetchMock);
     readyPlayer();
-    const select = screen.getByLabelText('Export score');
-    fireEvent.change(select, { target: { value: 'tef2' } });
+    exportScore('tef2');
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('TEF2 cannot represent this score.'));
-    fireEvent.change(select, { target: { value: 'tef3' } });
+    exportScore('tef3');
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('TEF export returned an invalid file.'));
   });
 
@@ -251,7 +387,7 @@ describe('notation player', () => {
     };
     vi.spyOn(window, 'open').mockReturnValue(popup as any);
     vi.useFakeTimers();
-    fireEvent.change(screen.getByLabelText('Export score'), { target: { value: 'pdf' } });
+    exportScore('pdf');
     await Promise.resolve();
     vi.runAllTimers();
     expect(popup.document.write).toHaveBeenCalled();
@@ -275,7 +411,7 @@ describe('notation player', () => {
     };
     vi.spyOn(window, 'open').mockReturnValue(popup as any);
     vi.useFakeTimers();
-    fireEvent.change(screen.getByLabelText('Export score'), { target: { value: 'pdf' } });
+    exportScore('pdf');
     await Promise.resolve();
     vi.runAllTimers();
     expect(surface.dataset.printFit).toBe('true');
@@ -291,7 +427,7 @@ describe('notation player', () => {
     };
     vi.spyOn(window, 'open').mockReturnValue(popup as any);
     vi.useFakeTimers();
-    fireEvent.change(screen.getByLabelText('Export score'), { target: { value: 'pdf' } });
+    exportScore('pdf');
     await Promise.resolve();
     vi.runAllTimers();
     expect(popup.print).toHaveBeenCalled();

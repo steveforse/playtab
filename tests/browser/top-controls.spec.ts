@@ -1,13 +1,17 @@
 import { expect, test } from '@playwright/test';
 
-test('top and bottom transports control the same playback', async ({ page }) => {
+test('playback controls stay available in the fixed sidebar', async ({ page }) => {
   await page.goto('/');
-  const top = page.getByRole('group', { name: 'Top playback controls' });
-  const bottom = page.getByRole('group', { name: 'Bottom playback controls' });
-  await expect(top.getByRole('button', { name: 'Play (top)', exact: true })).toBeEnabled({ timeout: 45000 });
-  await expect(top).toBeInViewport();
-  await top.getByRole('button', { name: 'Play (top)', exact: true }).click();
-  await expect(bottom.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
-  await bottom.getByRole('button', { name: 'Pause', exact: true }).click();
-  await expect(top.getByRole('button', { name: 'Play (top)', exact: true })).toBeVisible();
+  const sidebar = page.locator('.sidebar');
+  const panel = page.getByRole('region', { name: 'Playback settings' });
+  const controls = page.getByRole('group', { name: 'Playback controls' });
+  await expect(controls.getByRole('button', { name: 'Play', exact: true })).toBeEnabled({ timeout: 45000 });
+  await expect(panel).toBeInViewport();
+  await expect(sidebar).toHaveCSS('position', 'fixed');
+  await page.evaluate(() => { document.body.style.minHeight = '3000px'; window.scrollTo(0, document.body.scrollHeight); });
+  await expect(panel).toBeInViewport();
+  await controls.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(controls.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await controls.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect(controls.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
 });
