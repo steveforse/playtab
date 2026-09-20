@@ -7,7 +7,14 @@ import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
 const { readMusicXml } = vi.hoisted(() => ({ readMusicXml: vi.fn() }));
-vi.mock('../../app/frontend/Player', () => ({ Player: () => <div data-testid="player" /> }));
+vi.mock('../../app/frontend/Player', () => ({
+  Player: () => <div data-testid="player" />,
+  defaultPlayerPreferences: () => ({
+    speed: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
+    scoreView: 'continuous', scrollDirection: 'vertical', showChordDiagrams: false,
+    hideTabClef: false, soundFontId: 'musescore-general-lite',
+  }),
+}));
 vi.mock('../../app/frontend/music/musicxml', () => ({
   readMusicXml,
   toImportedScoreDocument: (preview: any, warnings: string[]) => ({
@@ -56,6 +63,7 @@ describe('workspace application', () => {
     render(<App />);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/songs', expect.anything()));
+    fireEvent.click(screen.getByRole('button', { name: /Practice demo/ }));
     fireEvent.click(screen.getByRole('button', { name: /Import a tab/ }));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Morning tune' } });
     fireEvent.change(screen.getByLabelText('Plaintext tablature'), { target: { value: exportAscii(demo) } });
@@ -67,7 +75,7 @@ describe('workspace application', () => {
     await waitFor(() => expect(screen.getByText('Saved to your library.')).toBeTruthy());
     expect(fetchMock).toHaveBeenLastCalledWith('/api/songs', expect.objectContaining({ method: 'POST' }));
     fireEvent.click(screen.getByRole('button', { name: /My library/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Practice demo/ }));
+    expect(screen.queryByRole('button', { name: /Practice demo/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'My banjo tab' }));
     openImport();
     fireEvent.click(screen.getByRole('button', { name: 'Close import' }));
