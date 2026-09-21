@@ -304,12 +304,15 @@ module Tef2
                 ghost: note[:ghost],
                 tuplet: triplet_event_indexes.include?(event_index),
                 grace_note_fret: grace_note&.fetch(:fret, nil),
+                grace_note_technique: grace_note&.fetch(:grace_technique, nil),
                 raster_slide: note[:raster_slide]
               }
               if grace_note
                 notes.last[:grace_note_fret] = grace_note[:fret]
+                notes.last[:grace_note_technique] = grace_note[:grace_technique]
               else
                 notes.last.delete(:grace_note_fret)
+                notes.last.delete(:grace_note_technique)
               end
             end
           end

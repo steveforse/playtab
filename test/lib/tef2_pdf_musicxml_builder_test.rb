@@ -250,11 +250,28 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     notes = document.xpath("//measure[1]/note[not(rest)]")
 
     assert_equal 2, notes.length
-    assert_equal "yes", notes.first.at_xpath("./grace")['slash']
+    assert_equal "yes", notes.first.at_xpath("./grace")["slash"]
     assert_equal "1", notes.first.at_xpath("./notations/technical/string").text
     assert_equal "3", notes.first.at_xpath("./notations/technical/fret").text
     assert_equal "4", notes[1].at_xpath("./notations/technical/fret").text
     assert_equal "TEF slide /", notes[1].at_xpath("./notations/technical/other-technical").text
+  end
+
+  test "writes a scanned grace pull-off on both ends of its slur" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Grace pull-off",
+      measures: 1,
+      notes: [ { measure: 0, position: 256, string: 2, fret: 2, grace_note_fret: 4, grace_note_technique: "pull-off" } ],
+      techniques: []
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+
+    assert_equal 2, notes.length
+    assert_equal "4", notes.first.at_xpath("./notations/technical/fret").text
+    assert_equal "start", notes.first.at_xpath("./notations/technical/pull-off")["type"]
+    assert_equal "2", notes.last.at_xpath("./notations/technical/fret").text
+    assert_equal "stop", notes.last.at_xpath("./notations/technical/pull-off")["type"]
   end
 
   test "writes PDF ties on both ends of each tied note" do

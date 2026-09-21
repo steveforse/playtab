@@ -263,7 +263,7 @@ index b6203da..8142180
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -52641,13 +52711,45 @@ class EffectBand extends Glyph {
+@@ -52641,13 +52711,58 @@ class EffectBand extends Glyph {
  				const g = v[k];
  				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
  				try {
@@ -288,12 +288,25 @@ index b6203da..8142180
 +					const tabBeatGlyph = beatGlyph.onNotes;
 +					const noteNumbers = tabBeatGlyph?.noteNumbers;
 +					const thumbFingering = noteNumbers?._thumbFingering;
-+					if (!thumbFingering) continue;
++					if (thumbFingering) {
++						thumbs.push({
++							left: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x - thumbFingering.width / 2,
++							right: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x + thumbFingering.width / 2,
++							y: barRenderer.y + barRenderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + noteNumbers.y + thumbFingering.y,
++							height: thumbFingering.height,
++						});
++						continue;
++					}
++					const beat = beatGlyph.beat;
++					if (!beat?.text || !/^[IMT](?: [IMT])*$/.test(beat.text)) continue;
++					const textBand = barRenderer.bottomEffects.getBand(beat.voice, NotationElement.EffectText);
++					const textGlyph = textBand?._effectGlyphs?.[beat.voice.index]?.get(beat.index);
++					if (!textBand || !textGlyph) continue;
 +					thumbs.push({
-+						left: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x - thumbFingering.width / 2,
-+						right: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x + thumbFingering.width / 2,
-+						y: barRenderer.y + barRenderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + noteNumbers.y + thumbFingering.y,
-+						height: thumbFingering.height,
++						left: barRenderer.x + textBand.x + textGlyph.x,
++						right: barRenderer.x + textBand.x + textGlyph.x + textGlyph.width,
++						y: barRenderer.y + barRenderer.height + barRenderer.staff.bottomOverflow - barRenderer.bottomEffects.height + textBand.y + textGlyph.y,
++						height: textGlyph.height,
 +					});
 +				}
 +			}
@@ -310,13 +323,16 @@ index b6203da..8142180
  	alignGlyphs() {
  		for (let v = 0; v < this._effectGlyphs.length; v++) for (const beatIndex of this._effectGlyphs[v].keys()) {
  			const g = this.renderer.bar.voices[v].beats[beatIndex];
-@@ -55698,7 +55800,9 @@ class TextEffectInfo extends EffectInfo {
+@@ -55698,7 +55800,12 @@ class TextEffectInfo extends EffectInfo {
  		return !!beat.text;
  	}
  	createNewGlyph(renderer, beat) {
 -		return new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
-+		const glyph = new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
-+		glyph.playtabSectionAnnotation = true;
++		const effectFont = renderer.resources.elementFonts.get(NotationElement.EffectText);
++		const isPlaytabFingering = /^[IMT](?: [IMT])*$/.test(beat.text.trim());
++		const font = isPlaytabFingering ? Font.withFamilyList(effectFont.families, effectFont.size, FontStyle.Plain, effectFont.weight) : effectFont;
++		const glyph = new TextGlyph(0, 0, beat.text, font, TextAlign.Left);
++		glyph.playtabSectionAnnotation = !isPlaytabFingering;
 +		return glyph;
  	}
  	canExpand(_from, _to) {
@@ -370,12 +386,13 @@ index b6203da..8142180
  				g.y += effectY;
  				g.x += this.width / 2;
  				g.renderer = this.renderer;
-@@ -63916,6 +64029,16 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63916,6 +64029,17 @@ class TabNoteChordGlyph extends Glyph {
  				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
  				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
  			}
 +			if (thumbFingering) {
-+				thumbFingering.font = this.renderer.resources.elementFonts.get(NotationElement.EffectFingering);
++				const effectFont = this.renderer.resources.elementFonts.get(NotationElement.EffectText);
++				thumbFingering.font = Font.withFamilyList(effectFont.families, effectFont.size, FontStyle.Plain, effectFont.weight);
 +				thumbFingering.y += this.renderer.getLineY(this.renderer.drawnLineCount - 1) + tabHeight + effectSpacing + this.renderer.settings.notation.rhythmHeight;
 +				thumbFingering.x += w / 2;
 +				thumbFingering.renderer = this.renderer;

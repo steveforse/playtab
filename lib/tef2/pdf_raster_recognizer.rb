@@ -418,7 +418,16 @@ module Tef2
           component[:area] >= MIN_COMPONENT_AREA
       end
       components = merge_staff_fragments(raw_components)
-      values = ocr_components(components, directory, pixels, width, crop_x, crop_y, threshold: ocr_threshold)
+      values = ocr_components(
+        components, directory, pixels, width, crop_x, crop_y, threshold: ocr_threshold
+      )
+      glyph_groups = raster_glyph_groups(raw_components, crop_y, line_pixels, gray_scan: ocr_threshold == GRAY_OCR_PIXEL)
+      glyph_values = ocr_glyph_groups(
+        glyph_groups, pixels, width, crop_x, line_pixels, directory, threshold: ocr_threshold
+      )
+      if ocr_threshold == GRAY_OCR_PIXEL
+        recover_gray_digit_values!(values, components, binary, crop_width, glyph_groups, glyph_values, crop_y, line_pixels)
+      end
       items = components.each_with_index.filter_map do |component, index|
         raw_value = values[index]
         fallback_zero = (raw_value.nil? || raw_value == "8") && zero_candidate?(component, crop_y, line_pixels)
@@ -432,12 +441,14 @@ module Tef2
       end
       items.reject! { |item| item[:x] <= (crop_x + 70) * scale_x if signature_zone?(raw_components, crop_x, crop_y, line_pixels) }
       items.concat(gray_grace_items(
-        components, values, crop_x, crop_y, line_pixels, scale_x, scale_y, page, ocr_threshold: ocr_threshold
+        components, values, glyph_groups, glyph_values, crop_x, crop_y, line_pixels, scale_x, scale_y, page,
+        ocr_threshold: ocr_threshold
       )) if ocr_threshold == GRAY_OCR_PIXEL
       grace_components = items.filter_map { |item| item[:grace] ? item[:component] : nil }
       items.reject! do |item|
         component = item[:component]
         next false unless component && !item[:grace]
+        next true if grace_components.any? { |grace| grace.equal?(component) }
 
         grace_components.any? do |grace|
           (component[:x] - grace[:x]).abs <= 10 && component[:y] > grace[:y] + 18
@@ -451,11 +462,12 @@ module Tef2
         next unless (item[:y] - row_positions[nearest]).abs <= 5.5
 
         { x: item[:x], y: item[:y], string: nearest, fret: item[:text].to_i, dead: false, ghost: false, dotted: false,
-          source: item[:source], fallback_zero: item[:fallback_zero], grace: item[:grace], component: item[:component] }
+          source: item[:source], fallback_zero: item[:fallback_zero], grace: item[:grace],
+          grace_technique: item[:grace_technique], component: item[:component] }
       end
       notes.concat(raster_glyph_notes(
         raw_components, pixels, width, crop_x, crop_y, line_pixels, page, scale_x, scale_y, directory,
-        existing_notes: notes, ocr_threshold: ocr_threshold
+        existing_notes: notes, ocr_threshold: ocr_threshold, groups: glyph_groups, values: glyph_values
       ))
       notes = deduplicate_raster_notes(notes)
       if ocr_threshold == GRAY_OCR_PIXEL
@@ -464,7 +476,9 @@ module Tef2
       end
       events = []
       notes.sort_by { |note| note[:x] }.each do |note|
-        event = events.find { |candidate| (candidate[:x] - note[:x]).abs < 3 }
+        event = events.find do |candidate|
+          !candidate[:notes].any? { |candidate_note| candidate_note[:grace] } && (candidate[:x] - note[:x]).abs < 3
+        end unless note[:grace]
         if event
           event[:notes] << note
         else
@@ -474,34 +488,43 @@ module Tef2
       events
     end
 
-    def gray_grace_items(components, values, crop_x, crop_y, line_pixels, scale_x, scale_y, page,
+    def gray_grace_items(components, values, glyph_groups, glyph_values, crop_x, crop_y, line_pixels, scale_x, scale_y, page,
                          ocr_threshold: OCR_PIXEL)
       return [] unless ocr_threshold == GRAY_OCR_PIXEL
 
       components.each_with_index.filter_map do |component, index|
-        next unless component[:height].between?(14, 18) && component[:width].between?(7, 11)
-        next if values[index]
+        next unless component[:height].between?(14, 21) && component[:width].between?(7, 11)
+        next unless values[index].nil? || %w[3 4].include?(values[index])
 
         center = crop_y + component[:y] + component[:height] / 2.0
         row = line_pixels.each_index.min_by { |candidate| (line_pixels[candidate] - center).abs }
         next unless (line_pixels[row] - center).abs <= 8
 
-        destination = components.each_with_index.filter_map do |candidate, candidate_index|
+        destination, destination_index = components.each_with_index.filter_map do |candidate, candidate_index|
           next if candidate_index == index || candidate[:x] <= component[:x]
           next unless candidate[:x] - component[:x] <= 60
           candidate_center = crop_y + candidate[:y] + candidate[:height] / 2.0
           candidate_row = line_pixels.each_index.min_by { |candidate_row| (line_pixels[candidate_row] - candidate_center).abs }
           next unless candidate_row == row
-          next unless raster_component_value(values[candidate_index], candidate, crop_y, line_pixels) == "4"
+          candidate_group = glyph_group_for_component(glyph_groups, candidate, candidate_row)
+          candidate_group_index = candidate_group && glyph_groups.index(candidate_group)
+          candidate_glyph_value = candidate_group_index && glyph_values[candidate_group_index]
+          destination_value = candidate_glyph_value || raster_component_value(values[candidate_index], candidate, crop_y, line_pixels)
+          next unless %w[2 4].include?(destination_value)
 
-          candidate
-        end.min_by { |candidate| candidate[:x] }
+          [ candidate, candidate_index ]
+        end.min_by { |candidate, _candidate_index| candidate[:x] }
         next unless destination
 
         x = (crop_x + component[:x]) * scale_x
         y = page.height - center * scale_y
-        { x: x, y: y, text: "3", end_x: (crop_x + component[:x] + component[:width]) * scale_x,
-          source: :component, fallback_zero: false, grace: true, component: component }
+        destination_group = glyph_group_for_component(glyph_groups, destination, row)
+        destination_group_index = destination_group && glyph_groups.index(destination_group)
+        destination_glyph_value = destination_group_index && glyph_values[destination_group_index]
+        destination_fret = destination_glyph_value || raster_component_value(values[destination_index], destination, crop_y, line_pixels)
+        { x: x, y: y, text: destination_fret == "2" ? "4" : "3",
+          end_x: (crop_x + component[:x] + component[:width]) * scale_x, source: :component, fallback_zero: false,
+          grace: true, grace_technique: destination_fret == "2" ? "pull-off" : "slide-in", component: component }
       end
     end
 
@@ -566,10 +589,12 @@ module Tef2
 
     def deduplicate_raster_notes(notes)
       notes.each_with_object([]) do |note, result|
-        duplicate = result.find { |candidate| candidate[:string] == note[:string] && (candidate[:x] - note[:x]).abs < 5 }
+        duplicate = result.find do |candidate|
+          !candidate[:grace] && !note[:grace] && candidate[:string] == note[:string] && (candidate[:x] - note[:x]).abs < 5
+        end
         if duplicate
           index = result.index(duplicate)
-          result[index] = note if duplicate[:fallback_zero] && note[:source] == :glyph && note[:fret] != 9
+          result[index] = note if duplicate[:fallback_zero] && note[:source] == :glyph && note[:fret].between?(2, 8)
           next
         end
 
@@ -612,6 +637,48 @@ module Tef2
       "0"
     end
 
+    def recover_gray_digit_values!(values, components, binary, width, glyph_groups, glyph_values, crop_y, line_pixels)
+      components.each_with_index do |component, index|
+        hint = gray_digit_shape_hint(component, binary, width)
+        next unless hint
+        next unless values[index].nil?
+        center = crop_y + component[:y] + component[:height] / 2.0
+        row = line_pixels.each_index.min_by { |candidate| (line_pixels[candidate] - center).abs }
+        group = glyph_group_for_component(glyph_groups, component, row)
+        group_index = group && glyph_groups.index(group)
+        next if group_index && glyph_values[group_index].to_s.match?(/\A[1-9]\z/)
+
+        values[index] = hint
+      end
+    end
+
+    def gray_digit_shape_hint(component, binary, width)
+      height = component[:height]
+      component_width = component[:width]
+      return unless height.between?(18, 30) && component_width.between?(8, 18)
+
+      rows = (component[:y]...(component[:y] + height)).map do |row|
+        (component[:x]...(component[:x] + component_width)).count do |column|
+          binary.getbyte(row * width + column) < GRAY_OCR_PIXEL
+        end
+      end
+      columns = (component[:x]...(component[:x] + component_width)).map do |column|
+        (component[:y]...(component[:y] + height)).count do |row|
+          binary.getbyte(row * width + column) < GRAY_OCR_PIXEL
+        end
+      end
+      right_edge = columns.last([ 3, component_width ].min).sum.fdiv(height)
+      middle = columns[[ component_width / 2 - 1, 0 ].max, [ 3, component_width ].min].sum.fdiv(height)
+      center = rows[[ height / 2 - 1, 0 ].max, [ 3, height ].min].sum.fdiv(component_width)
+      top = rows.first([ 3, height ].min).sum.fdiv(component_width)
+      bottom = rows.last([ 3, height ].min).sum.fdiv(component_width)
+
+      return "3" if top >= 2.0 && (top - bottom) >= 0.9 && bottom <= 1.5 && middle <= 2.2 && center <= 1.9
+      return "4" if right_edge >= 2.5 && center >= 2.5 && top <= 1.8 && bottom <= 1.5
+
+      nil
+    end
+
     def zero_candidate?(component, crop_y, line_pixels)
       return false unless component[:width].between?(10, 24)
       return false unless component[:height].between?(18, 30)
@@ -637,9 +704,11 @@ module Tef2
     end
 
     def raster_glyph_notes(components, pixels, width, crop_x, crop_y, line_pixels, page, scale_x, scale_y, directory,
-                           existing_notes:, ocr_threshold: OCR_PIXEL)
-      groups = raster_glyph_groups(components, crop_y, line_pixels, gray_scan: ocr_threshold == GRAY_OCR_PIXEL)
-      values = ocr_glyph_groups(groups, pixels, width, crop_x, line_pixels, directory, threshold: ocr_threshold)
+                           existing_notes:, ocr_threshold: OCR_PIXEL, groups: nil, values: nil)
+      groups ||= raster_glyph_groups(components, crop_y, line_pixels, gray_scan: ocr_threshold == GRAY_OCR_PIXEL)
+      values ||= ocr_glyph_groups(
+        groups, pixels, width, crop_x, line_pixels, directory, threshold: ocr_threshold
+      )
       signature_zone = signature_zone?(components, crop_x, crop_y, line_pixels)
 
       groups.each_with_index.filter_map do |group, index|
@@ -664,6 +733,12 @@ module Tef2
           source: :glyph,
           fallback_zero: false
         }
+      end
+    end
+
+    def glyph_group_for_component(groups, component, row)
+      groups.find do |group|
+        group[:row] == row && component[:x] >= group[:x0] && component[:x] < group[:x1]
       end
     end
 
@@ -1144,7 +1219,7 @@ module Tef2
         note.values_at(:measure, :position, :string, :fret, :dead, :ghost)
       end
       grace_slides = score[:notes].to_a.filter_map do |note|
-        next unless note[:grace_note_fret]
+        next unless note[:grace_note_fret] && note[:grace_note_technique] != "pull-off"
 
         { measure: note[:measure], position: note[:position], string: note[:string], type: "slide-in", label: "/",
           confidence: "high" }

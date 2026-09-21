@@ -167,6 +167,19 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_includes techniques, { measure: 2, position: 0, string: 2, type: "slide" }
     assert_includes techniques, { measure: 2, position: 256, string: 2, type: "pull-off" }
     assert_includes techniques, { measure: 3, position: 448, string: 0, type: "slide-in" }
+    refute_includes techniques, { measure: 6, position: 256, string: 2, type: "slide-in" }
+    assert_equal [
+      [ 3, 0 ], [ 1, 3 ], [ 0, 4 ], [ 4, 0 ], [ 1, 3 ], [ 2, 2 ], [ 0, 4 ]
+    ], notes_for.call(4).map { |note| [ note[:string], note[:fret] ] }
+    assert_equal [
+      [ 3, 4 ], [ 1, 3 ], [ 0, 4 ], [ 4, 0 ], [ 1, 3 ], [ 2, 0 ], [ 0, 4 ]
+    ], notes_for.call(5).map { |note| [ note[:string], note[:fret] ] }
+    assert_equal [
+      [ 2, 2 ], [ 1, 3 ], [ 4, 0 ], [ 0, 4 ], [ 2, 4 ], [ 2, 2 ], [ 1, 3 ], [ 3, 4 ], [ 0, 0 ]
+    ], notes_for.call(6).map { |note| [ note[:string], note[:fret] ] }
+    grace_destination = score[:notes].find { |note| note[:measure] == 6 && note[:position] == 256 && note[:string] == 2 }
+    assert_equal 4, grace_destination[:grace_note_fret]
+    assert_equal "pull-off", grace_destination[:grace_note_technique]
   end
 
   test "recognizes the private scanned Foggy Mountain PDF when supplied" do

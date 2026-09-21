@@ -301,6 +301,9 @@ module Tef2
                 xml.fingering(fingering, enclosure: "circle")
               end
             end
+            if source[:grace_note_technique] == "pull-off"
+              xml.send("pull-off", type: "stop")
+            end
             techniques.to_a.each do |technique|
               next if technique[:xml_type] == "slide"
 
@@ -338,6 +341,7 @@ module Tef2
           xml.technical do
             xml.string((string + 1).to_s)
             xml.fret(fret.to_s)
+            xml.send("pull-off", "PO", type: "start") if source[:grace_note_technique] == "pull-off"
           end
         end
       end
