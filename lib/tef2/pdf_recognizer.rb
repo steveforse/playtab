@@ -400,11 +400,26 @@ module Tef2
       current_event = events[event_index]
       (event_index - 1).downto(0) do |candidate_index|
         candidate_event = events[candidate_index]
-        next unless candidate_event[:x] <= current_event[:x]
-        next unless current_event[:x] - candidate_event[:x] <= 24
+        next unless (current_event[:x] - candidate_event[:x]).abs <= 24
 
         grace = candidate_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
         return grace if grace
+      end
+
+      # Some scans place a compact slide-in after the final ordinary note.
+      # Only use the forward form when there is no nearby ordinary event that
+      # the grace glyph can belong to; otherwise the normal backward lookup
+      # above should attach it to that following destination.
+      ((event_index + 1)...events.length).each do |candidate_index|
+        candidate_event = events[candidate_index]
+        next unless candidate_event[:x] >= current_event[:x]
+        next if candidate_event[:x] - current_event[:x] > 24
+
+        grace = candidate_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
+        next unless grace
+        next if events[(candidate_index + 1)..].to_a.any? { |following_event| following_event[:notes].any? { |candidate| !candidate[:grace] } }
+
+        return grace
       end
       nil
     end

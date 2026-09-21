@@ -176,7 +176,7 @@ class Tef2PdfVectorRecognizerTest < ActiveSupport::TestCase
     assert_equal [ { measure: 0, position: 0, string: 1, type: "slide-in", label: "/" } ], techniques
   end
 
-  test "normalizes the recognized Whisky header metadata" do
+  test "extracts generic vector header metadata" do
     recognizer = Tef2::PdfVectorRecognizer.new
     lines = [
       { top: 120, text: "WHISKY Berore BREAKFAST" },
@@ -185,7 +185,7 @@ class Tef2PdfVectorRecognizerTest < ActiveSupport::TestCase
     ]
 
     assert_equal(
-      { title: "Whisky Before Breakfast", subtitle: "www.PlayBetterBanjo.com", arranger: "Arranged by Ryan Spearman" },
+      { title: "WHISKY Berore BREAKFAST", subtitle: "(id. PLaYBETTERBANIO.COM", arranger: "ARRANGED BY RYAN SPEARMAN" },
       recognizer.send(:metadata_from_header_lines, lines)
     )
   end

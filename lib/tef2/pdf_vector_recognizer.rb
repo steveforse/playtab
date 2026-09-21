@@ -679,14 +679,16 @@ module Tef2
 
     def metadata_from_header_lines(lines)
       texts = lines.map { |line| line[:text].to_s.strip }.reject(&:empty?)
-      title_line = texts.find { |text| text.upcase.include?("WHISKY") && text.upcase.include?("BREAKFAST") }
-      subtitle_line = texts.find { |text| text.upcase.include?("PLAYBETTERBAN") }
-      arranger_line = texts.find { |text| text.upcase.include?("ARRANG") && text.upcase.include?("RYAN") }
+      arranger_index = texts.index { |text| text.match?(/\barrang(?:ed|er|ement)?\b/i) }
+      subtitle_index = texts.index do |text|
+        text.match?(%r{(?:https?://|www\.|[[:alnum:]_-]+\.(?:com|org|net|io)\b)}i)
+      end
+      title_index = texts.each_index.find { |index| index != arranger_index && index != subtitle_index }
 
       {
-        title: title_line ? "Whisky Before Breakfast" : nil,
-        subtitle: subtitle_line ? "www.PlayBetterBanjo.com" : nil,
-        arranger: arranger_line ? "Arranged by Ryan Spearman" : nil
+        title: title_index && texts[title_index],
+        subtitle: subtitle_index && texts[subtitle_index],
+        arranger: arranger_index && texts[arranger_index]
       }.compact
     end
 
@@ -891,11 +893,6 @@ module Tef2
     # (1024 per measure).
     def assign_rhythm(measure_notes)
       events = note_events(measure_notes)
-      if (durations = vector_rhythm_durations(events))
-        assign_event_durations(events, durations)
-        return
-      end
-
       count = events.length
       quarters = count < 8 ? (16 - count) / 3 : 0
       eighths = 16 - count - 3 * quarters
@@ -916,41 +913,6 @@ module Tef2
         slot += 4 if quarter_events.include?(event)
         slot += 1 if sixteenth_starts.include?(event)
         slot += 2 unless quarter_events.include?(event) || sixteenth_starts.include?(event)
-      end
-    end
-
-    # The vector export preserves beam spacing even though it does not expose
-    # a semantic duration. These two stable phrase shapes occur throughout the
-    # Whisky Before Breakfast page:
-    #   quarter, eighth, eighth, quarter, eighth, eighth
-    #   eighth, eighth, eighth, eighth, quarter, eighth, eighth
-    def vector_rhythm_durations(events)
-      gaps = events.each_cons(2).map { |first, second| second[:x] - first[:x] }
-      return if gaps.empty?
-
-      if events.length == 6
-        baseline = gaps.sort[2]
-        large = gaps.each_index.select { |index| gaps[index] > baseline * 1.15 }
-        return [ 4, 2, 2, 4, 2, 2 ] if large == [ 0, 3 ]
-      elsif events.length == 7
-        baseline = gaps.sort[3]
-        largest = gaps.max
-        index = gaps.index(largest)
-        if largest > baseline * 1.25
-          durations = Array.new(7, 2)
-          durations[index] = 4
-          return durations
-        end
-      end
-
-      nil
-    end
-
-    def assign_event_durations(events, durations)
-      slot = 0
-      events.each_with_index do |event, index|
-        event[:notes].each { |note| note[:position] = slot * 64 }
-        slot += durations[index]
       end
     end
 

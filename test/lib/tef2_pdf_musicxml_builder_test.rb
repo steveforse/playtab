@@ -257,6 +257,24 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal "TEF slide /", notes[1].at_xpath("./notations/technical/other-technical").text
   end
 
+  test "groups multiple scanned grace notes before a destination chord" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Grace chord",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 448, string: 0, fret: 2, grace_note_fret: 3 },
+        { measure: 0, position: 448, string: 1, fret: 1, grace_note_fret: 2 }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+
+    assert_equal [ "3", "2", "2", "1" ], notes.map { |note| note.at_xpath("./notations/technical/fret").text }
+    assert_equal [ true, true, false, false ], notes.map { |note| !note.at_xpath("./grace").nil? }
+    assert_empty notes[2].xpath("./chord")
+    assert_equal 1, notes[3].xpath("./chord").length
+  end
+
   test "writes a scanned grace pull-off on both ends of its slur" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Grace pull-off",

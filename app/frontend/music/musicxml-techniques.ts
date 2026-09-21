@@ -1,6 +1,7 @@
 import { Settings, model } from '@coderline/alphatab';
 
 type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; ghost?: boolean; grace?: boolean; kind: string; type: string; number: string };
+type PlaytabBeat = model.Beat & { playtabFingerings?: string[] };
 const children = (node: Element) => Array.from(node.childNodes).filter((n): n is Element => n.nodeType === 1);
 const child = (node: Element, name: string) => children(node).find(n => n.localName === name);
 const value = (node: Element, name: string) => child(node, name)?.textContent ?? '';
@@ -78,11 +79,13 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
   const pending = new Map<string, model.Note>();
   const spans: { from: model.Note; to: model.Note; label: string }[] = [];
   const appendFingering = (note: model.Note, label: string) => {
-    if (label === 'T') {
-      note.leftHandFinger = 0;
-      return;
-    }
-    note.beat.text = [note.beat.text, label].filter(Boolean).join(' ');
+    const beat = note.beat as PlaytabBeat;
+    const existingText = beat.playtabFingerings ? '' : beat.text;
+    const fingerings = beat.playtabFingerings ?? [];
+    if (!fingerings.includes(label)) fingerings.push(label);
+    beat.playtabFingerings = fingerings;
+    beat.text = [existingText, fingerings.join('\n')].filter(Boolean).join('\n');
+    if (label === 'T') note.leftHandFinger = 0;
   };
   const beatsInBar = (bar: number) => tab.bars[bar]?.voices.flatMap(v => v.beats) ?? [];
   for (const marker of markers.filter(m => m.staff === staffIndex)) {
@@ -93,7 +96,9 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       : normalBeats;
     const notes = targetBeats.flatMap(b => b.notes)
       .filter(n => n.string === 6 - marker.string && n.fret === marker.fret && (marker.ghost === undefined || n.isGhost === marker.ghost));
-    if (notes.length !== 1) throw new Error('Cannot uniquely locate a MusicXML technique note.');
+    if (notes.length !== 1) {
+      throw new Error(`Cannot uniquely locate a MusicXML technique note (bar ${marker.bar + 1}, tick ${marker.tick}, string ${marker.string}, fret ${marker.fret}, matches ${notes.length}).`);
+    }
     const note = notes[0];
     if (marker.kind === 'fingering') {
       // MusicXML's numeric fretting-hand fingers are not piano finger numbers.

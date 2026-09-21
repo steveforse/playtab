@@ -103,21 +103,25 @@ module Tef2
             duration = next_target > target ? [ 120, next_target - target ].max : 120
             duration = [ duration, measure_ticks - target ].min
             if events[position]
-              events[position].sort_by { |note| note[:string] }.each_with_index do |note, note_index|
-                  write_note(
-                    xml,
-                    note,
+              event_notes = events[position].sort_by { |note| note[:string] }
+              grace_notes = event_notes.select { |note| note[:grace_note_fret] }
+              grace_notes.each_with_index do |note, grace_index|
+                write_grace_note(xml, note, tuning, chord: grace_index.positive?)
+              end
+              event_notes.each_with_index do |note, note_index|
+                write_note(
+                  xml,
+                  note,
                   duration,
                   tuning,
                   note_index.positive?,
                   technique_map[note_key(note)],
                   printed_marker_map[note_key(note)],
                   fingering_map[note_key(note)],
-                    rake_map[note_key(note)],
-                    strum_map[note_key(note)],
-                    tie_map[note_key(note)],
-                    grace_chord: note_index.positive? && events[position].any? { |candidate| candidate[:grace_note_fret] }
-                  )
+                  rake_map[note_key(note)],
+                  strum_map[note_key(note)],
+                  tie_map[note_key(note)]
+                )
               end
             else
               rest_entry = rest_entries.find { |rest| rest[:position].to_i == position }
@@ -264,10 +268,7 @@ module Tef2
       end
     end
 
-    def write_note(xml, source, duration, tuning, chord, techniques, printed_markers, fingering, rake, strum, ties,
-                   grace_chord: false)
-      write_grace_note(xml, source, tuning, chord: grace_chord) if source[:grace_note_fret]
-
+    def write_note(xml, source, duration, tuning, chord, techniques, printed_markers, fingering, rake, strum, ties)
       xml.note do
         xml.chord if chord
         xml.pitch do
