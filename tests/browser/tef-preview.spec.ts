@@ -78,3 +78,15 @@ test('private Wellerman conversion renders and plays with its imported tuning', 
   await page.screenshot({ path: 'tmp/tef-spike/preview.png' });
   expect(errors).toEqual([]);
 });
+
+test('private Ballad preview renders its grace techniques without lookup errors', async ({ page }) => {
+  test.skip(!process.env.PLAYTAB_BALLAD_PREVIEW_XML, 'Set PLAYTAB_BALLAD_PREVIEW_XML to the private Ballad MusicXML; never commit the arrangement.');
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles(process.env.PLAYTAB_BALLAD_PREVIEW_XML!);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/ballad/i);
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled({ timeout: 45000 });
+  expect(errors).toEqual([]);
+});

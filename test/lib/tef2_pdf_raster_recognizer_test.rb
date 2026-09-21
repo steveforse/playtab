@@ -124,6 +124,19 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert result[:warnings].any? { |warning| warning.include?("not imported yet") }
   end
 
+  test "associates a grace note with the following event" do
+    recognizer = Tef2::PdfRecognizer.new
+    grace = { x: 110, string: 2, fret: 4, grace: true, grace_technique: "pull-off" }
+    events = [
+      { x: 100, notes: [ { string: 2, fret: 4 } ] },
+      { x: 110, notes: [ grace ] },
+      { x: 120, notes: [ { string: 2, fret: 2 } ] }
+    ]
+
+    assert_nil recognizer.send(:grace_note_for, events, 0, events[0][:notes].first)
+    assert_equal grace, recognizer.send(:grace_note_for, events, 2, events[2][:notes].first)
+  end
+
   test "recognizes the private scanned Ballad of Jed Clampett PDF when supplied" do
     path = ENV["PLAYTAB_BALLAD_OF_JED_CLAMPETT_PDF"]
     skip "Set PLAYTAB_BALLAD_OF_JED_CLAMPETT_PDF for the private raster-PDF regression." unless path && File.file?(path)
@@ -184,6 +197,10 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     assert_equal [
       [ 3, 2 ], [ 0, 0 ], [ 3, 0 ]
     ], notes_for.call(7).select { |note| note[:position] >= 384 }.map { |note| [ note[:string], note[:fret] ] }
+    assert_equal [
+      [ 192, nil ], [ 256, 4 ]
+    ], score[:notes].select { |note| note[:measure] == 6 && note[:string] == 2 }
+      .sort_by { |note| note[:position] }.map { |note| [ note[:position], note[:grace_note_fret] ] }
     assert_includes techniques, { measure: 7, position: 384, string: 3, type: "slide" }
     m10_notes = notes_for.call(9)
     assert_equal [ 3, 2 ], m10_notes.find { |note| note[:position] == 128 && note[:string] == 3 }.values_at(:string, :fret)

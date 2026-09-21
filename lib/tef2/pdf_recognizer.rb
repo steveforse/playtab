@@ -398,9 +398,10 @@ module Tef2
 
     def grace_note_for(events, event_index, note)
       current_event = events[event_index]
-      events.each do |candidate_event|
-        next if candidate_event.equal?(current_event)
-        next unless (candidate_event[:x] - current_event[:x]).abs <= 24
+      (event_index - 1).downto(0) do |candidate_index|
+        candidate_event = events[candidate_index]
+        next unless candidate_event[:x] <= current_event[:x]
+        next unless current_event[:x] - candidate_event[:x] <= 24
 
         grace = candidate_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
         return grace if grace
