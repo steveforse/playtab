@@ -10,7 +10,7 @@ const { readMusicXml } = vi.hoisted(() => ({ readMusicXml: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange }: { onPreferencesChange?: (changes: any) => void }) => <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>,
   defaultPlayerPreferences: () => ({
-    speed: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
+    speed: 1, volume: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
     scoreView: 'continuous', scrollDirection: 'vertical', showChordDiagrams: false,
     hideTabClef: false, soundFontId: 'musescore-general-lite',
   }),

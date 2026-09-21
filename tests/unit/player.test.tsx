@@ -21,6 +21,7 @@ const alphaTab = vi.hoisted(() => {
     playbackRangeHighlightChanged = new EventBus<any>();
     boundsLookup = null;
     playbackSpeed = 1;
+    masterVolume = 1;
     isLooping = false;
     metronomeVolume = 0;
     renderScore = vi.fn();
@@ -115,9 +116,11 @@ describe('notation player', () => {
     expect(api.playPause).toHaveBeenCalledOnce();
 
     fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '1.25' } });
+    fireEvent.change(screen.getByLabelText('Playback volume'), { target: { value: '0.65' } });
     fireEvent.click(screen.getByRole('button', { name: /Loop/ }));
     fireEvent.click(screen.getByRole('button', { name: /Click/ }));
     expect(api.playbackSpeed).toBe(1.25);
+    expect(api.masterVolume).toBe(0.65);
     expect(api.isLooping).toBe(true);
     expect(api.metronomeVolume).toBe(0.6);
 
@@ -329,7 +332,7 @@ describe('notation player', () => {
 
   it('initializes persistent player preferences supplied by the host app', () => {
     const preferences = {
-      speed: 0.75, loop: true, metronome: true, barsPerRow: 2, lyricsColumns: 3,
+      speed: 0.75, volume: 0.6, loop: true, metronome: true, barsPerRow: 2, lyricsColumns: 3,
       scoreView: 'letter-landscape' as const, scrollDirection: 'horizontal' as const,
       showChordDiagrams: true, hideTabClef: true, soundFontId: availableSoundFonts[0].id,
     };
@@ -340,6 +343,7 @@ describe('notation player', () => {
       api.renderFinished.emit();
     });
     expect((screen.getByLabelText('Playback speed') as HTMLInputElement).value).toBe('0.75');
+    expect((screen.getByLabelText('Playback volume') as HTMLInputElement).value).toBe('0.6');
     expect((screen.getByRole('button', { name: /Loop/ }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
     expect((screen.getByLabelText('Measures per line') as HTMLSelectElement).value).toBe('2');
     expect((screen.getByLabelText('Score view') as HTMLSelectElement).value).toBe('letter-landscape');
@@ -347,6 +351,7 @@ describe('notation player', () => {
     expect((screen.getByLabelText('Hide TAB labels') as HTMLInputElement).checked).toBe(true);
     expect((api.settings as any).display).toMatchObject({ barsPerRow: 2, layoutMode: 'page' });
     expect(api.playbackSpeed).toBe(0.75);
+    expect(api.masterVolume).toBe(0.6);
     expect(api.isLooping).toBe(true);
     expect(api.metronomeVolume).toBe(0.6);
     expect((api as any).customCursorHandler).toBeTruthy();
