@@ -20,6 +20,7 @@ export type ScoreView = 'continuous' | 'a4-portrait' | 'a4-landscape' | 'letter-
 export type ScrollDirection = 'vertical' | 'horizontal';
 export type PlayerPreferences = {
   speed: number;
+  volume: number;
   loop: boolean;
   metronome: boolean;
   barsPerRow: number;
@@ -48,6 +49,7 @@ export function cssLengthInPixels(value: string) {
 export function defaultPlayerPreferences(): PlayerPreferences {
   return {
     speed: 1,
+    volume: 1,
     loop: false,
     metronome: false,
     barsPerRow: 4,
@@ -294,6 +296,7 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
   const [error, setError] = useState('');
   const [exportNotice, setExportNotice] = useState('');
   const [speed, setSpeed] = useState(defaults.speed);
+  const [volume, setVolume] = useState(defaults.volume);
   const [loop, setLoop] = useState(defaults.loop);
   const [metronome, setMetronome] = useState(defaults.metronome);
   const [position, setPosition] = useState({ currentTime: 0, endTime: 0 });
@@ -343,6 +346,7 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
     }
     if (scoreView !== 'continuous' && scrollDirection === 'horizontal') instance.customScrollHandler = createHorizontalPageScrollHandler(element.current!, scoreViewport.current!);
     instance.playbackSpeed = speed;
+    instance.masterVolume = volume;
     instance.isLooping = loop;
     instance.metronomeVolume = metronome ? 0.6 : 0;
     instance.playerReady.on(() => setReady(true));
@@ -382,6 +386,10 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
       <span className="speed-value">{Math.round(baseTempo * speed)} <span>BPM</span></span>
       <input aria-label="Playback speed" type="range" min="0.25" max={maxPlaybackSpeed} step={PLAYBACK_SPEED_STEP} value={speed} onChange={e => { const value = Number(e.target.value); setSpeed(value); onPreferencesChange?.({ speed: value }); if (api.current) api.current.playbackSpeed = value; }} />
       <small>{Math.round(speed * 100)}%</small>
+    </label>
+    <label className="volume-control">
+      <span className="volume-value">Volume <small>{Math.round(volume * 100)}%</small></span>
+      <input aria-label="Playback volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => { const value = Number(e.target.value); setVolume(value); onPreferencesChange?.({ volume: value }); if (api.current) api.current.masterVolume = value; }} />
     </label>
     <div className="player-toggles">
       <button aria-pressed={loop} onClick={() => { const value = !loop; setLoop(value); onPreferencesChange?.({ loop: value }); if (api.current) api.current.isLooping = value; }}>↻ Loop</button>
