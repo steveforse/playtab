@@ -33,6 +33,8 @@ export function App() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [showWarnings, setShowWarnings] = useState(false);
   const [showPracticeTip, setShowPracticeTip] = useState(true);
+  const [editMode, setEditMode] = useState(false);
+  const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const [text, setText] = useState(initialText);
   const [title, setTitle] = useState('My banjo tab');
@@ -53,10 +55,19 @@ export function App() {
   useEffect(() => { apiRequest('/api/songs').then(setLibrary).catch(e => setError(e.message)); }, []);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null) {
     setPreview(null);
+    setEditMode(false); setLibraryCollapsed(false);
     setScore(next); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null) {
+    setEditMode(false); setLibraryCollapsed(false);
     setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
+  }
+  function toggleEditMode() {
+    setEditMode(current => {
+      const next = !current;
+      setLibraryCollapsed(next);
+      return next;
+    });
   }
   async function openSong(id: number) {
     try {
@@ -111,14 +122,18 @@ export function App() {
       load(result.score, text, result.warnings); dialog.current?.close();
     } catch (e) { setImportError((e as Error).message); }
   }
-  return <div className="shell">
+  return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
       <a className="brand" href="/" aria-label="Playtab home"><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
       <div className="sidebar-section">YOUR WORKSPACE</div>
-      <button className="nav-item active" onClick={() => document.getElementById('library-list')?.scrollIntoView()}>▤ <span>My library</span><span className="count">{library.length}</span></button>
-      <div className="library-list" id="library-list">
+      <button className="nav-item active" aria-expanded={!libraryCollapsed} onClick={() => { if (editMode) setLibraryCollapsed(current => !current); else document.getElementById('library-list')?.scrollIntoView(); }}>▤ <span>My library</span><span className="count">{library.length}</span></button>
+      {!libraryCollapsed && <div className="library-list" id="library-list">
         {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={() => { load(demo, null); }}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => openSong(item.id)}>{item.title}</button>)}
-      </div>
+      </div>}
+      {editMode && <section className="editor-sidebar" aria-label="Edit tools">
+        <div className="sidebar-section">EDIT SCORE</div>
+        <p className="editor-sidebar-status"><strong>Edit mode</strong><span>Select a note in the score to begin editing.</span></p>
+      </section>}
       <div id="playback-controls" className="sidebar-playback" />
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
     </aside>
@@ -126,7 +141,7 @@ export function App() {
       <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={() => { void signOut().catch(e => setError(e.message)); }}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
       <div className="workspace">
         <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
-        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><button className="save-button" disabled={saving || !dirty} onClick={save}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : '＋ Save to library'}</button></div>
+        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={editMode} onClick={toggleEditMode}>{editMode ? 'Done editing' : 'Edit score'}</button><button className="save-button" disabled={saving || !dirty} onClick={save}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : '＋ Save to library'}</button></div></div>
         {error && <p className="alert" role="alert">{error}</p>}
         {message && <p className="success" role="status">{message}</p>}
         {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}

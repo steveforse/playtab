@@ -206,4 +206,27 @@ describe('workspace application', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not sign out.'));
     root.remove();
   });
+
+  it('enters and leaves explicit score edit mode without changing the score', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/songs', expect.anything()));
+    expect(screen.queryByLabelText('Edit tools')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit score' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('player')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    expect(screen.getByRole('button', { name: 'Done editing' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByLabelText('Edit tools')).toBeTruthy();
+    expect(screen.getByText('Select a note in the score to begin editing.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Practice demo/ })).toBeNull();
+    expect(screen.getByTestId('player')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+    expect(screen.queryByLabelText('Edit tools')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit score' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('player')).toBeTruthy();
+  });
 });
