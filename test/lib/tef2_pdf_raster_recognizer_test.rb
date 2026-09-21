@@ -180,6 +180,23 @@ class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
     grace_destination = score[:notes].find { |note| note[:measure] == 6 && note[:position] == 256 && note[:string] == 2 }
     assert_equal 4, grace_destination[:grace_note_fret]
     assert_equal "pull-off", grace_destination[:grace_note_technique]
+
+    assert_equal [
+      [ 3, 2 ], [ 0, 0 ], [ 3, 0 ]
+    ], notes_for.call(7).select { |note| note[:position] >= 384 }.map { |note| [ note[:string], note[:fret] ] }
+    assert_includes techniques, { measure: 7, position: 384, string: 3, type: "slide" }
+    m10_notes = notes_for.call(9)
+    assert_equal [ 3, 2 ], m10_notes.find { |note| note[:position] == 128 && note[:string] == 3 }.values_at(:string, :fret)
+    assert_equal [ 3, 5 ], m10_notes.find { |note| note[:position] == 192 && note[:string] == 3 }.values_at(:string, :fret)
+    assert_equal [ 2, 0 ], m10_notes.find { |note| note[:position] == 384 && note[:string] == 2 }.values_at(:string, :fret)
+    assert_includes techniques, { measure: 9, position: 128, string: 3, type: "slide" }
+    assert_includes techniques, { measure: 10, position: 256, string: 2, type: "pull-off" }
+    m12_grace = score[:notes].select { |note| note[:measure] == 11 && note[:position] == 384 }
+    assert_equal [
+      [ 0, 2, 3, "slide-in" ], [ 1, 1, 2, "slide-in" ]
+    ], m12_grace.sort_by { |note| note[:string] }.map do |note|
+      [ note[:string], note[:fret], note[:grace_note_fret], note[:grace_note_technique] ]
+    end
   end
 
   test "recognizes the private scanned Foggy Mountain PDF when supplied" do

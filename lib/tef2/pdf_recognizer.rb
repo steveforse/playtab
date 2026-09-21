@@ -305,7 +305,8 @@ module Tef2
                 tuplet: triplet_event_indexes.include?(event_index),
                 grace_note_fret: grace_note&.fetch(:fret, nil),
                 grace_note_technique: grace_note&.fetch(:grace_technique, nil),
-                raster_slide: note[:raster_slide]
+                raster_slide: note[:raster_slide],
+                raster_pull_off: note[:raster_pull_off]
               }
               if grace_note
                 notes.last[:grace_note_fret] = grace_note[:fret]
@@ -396,11 +397,15 @@ module Tef2
     end
 
     def grace_note_for(events, event_index, note)
-      previous_event = events[event_index - 1]
-      return unless previous_event && previous_event[:x] < events[event_index][:x]
-      return unless events[event_index][:x] - previous_event[:x] <= 60
+      current_event = events[event_index]
+      events.each do |candidate_event|
+        next if candidate_event.equal?(current_event)
+        next unless (candidate_event[:x] - current_event[:x]).abs <= 24
 
-      previous_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
+        grace = candidate_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
+        return grace if grace
+      end
+      nil
     end
 
     def validate_upload!(data)

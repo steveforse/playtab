@@ -263,13 +263,14 @@ index b6203da..8142180
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -52641,13 +52711,58 @@ class EffectBand extends Glyph {
+@@ -52641,13 +52711,62 @@ class EffectBand extends Glyph {
  				const g = v[k];
  				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
  				try {
 -					g.paint(cx + this.x, cy + this.y, canvas);
 +					const sectionOffset = this._getPlaytabSectionAnnotationOffset(g);
-+					g.paint(cx + this.x, cy + this.y - sectionOffset, canvas);
++					const slideOffset = g.playtabSlideAnnotation === true ? this._getPlaytabSlideAnnotationOffset() : 0;
++					g.paint(cx + this.x, cy + this.y - sectionOffset - slideOffset, canvas);
  				} finally {
  					_?.[Symbol.dispose]?.();
  				}
@@ -320,19 +321,24 @@ index b6203da..8142180
 +		}
 +		return sectionY - targetY;
 +	}
++	_getPlaytabSlideAnnotationOffset() {
++		return this.renderer.smuflMetrics.tabLineSpacing * 5.2;
++	}
  	alignGlyphs() {
  		for (let v = 0; v < this._effectGlyphs.length; v++) for (const beatIndex of this._effectGlyphs[v].keys()) {
  			const g = this.renderer.bar.voices[v].beats[beatIndex];
-@@ -55698,7 +55800,12 @@ class TextEffectInfo extends EffectInfo {
+@@ -55698,7 +55800,14 @@ class TextEffectInfo extends EffectInfo {
  		return !!beat.text;
  	}
  	createNewGlyph(renderer, beat) {
 -		return new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
 +		const effectFont = renderer.resources.elementFonts.get(NotationElement.EffectText);
 +		const isPlaytabFingering = /^[IMT](?: [IMT])*$/.test(beat.text.trim());
++		const isPlaytabSlide = beat.playtabSlideAnnotation === true || /^(?:sl\.?|slide)$/i.test(beat.text.trim());
 +		const font = isPlaytabFingering ? Font.withFamilyList(effectFont.families, effectFont.size, FontStyle.Plain, effectFont.weight) : effectFont;
 +		const glyph = new TextGlyph(0, 0, beat.text, font, TextAlign.Left);
-+		glyph.playtabSectionAnnotation = !isPlaytabFingering;
++		glyph.playtabSectionAnnotation = !isPlaytabFingering && !isPlaytabSlide;
++		glyph.playtabSlideAnnotation = isPlaytabSlide;
 +		return glyph;
  	}
  	canExpand(_from, _to) {

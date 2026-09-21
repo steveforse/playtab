@@ -410,6 +410,12 @@ module Tef2
       crop_width = x1 - x0 + 1
       crop_height = crop_bottom - crop_y + 1
       binary = cleaned_binary(pixels, width, crop_x, crop_y, crop_width, crop_height, line_pixels, threshold: ocr_threshold)
+      if ocr_threshold == GRAY_OCR_PIXEL
+        @gray_raster_binary = binary
+        @gray_raster_binary_width = crop_width
+        @gray_raster_pixels = pixels
+        @gray_raster_width = width
+      end
       raw_components = connected_components(binary, crop_width, crop_height)
       raw_components = raw_components.select do |component|
         component[:width].between?(3, MAX_COMPONENT_WIDTH) &&
@@ -430,8 +436,10 @@ module Tef2
       end
       items = components.each_with_index.filter_map do |component, index|
         raw_value = values[index]
-        fallback_zero = (raw_value.nil? || raw_value == "8") && zero_candidate?(component, crop_y, line_pixels)
-        value = raster_component_value(raw_value, component, crop_y, line_pixels)
+        gray_zero = ocr_threshold == GRAY_OCR_PIXEL && raw_value == "6" &&
+          gray_zero_shape?(component, binary, crop_width)
+        fallback_zero = (raw_value.nil? || raw_value == "8" || gray_zero) && zero_candidate?(component, crop_y, line_pixels)
+        value = gray_zero ? "0" : raster_component_value(raw_value, component, crop_y, line_pixels)
         next unless value&.match?(/\A\d\z/)
 
         x = (crop_x + component[:x]) * scale_x
@@ -471,8 +479,10 @@ module Tef2
       ))
       notes = deduplicate_raster_notes(notes)
       if ocr_threshold == GRAY_OCR_PIXEL
+        recover_gray_slide_origins!(notes, pixels, width, crop_x, line_pixels, scale_x)
         recover_gray_slide_destinations!(notes, pixels, width, crop_x, line_pixels, scale_x)
         recover_gray_pull_off_frets!(notes, texts)
+        notes = remove_gray_grace_artifacts(notes)
       end
       events = []
       notes.sort_by { |note| note[:x] }.each do |note|
@@ -492,7 +502,7 @@ module Tef2
                          ocr_threshold: OCR_PIXEL)
       return [] unless ocr_threshold == GRAY_OCR_PIXEL
 
-      components.each_with_index.filter_map do |component, index|
+      items = components.each_with_index.filter_map do |component, index|
         next unless component[:height].between?(14, 21) && component[:width].between?(7, 11)
         next unless values[index].nil? || %w[3 4].include?(values[index])
 
@@ -526,6 +536,101 @@ module Tef2
           end_x: (crop_x + component[:x] + component[:width]) * scale_x, source: :component, fallback_zero: false,
           grace: true, grace_technique: destination_fret == "2" ? "pull-off" : "slide-in", component: component }
       end
+      items + gray_grace_chord_items(
+        components, values, glyph_groups, glyph_values, crop_x, crop_y, line_pixels, scale_x, scale_y, page
+      )
+    end
+
+    # A compact slide into a chord prints the destination frets as two small
+    # digits at the same x coordinate. They are not a normal grace event and
+    # therefore need to be recovered as a pair, one string at a time.
+    def gray_grace_chord_items(components, values, glyph_groups, glyph_values, crop_x, crop_y, line_pixels, scale_x, scale_y,
+                               page)
+      destination_groups = cluster_components_by_x(components.filter do |component|
+        component[:width].between?(7, 12) && component[:height].between?(9, 21)
+      end)
+      destination_groups.filter_map do |destination_components|
+        next unless destination_components.length >= 2
+
+        rows = destination_components.map do |component|
+          center = crop_y + component[:y] + component[:height] / 2.0
+          line_pixels.each_index.min_by { |row| (line_pixels[row] - center).abs }
+        end.uniq
+        next unless rows.length >= 2
+
+        next unless destination_components.all? do |component|
+          row = line_pixels.each_index.min_by do |candidate|
+            (line_pixels[candidate] - (crop_y + component[:y] + component[:height] / 2.0)).abs
+          end
+          source = components.find do |candidate|
+            next false unless candidate[:x] < component[:x]
+            next false unless component[:x] - candidate[:x] <= 80
+            next false unless candidate[:width].between?(8, 18) && candidate[:height].between?(18, 30)
+
+            center = crop_y + candidate[:y] + candidate[:height] / 2.0
+            source_row = line_pixels.each_index.min_by { |candidate_row| (line_pixels[candidate_row] - center).abs }
+            source_row == row
+          end
+          source && raster_slide_stroke?(
+            @gray_raster_pixels, @gray_raster_width, crop_x + source[:x], crop_x + component[:x], line_pixels[row]
+          )
+        end
+
+        destination_components.filter_map do |component|
+          index = components.index(component)
+          value = gray_component_digit_value(component, index, values, glyph_groups, glyph_values, crop_y, line_pixels)
+          next unless %w[2 3 4].include?(value)
+
+          center = crop_y + component[:y] + component[:height] / 2.0
+          row = line_pixels.each_index.min_by { |candidate| (line_pixels[candidate] - center).abs }
+          {
+            x: (crop_x + component[:x]) * scale_x,
+            y: page.height - center * scale_y,
+            text: value,
+            end_x: (crop_x + component[:x] + component[:width]) * scale_x,
+            source: :component,
+            fallback_zero: false,
+            grace: true,
+            grace_technique: "slide-in",
+            component: component,
+            string: row
+          }
+        end
+      end.flatten
+    end
+
+    def cluster_components_by_x(components)
+      components.sort_by { |component| component[:x] }.each_with_object([]) do |component, groups|
+        if groups.last && component[:x] - groups.last.map { |item| item[:x] }.max <= 5
+          groups.last << component
+        else
+          groups << [ component ]
+        end
+      end
+    end
+
+    def gray_component_digit_value(component, index, values, glyph_groups, glyph_values, crop_y, line_pixels)
+      row = line_pixels.each_index.min_by do |candidate|
+        (line_pixels[candidate] - (crop_y + component[:y] + component[:height] / 2.0)).abs
+      end
+      group = glyph_group_for_component(glyph_groups, component, row)
+      group_index = group && glyph_groups.index(group)
+      value = group_index && glyph_values[group_index]
+      value ||= raster_component_value(values[index], component, crop_y, line_pixels)
+      value ||= gray_digit_shape_hint(component, @gray_raster_binary, @gray_raster_binary_width)
+      value
+    end
+
+    def remove_gray_grace_artifacts(notes)
+      grace_notes = notes.select { |note| note[:grace] }
+      notes.reject do |note|
+        next false if note[:grace]
+        next false unless note[:fallback_zero]
+
+        grace_notes.any? do |grace|
+          (grace[:x] - note[:x]).abs <= 3 && note[:string] > grace[:string]
+        end
+      end
     end
 
     def recover_gray_slide_destinations!(notes, pixels, width, crop_x, line_pixels, scale_x)
@@ -537,6 +642,7 @@ module Tef2
           candidate[:string] == note[:string] && candidate[:x] < note[:x] && candidate[:fret].positive?
         end.max_by { |candidate| candidate[:x] }
         next unless previous
+        next if previous[:raster_slide]
 
         source_x = (previous[:x] / scale_x).round
         target_x = crop_x + component[:x]
@@ -549,19 +655,44 @@ module Tef2
       end
     end
 
+    # A slide stroke can touch the source digit and prevent both component OCR
+    # and glyph OCR from identifying it. In that case the digit is commonly
+    # retained as a zero fallback even though the scan clearly shows a fretted
+    # source. Recover the source before the normal destination recovery runs so
+    # slides to open strings remain 2-to-0 rather than 0-to-0.
+    def recover_gray_slide_origins!(notes, pixels, width, crop_x, line_pixels, scale_x)
+      notes.group_by { |note| note[:string] }.each_value do |string_notes|
+        string_notes.sort_by { |note| note[:x] }.each_cons(2) do |source, target|
+          next if source[:grace]
+          next unless source[:fallback_zero] && source[:fret].zero?
+          next unless target[:x] - source[:x] <= 24
+          next unless target[:fret].positive? || target[:fallback_zero]
+
+          source_x = (source[:x] / scale_x).round
+          target_x = (target[:x] / scale_x).round
+          next unless raster_slide_stroke?(pixels, width, source_x, target_x, line_pixels[source[:string]])
+
+          source[:fret] = 2
+          source[:fallback_zero] = false
+          source[:raster_slide] = true
+        end
+      end
+    end
+
     def recover_gray_pull_off_frets!(notes, texts)
       notes.each do |note|
-        next unless note[:fret] == 4
+        next unless [ 3, 4 ].include?(note[:fret])
 
         following = notes.select do |candidate|
           candidate[:string] == note[:string] && candidate[:x] > note[:x] && candidate[:fret] < note[:fret]
         end.min_by { |candidate| candidate[:x] }
         next unless following && following[:fret] == 2 && following[:x] - note[:x] <= 24
-        next unless texts.any? do |item|
+        next if note[:fret] == 4 && !texts.any? do |item|
           item[:text].to_s.strip.casecmp("p").zero? && item[:x].between?(note[:x] - 8, following[:x] + 8)
         end
 
-        note[:fret] = 3
+        note[:fret] = 3 if note[:fret] == 4
+        note[:raster_pull_off] = true
       end
     end
 
@@ -655,7 +786,8 @@ module Tef2
     def gray_digit_shape_hint(component, binary, width)
       height = component[:height]
       component_width = component[:width]
-      return unless height.between?(18, 30) && component_width.between?(8, 18)
+      return unless height.between?(9, 30) && component_width.between?(7, 18)
+      return unless binary && width
 
       rows = (component[:y]...(component[:y] + height)).map do |row|
         (component[:x]...(component[:x] + component_width)).count do |column|
@@ -673,6 +805,8 @@ module Tef2
       top = rows.first([ 3, height ].min).sum.fdiv(component_width)
       bottom = rows.last([ 3, height ].min).sum.fdiv(component_width)
 
+      return "3" if height < 16 && top >= 2.0 && bottom <= 1.5 && center <= 1.9 && right_edge >= 1.5
+      return "2" if height < 20 && top >= 1.8 && bottom >= 1.5 && center <= 1.7 && right_edge <= 1.5
       return "3" if top >= 2.0 && (top - bottom) >= 0.9 && bottom <= 1.5 && middle <= 2.2 && center <= 1.9
       return "4" if right_edge >= 2.5 && center >= 2.5 && top <= 1.8 && bottom <= 1.5
 
@@ -686,6 +820,27 @@ module Tef2
 
       center = crop_y + component[:y] + component[:height] / 2.0
       line_pixels.any? { |line| (center - line).abs <= 14 }
+    end
+
+    def gray_zero_shape?(component, binary, width)
+      height = component[:height]
+      component_width = component[:width]
+      return false unless binary && width && height.between?(18, 30) && component_width.between?(10, 18)
+
+      rows = (component[:y]...(component[:y] + height)).map do |row|
+        (component[:x]...(component[:x] + component_width)).count do |column|
+          binary.getbyte(row * width + column) < GRAY_OCR_PIXEL
+        end
+      end
+      columns = (component[:x]...(component[:x] + component_width)).map do |column|
+        (component[:y]...(component[:y] + height)).count do |row|
+          binary.getbyte(row * width + column) < GRAY_OCR_PIXEL
+        end
+      end
+      center = rows[[ height / 2 - 1, 0 ].max, [ 3, height ].min].sum.fdiv(component_width)
+      top = rows.first([ 3, height ].min).sum.fdiv(component_width)
+      right_edge = columns.last([ 3, component_width ].min).sum.fdiv(height)
+      center >= 2.0 && top <= 1.2 && right_edge <= 1.7
     end
 
     def signature_zone?(components, crop_x, crop_y, line_pixels)
@@ -1231,9 +1386,15 @@ module Tef2
           confidence: "high", raster: true }
       end
       score[:techniques] = score[:techniques].to_a + grace_slides + raster_slides
+      score[:techniques] = score[:techniques].to_a + score[:notes].to_a.filter_map do |note|
+        next unless note[:raster_pull_off]
+
+        { measure: note[:measure], position: note[:position], string: note[:string], type: "pull-off", label: "p",
+          confidence: "high", raster: true }
+      end
       score[:techniques] = score[:techniques].to_a.filter do |technique|
         technique[:type] == "slide-in" ||
-          technique[:type] == "slide" && technique[:raster] && technique_pair_exists?(technique, score[:notes].to_a) ||
+        technique[:type] == "slide" && technique[:raster] && technique_pair_exists?(technique, score[:notes].to_a) ||
           %w[hammer-on pull-off].include?(technique[:type]) && technique_pair_valid?(technique, score[:notes].to_a)
       end
       score[:fingerings] = score[:fingerings].to_a

@@ -78,8 +78,7 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
   const pending = new Map<string, model.Note>();
   const spans: { from: model.Note; to: model.Note; label: string }[] = [];
   const appendFingering = (note: model.Note, label: string) => {
-    const text = note.beat.text?.trim();
-    if (label === 'T' && text && !/^[IMT](?: [IMT])*$/.test(text)) {
+    if (label === 'T') {
       note.leftHandFinger = 0;
       return;
     }
@@ -135,6 +134,7 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
         continue;
       }
       note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
+      (note.beat as model.Beat & { playtabSlideAnnotation?: boolean }).playtabSlideAnnotation = true;
       continue;
     }
     const key = `${marker.voice}:${marker.string}:${marker.kind}:${marker.number}`;

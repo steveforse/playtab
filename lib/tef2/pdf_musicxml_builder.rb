@@ -104,19 +104,20 @@ module Tef2
             duration = [ duration, measure_ticks - target ].min
             if events[position]
               events[position].sort_by { |note| note[:string] }.each_with_index do |note, note_index|
-                write_note(
-                  xml,
-                  note,
+                  write_note(
+                    xml,
+                    note,
                   duration,
                   tuning,
                   note_index.positive?,
                   technique_map[note_key(note)],
                   printed_marker_map[note_key(note)],
                   fingering_map[note_key(note)],
-                  rake_map[note_key(note)],
-                  strum_map[note_key(note)],
-                  tie_map[note_key(note)]
-                )
+                    rake_map[note_key(note)],
+                    strum_map[note_key(note)],
+                    tie_map[note_key(note)],
+                    grace_chord: note_index.positive? && events[position].any? { |candidate| candidate[:grace_note_fret] }
+                  )
               end
             else
               rest_entry = rest_entries.find { |rest| rest[:position].to_i == position }
@@ -263,8 +264,9 @@ module Tef2
       end
     end
 
-    def write_note(xml, source, duration, tuning, chord, techniques, printed_markers, fingering, rake, strum, ties)
-      write_grace_note(xml, source, tuning) if source[:grace_note_fret]
+    def write_note(xml, source, duration, tuning, chord, techniques, printed_markers, fingering, rake, strum, ties,
+                   grace_chord: false)
+      write_grace_note(xml, source, tuning, chord: grace_chord) if source[:grace_note_fret]
 
       xml.note do
         xml.chord if chord
@@ -314,6 +316,8 @@ module Tef2
               xml.send("other-technical", "TEF slide #{technique[:label]}")
             end
             printed_markers.to_a.each do |marker|
+              next if marker[:type] == "slide-in" && source[:grace_note_technique] == "slide-in"
+
               xml.send("other-technical", "TEF slide #{marker[:label]}") if marker[:type] == "slide-in"
             end
             xml.send("other-technical", "TEF rake") if rake
@@ -323,12 +327,13 @@ module Tef2
       end
     end
 
-    def write_grace_note(xml, source, tuning)
+    def write_grace_note(xml, source, tuning, chord: false)
       string = source.fetch(:string).to_i
       fret = source.fetch(:grace_note_fret).to_i
       open_pitch = tuning.fetch(tuning.length - string - 1)
       step, alter, octave = midi_pitch(open_pitch + fret)
       xml.note do
+        xml.chord if chord
         xml.grace(slash: "yes")
         xml.pitch do
           xml.step(step)
@@ -342,6 +347,7 @@ module Tef2
             xml.string((string + 1).to_s)
             xml.fret(fret.to_s)
             xml.send("pull-off", "PO", type: "start") if source[:grace_note_technique] == "pull-off"
+            xml.send("other-technical", "TEF slide /") if source[:grace_note_technique] == "slide-in"
           end
         end
       end
@@ -400,6 +406,7 @@ module Tef2
       (score[:techniques] || []).select { |item| item[:type] == "slide-in" }.each do |item|
         note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
         next unless note
+        next if note[:grace_note_technique] == "slide-in"
 
         add_technique(result, note_key(note), item.slice(:type, :label))
       end
