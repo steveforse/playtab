@@ -16,6 +16,8 @@ const alphaTab = vi.hoisted(() => {
     playerReady = new EventBus<void>();
     playerStateChanged = new EventBus<{ state: number }>();
     playerPositionChanged = new EventBus<{ currentTime: number; endTime: number }>();
+    noteMouseDown = new EventBus<any>();
+    beatMouseDown = new EventBus<any>();
     renderFinished = new EventBus<void>();
     error = new EventBus<{ message?: string }>();
     playbackRangeHighlightChanged = new EventBus<any>();
@@ -57,6 +59,8 @@ import {
   paginatedPageForY,
   paginatedPoint,
   Player,
+  selectionFromBeat,
+  selectionFromNote,
 } from '../../app/frontend/Player';
 
 Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
@@ -89,6 +93,50 @@ function exportScore(format: string) {
 }
 
 describe('notation player', () => {
+  it('maps note and rest locations to editor identities', () => {
+    const beat = {
+      index: 1, graceType: 0, graceGroup: null, isRest: false,
+      voice: { index: 0, beats: [], bar: { index: 0, staff: { index: 0, track: { index: 0 } } } },
+    } as any;
+    const note = { id: 42, string: 3, fret: 2, beat } as any;
+    expect(selectionFromNote(note)).toMatchObject({ noteId: 42, measure: 1, event: 2, voice: 1, string: 3, fret: 2, kind: 'note' });
+    expect(selectionFromBeat({ ...beat, isRest: true } as any)).toMatchObject({ measure: 1, event: 2, voice: 1, string: null, kind: 'rest' });
+  });
+
+  it('emits note and empty-beat selections only in edit mode', () => {
+    const onSelectionChange = vi.fn();
+    render(<Player score={demo} editing onSelectionChange={onSelectionChange} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    const beat = {
+      index: 0, graceType: 0, graceGroup: null, isRest: true, notes: [],
+      voice: { index: 0, beats: [], bar: { index: 0, staff: { index: 0, track: { index: 0 } } } },
+    } as any;
+    const note = { id: 7, string: 5, fret: 0, beat: { ...beat, isRest: false, notes: [{}] } } as any;
+    act(() => api.noteMouseDown.emit(note));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ noteId: 7, string: 1, measure: 1, event: 1 }));
+    act(() => api.beatMouseDown.emit(beat));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ kind: 'rest', string: null }));
+  });
+
+  it('navigates to the next event while retaining the selected string', () => {
+    const onSelectionChange = vi.fn();
+    const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
+    const voice = { index: 0, beats: [], bar } as any;
+    const beatOne = { index: 0, graceType: 0, graceGroup: null, isRest: false, notes: [], voice } as any;
+    const beatTwo = { index: 1, graceType: 0, graceGroup: null, isRest: false, notes: [], voice } as any;
+    const noteOne = { id: 1, string: 3, fret: 0, beat: beatOne } as any;
+    const noteTwo = { id: 2, string: 3, fret: 2, beat: beatTwo } as any;
+    beatOne.notes = [noteOne]; beatTwo.notes = [noteTwo]; voice.beats = [beatOne, beatTwo];
+    bar.voices = [voice];
+    const scoreModel = { tracks: [{ staves: [{ bars: [bar] }] }] } as any;
+    const initial = selectionFromNote(noteOne);
+    render(<Player score={demo} editing selection={initial} onSelectionChange={onSelectionChange} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    (api as any).score = scoreModel;
+    fireEvent.keyDown(screen.getByTestId('notation'), { key: 'ArrowRight' });
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 2, string: 3, fret: 2 }));
+  });
+
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {
     const api = readyPlayer();
     expect(alphaTab.toAlphaTab).toHaveBeenCalledWith(demo);

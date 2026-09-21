@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { AlphaTabApi, PlayerOutputMode, model } from '@coderline/alphatab';
 import { toAlphaTab } from './music/alphatab';
@@ -18,6 +18,116 @@ const DEFAULT_MAX_PLAYBACK_SPEED = 1.5;
 const PLAYBACK_SPEED_STEP = 0.01;
 export type ScoreView = 'continuous' | 'a4-portrait' | 'a4-landscape' | 'letter-portrait' | 'letter-landscape';
 export type ScrollDirection = 'vertical' | 'horizontal';
+export type ScoreSelectionKind = 'note' | 'rest' | 'empty';
+export type ScoreSelection = {
+  noteId: number | null;
+  track: number;
+  staff: number;
+  measure: number;
+  event: number;
+  voice: number;
+  string: number | null;
+  fret: number | null;
+  kind: ScoreSelectionKind;
+  graceIndex: number | null;
+  graceGroupId: string | null;
+  mappingReason?: string;
+};
+
+type SelectionTarget = { selection: ScoreSelection; beat: model.Beat; note: model.Note | null };
+
+function beatEventNumber(beat: model.Beat) {
+  if (Number.isInteger(beat.index) && beat.index >= 0) return beat.index + 1;
+  return Math.max(1, beat.voice.beats.indexOf(beat) + 1);
+}
+
+function locationForBeat(beat: model.Beat) {
+  const bar = beat.voice.bar;
+  const staff = bar.staff;
+  return {
+    track: staff.track.index + 1,
+    staff: staff.index + 1,
+    measure: bar.index + 1,
+    event: beatEventNumber(beat),
+    voice: beat.voice.index + 1,
+    graceIndex: Number(beat.graceType ?? 0) === 0 ? null : beat.graceIndex,
+    graceGroupId: beat.graceGroup?.id ?? null,
+  };
+}
+
+export function selectionFromNote(note: model.Note, mappingReason?: string): ScoreSelection {
+  const location = locationForBeat(note.beat);
+  const modelString = note.string;
+  const string = modelString >= 1 && modelString <= 5 ? 6 - modelString : null;
+  return {
+    ...location,
+    noteId: note.id,
+    string,
+    fret: note.fret,
+    kind: 'note',
+    mappingReason,
+  };
+}
+
+export function selectionFromBeat(beat: model.Beat, kind: ScoreSelectionKind = beat.isRest ? 'rest' : 'empty', string: number | null = null): ScoreSelection {
+  return { ...locationForBeat(beat), noteId: null, string, fret: null, kind };
+}
+
+function uniqueBeats(voice: model.Voice) {
+  const beats: model.Beat[] = [];
+  const seen = new Set<model.Beat>();
+  const add = (beat: model.Beat) => { if (!seen.has(beat)) { seen.add(beat); beats.push(beat); } };
+  voice.beats.forEach(beat => {
+    add(beat);
+    beat.graceGroup?.beats.forEach(add);
+  });
+  return beats;
+}
+
+export function buildSelectionTargets(score: model.Score): SelectionTarget[] {
+  const targets: SelectionTarget[] = [];
+  score.tracks.forEach(track => track.staves.forEach(staff => staff.bars.forEach(bar => bar.voices.forEach(voice => {
+    uniqueBeats(voice).forEach(beat => {
+      if (beat.notes.length > 0) beat.notes.forEach(note => targets.push({ selection: selectionFromNote(note), beat, note }));
+      else targets.push({ selection: selectionFromBeat(beat), beat, note: null });
+    });
+  }))));
+  return targets;
+}
+
+function sameLocation(a: ScoreSelection, b: ScoreSelection) {
+  return a.track === b.track && a.staff === b.staff && a.measure === b.measure && a.event === b.event && a.voice === b.voice && a.graceIndex === b.graceIndex;
+}
+
+function sameSelectionIdentity(a: ScoreSelection, b: ScoreSelection) {
+  return sameLocation(a, b) && a.string === b.string && a.kind === b.kind;
+}
+
+export function resolveSelectionTarget(score: model.Score, selection: ScoreSelection | null): SelectionTarget | null {
+  if (!selection) return null;
+  const targets = buildSelectionTargets(score);
+  const exact = targets.find(target => {
+    if (!sameLocation(target.selection, selection)) return false;
+    if (selection.string !== null && target.selection.string !== selection.string) return false;
+    if (selection.kind === 'note') return target.selection.kind === 'note';
+    return target.selection.kind === selection.kind || target.selection.kind === 'note';
+  });
+  if (exact) return exact;
+  const locationTarget = targets.find(target => sameLocation(target.selection, selection));
+  if (!locationTarget) return null;
+  if (selection.kind === 'empty') return { selection: { ...selection, noteId: null, fret: null }, beat: locationTarget.beat, note: null };
+  return locationTarget;
+}
+
+function selectionSortKey(selection: ScoreSelection) {
+  return [selection.track, selection.staff, selection.measure, selection.event, selection.voice, selection.graceIndex ?? -1];
+}
+
+function compareSelections(a: ScoreSelection, b: ScoreSelection) {
+  const left = selectionSortKey(a); const right = selectionSortKey(b);
+  for (let index = 0; index < left.length; index++) if (left[index] !== right[index]) return left[index] - right[index];
+  return (a.string ?? 0) - (b.string ?? 0);
+}
 export type PlayerPreferences = {
   speed: number;
   volume: number;
@@ -153,7 +263,7 @@ export function paginatedPoint(root: HTMLElement, event: MouseEvent) {
   };
 }
 
-export function createPaginatedInteractionHandlers(root: HTMLElement, api: AlphaTabApi) {
+export function createPaginatedInteractionHandlers(root: HTMLElement, api: AlphaTabApi, isEditing: () => boolean = () => false) {
   let selectionStart: model.Beat | null = null;
   let interactionActive = false;
 
@@ -167,6 +277,7 @@ export function createPaginatedInteractionHandlers(root: HTMLElement, api: Alpha
   };
   const onMouseDown = (event: MouseEvent) => {
     if (event.button !== 0 || !paginatedPoint(root, event)) return;
+    if (isEditing()) return;
     stopEvent(event);
     interactionActive = true;
     selectionStart = beatAt(event);
@@ -278,11 +389,14 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, onSelectionChange }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
   onPreferencesChange?: (changes: Partial<PlayerPreferences>) => void;
+  editing?: boolean;
+  selection?: ScoreSelection | null;
+  onSelectionChange?: (selection: ScoreSelection | null) => void;
 }) {
   const defaults = preferences ?? defaultPlayerPreferences();
   const element = useRef<HTMLDivElement>(null);
@@ -291,6 +405,12 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
   const lyricsSection = useRef<HTMLElement>(null);
   const exportDialog = useRef<HTMLDialogElement>(null);
   const api = useRef<AlphaTabApi | null>(null);
+  const editingRef = useRef(editing);
+  const selectionRef = useRef<ScoreSelection | null>(selection);
+  const selectionCallbackRef = useRef(onSelectionChange);
+  editingRef.current = editing;
+  selectionRef.current = selection;
+  selectionCallbackRef.current = onSelectionChange;
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
@@ -323,23 +443,34 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
     const base = '/notation/';
     const layoutMode = scoreView !== 'continuous' || scrollDirection !== 'horizontal' ? 'page' : 'horizontal';
     const instance = new AlphaTabApi(element.current!, {
-      core: { fontDirectory: `${base}font/`, useWorkers: !preview && !hideTabClef, enableLazyLoading: !preview && !hideTabClef },
+      core: { fontDirectory: `${base}font/`, includeNoteBounds: true, useWorkers: !preview && !hideTabClef, enableLazyLoading: !preview && !hideTabClef },
       display: { scale: 1.1, barsPerRow, layoutMode },
       player: {
         enablePlayer: true, soundFont: `${base}soundfont/${soundFont.filename}`,
         // alphaTab's AudioWorklet output now passes the start/pause smoke
         // tests and avoids the legacy ScriptProcessor scheduling path.
         outputMode: PlayerOutputMode.WebAudioAudioWorklets,
-        enableCursor: true, enableUserInteraction: true,
+        enableCursor: true, enableUserInteraction: !editingRef.current,
         scrollElement: scrollDirection === 'horizontal' ? (scoreViewport.current ?? 'html') : 'html',
       },
     });
     api.current = instance;
+    const selectNote = (note: model.Note) => {
+      if (editingRef.current) {
+        const source = note as model.Note & { playtabMappingReason?: string };
+        selectionCallbackRef.current?.(selectionFromNote(note, source.playtabMappingReason));
+      }
+    };
+    const selectBeat = (beat: model.Beat) => {
+      if (editingRef.current && beat.notes.length === 0) selectionCallbackRef.current?.(selectionFromBeat(beat));
+    };
+    const detachNoteMouseDown = instance.noteMouseDown?.on(selectNote);
+    const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
     let detachPaginatedInteraction: (() => void) | undefined;
     let detachPaginatedSelection: (() => void) | undefined;
     if (scoreView !== 'continuous') {
       instance.customCursorHandler = createPaginatedCursorHandler(element.current!);
-      detachPaginatedInteraction = createPaginatedInteractionHandlers(element.current!, instance);
+      detachPaginatedInteraction = createPaginatedInteractionHandlers(element.current!, instance, () => editingRef.current);
       detachPaginatedSelection = instance.playbackRangeHighlightChanged.on(event => {
         mapPaginatedSelection(element.current!, event.highlightBlocks ?? []);
       });
@@ -355,10 +486,12 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
     instance.renderFinished.on(() => {
       setRendered(true);
       const surface = element.current?.querySelector('.at-surface');
-      if (scoreView === 'continuous' || !(surface instanceof HTMLElement)) return;
-      const paginate = () => paginateAlphaTabSurface(surface, scoreView, scrollDirection === 'horizontal');
-      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(paginate);
-      else paginate();
+      const finishLayout = () => {
+        if (scoreView !== 'continuous' && surface instanceof HTMLElement) paginateAlphaTabSurface(surface, scoreView, scrollDirection === 'horizontal');
+        renderSelectionOverlay();
+      };
+      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(finishLayout);
+      else finishLayout();
     });
     instance.error.on(error => setError(error.message || 'Notation or audio could not load.'));
     const renderedScore = preview ? preview.score : toAlphaTab(score);
@@ -367,12 +500,105 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
     (stylesheet as typeof stylesheet & { playtabHideTabClef?: boolean }).playtabHideTabClef = hideTabClef;
     instance.renderScore(renderedScore);
     return () => {
+      if (typeof detachNoteMouseDown === 'function') detachNoteMouseDown();
+      if (typeof detachBeatMouseDown === 'function') detachBeatMouseDown();
       detachPaginatedInteraction?.();
       detachPaginatedSelection?.();
       instance.destroy();
       api.current = null;
     };
   }, [score, preview, scoreView, barsPerRow, scrollDirection, showChordDiagrams, hideTabClef, soundFont]);
+
+  useEffect(() => {
+    if (api.current) api.current.settings.player.enableUserInteraction = !editing;
+  }, [editing]);
+
+  function renderSelectionOverlay() {
+    const root = element.current;
+    const currentApi = api.current;
+    const currentSelection = selectionRef.current;
+    if (!root) return;
+    root.querySelectorAll('.editor-note-selection').forEach(node => node.remove());
+    if (!editingRef.current || !currentApi || !currentSelection) return;
+    const renderedScore = currentApi.score;
+    const target = renderedScore ? resolveSelectionTarget(renderedScore, currentSelection) : null;
+    if (!target) return;
+    const lookup = currentApi.boundsLookup;
+    const beatBounds = lookup?.findBeat(target.beat);
+    if (!beatBounds) return;
+    const noteBounds = target.note && beatBounds.notes?.find(item => item.note === target.note || item.note.id === target.note?.id);
+    const bounds = noteBounds?.noteHeadBounds ?? beatBounds.visualBounds;
+    const surface = root.querySelector<HTMLElement>('.at-surface') ?? root;
+    const position = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
+    const overlay = document.createElement('div');
+    overlay.className = 'editor-note-selection';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.dataset.noteId = String(target.note?.id ?? '');
+    overlay.style.left = `${bounds.x + position.x}px`;
+    overlay.style.top = `${position.y}px`;
+    overlay.style.width = `${Math.max(12, bounds.w)}px`;
+    overlay.style.height = `${Math.max(12, bounds.h)}px`;
+    surface.append(overlay);
+  }
+
+  function selectionTargetsForNavigation() {
+    return api.current?.score ? buildSelectionTargets(api.current.score).sort((a, b) => compareSelections(a.selection, b.selection)) : [];
+  }
+
+  function navigateSelection(direction: 'left' | 'right' | 'up' | 'down') {
+    const current = selectionRef.current;
+    if (!editingRef.current || !current) return;
+    const targets = selectionTargetsForNavigation();
+    if (targets.length === 0) return;
+    const sameEvent = (target: SelectionTarget) => sameLocation(target.selection, current);
+    if (direction === 'up' || direction === 'down') {
+      const currentString = current.string ?? 1;
+      const nextString = Math.max(1, Math.min(5, currentString + (direction === 'up' ? -1 : 1)));
+      const candidates = targets.filter(target => sameEvent(target) && target.selection.string === nextString);
+      const nearest = candidates[0] ?? targets.filter(target => sameEvent(target) && target.selection.string !== null)
+        .sort((a, b) => Math.abs((a.selection.string ?? 1) - nextString) - Math.abs((b.selection.string ?? 1) - nextString))[0];
+      selectionCallbackRef.current?.(nearest?.selection ?? { ...current, noteId: null, fret: null, string: nextString, kind: 'empty' });
+      return;
+    }
+    const orderedLocations = targets.filter(target => target.selection.track === current.track && target.selection.staff === current.staff && target.selection.voice === current.voice)
+      .reduce<SelectionTarget[]>((events, target) => {
+        if (!events.some(existing => sameLocation(existing.selection, target.selection))) events.push(target);
+        return events;
+      }, []);
+    const currentIndex = orderedLocations.findIndex(target => sameLocation(target.selection, current));
+    const step = direction === 'right' ? 1 : -1;
+    const nextLocation = orderedLocations[currentIndex + step];
+    if (!nextLocation) return;
+    const sameString = current.string === null ? null : targets.find(target => sameLocation(target.selection, nextLocation.selection) && target.selection.string === current.string);
+    selectionCallbackRef.current?.((sameString ?? nextLocation).selection);
+  }
+
+  function handleNotationKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!editingRef.current) return;
+    const key = event.key.toLowerCase();
+    if (key === 'arrowleft' || key === 'arrowright' || key === 'arrowup' || key === 'arrowdown') {
+      event.preventDefault();
+      navigateSelection(key.slice(5) as 'left' | 'right' | 'up' | 'down');
+    }
+  }
+
+  useEffect(() => {
+    if (editing && selection && api.current?.score) {
+      const target = resolveSelectionTarget(api.current.score, selection);
+      if (target && !sameSelectionIdentity(selection, target.selection)) selectionCallbackRef.current?.(target.selection);
+    }
+    if (!editing || !selection) {
+      renderSelectionOverlay();
+      return;
+    }
+    const update = () => renderSelectionOverlay();
+    if (typeof window.requestAnimationFrame === 'function') {
+      const frame = window.requestAnimationFrame(update);
+      return () => window.cancelAnimationFrame(frame);
+    }
+    update();
+  }, [editing, selection, scoreView, scrollDirection]);
+
   const baseTempo = preview?.score.tempo ?? score.tempo;
   const maxPlaybackSpeed = Math.max(
     DEFAULT_MAX_PLAYBACK_SPEED,
@@ -552,7 +778,7 @@ export function Player({ score, preview, preferences, onPreferencesChange }: {
     <section ref={scorePaper} id="tab-score" role="tabpanel" aria-labelledby="tab-tablature" className={`score-paper score-paper-${scoreView} score-paper-${scrollDirection}${scoreView !== 'continuous' ? ' score-paper-paginated' : ''}`} aria-label="Banjo tablature" hidden={activeView !== 'tablature'}>
       <div className="paper-topline"><span>PLAYTAB / {preview ? 'IMPORT PREVIEW' : 'PRACTICE SERIES'}</span><span>{preview ? preview.tuningLabel : 'OPEN G · 4/4'}</span></div>
       {!rendered && <p className="loading">Setting out your music…</p>}
-      <div ref={element} data-testid="notation" />
+      <div ref={element} data-testid="notation" tabIndex={editing ? 0 : -1} onKeyDown={handleNotationKeyDown} />
       <div className="paper-footer">Take it slowly. Let every note ring.</div>
     </section>
     </div>

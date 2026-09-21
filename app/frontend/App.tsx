@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { defaultPlayerPreferences, Player, type PlayerPreferences } from './Player';
+import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSelection } from './Player';
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
@@ -35,6 +35,7 @@ export function App() {
   const [showPracticeTip, setShowPracticeTip] = useState(true);
   const [editMode, setEditMode] = useState(false);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
+  const [selection, setSelection] = useState<ScoreSelection | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const [text, setText] = useState(initialText);
   const [title, setTitle] = useState('My banjo tab');
@@ -56,10 +57,12 @@ export function App() {
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null) {
     setPreview(null);
     setEditMode(false); setLibraryCollapsed(false);
+    setSelection(null);
     setScore(next); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null) {
     setEditMode(false); setLibraryCollapsed(false);
+    setSelection(null);
     setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function toggleEditMode() {
@@ -132,7 +135,24 @@ export function App() {
       </div>}
       {editMode && <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
-        <p className="editor-sidebar-status"><strong>Edit mode</strong><span>Select a note in the score to begin editing.</span></p>
+        <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note in the score to begin editing.'}</span></p>
+        <div className="editor-selection" aria-label="Selection inspector">
+          {!selection ? <p className="editor-selection-empty">No note or rest selected.</p> : <>
+            <div className="editor-selection-summary" aria-live="polite">
+              <span>Measure {selection.measure}</span>
+              <span>Event {selection.event}</span>
+              <span>String {selection.string ?? '—'}</span>
+              {selection.fret !== null && <span>Fret {selection.fret}</span>}
+            </div>
+            <div className="editor-selection-fields">
+              <label>Measure<select aria-label="Selection measure" value={selection.measure} onChange={event => setSelection(current => current ? { ...current, measure: Number(event.target.value), noteId: null } : current)}>{Array.from({ length: Math.max(1, preview?.score.masterBars.length ?? score.measures.length) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
+              <label>Event<select aria-label="Selection event" value={selection.event} onChange={event => setSelection(current => current ? { ...current, event: Number(event.target.value), noteId: null } : current)}>{Array.from({ length: Math.max(1, preview?.score.masterBars.length ? 32 : score.measures[selection.measure - 1]?.beats.length ?? 1) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
+              <label>Voice<select aria-label="Selection voice" value={selection.voice} onChange={event => setSelection(current => current ? { ...current, voice: Number(event.target.value), noteId: null } : current)}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => setSelection(current => current ? { ...current, string: event.target.value ? Number(event.target.value) : null, noteId: null } : current)}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+            </div>
+            {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
+          </>}
+        </div>
       </section>}
       <div id="playback-controls" className="sidebar-playback" />
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
@@ -152,6 +172,9 @@ export function App() {
           preview={preview}
           preferences={playerPreferences}
           onPreferencesChange={changes => setPlayerPreferences(current => ({ ...current, ...changes }))}
+          editing={editMode}
+          selection={selection}
+          onSelectionChange={setSelection}
         />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
