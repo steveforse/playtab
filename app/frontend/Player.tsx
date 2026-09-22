@@ -284,10 +284,13 @@ function clampTabString(value: number) {
   return Math.max(1, Math.min(5, Math.round(value)));
 }
 
-function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat: model.Beat, y: number) {
+function editingStringRows(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat: model.Beat) {
   const samples: Array<{ string: number; y: number }> = [];
   const staff = beat.voice.bar.staff;
   for (const system of lookup.staffSystems) {
+    // A model staff spans every system in the score; only the rendered row
+    // containing this beat can supply its string coordinates.
+    if (!system.bars.some(masterBar => masterBar.bars.some(bar => bar.beats.some(bounds => bounds.beat === beat)))) continue;
     for (const masterBar of system.bars) {
       for (const bar of masterBar.bars) {
         for (const beatBounds of bar.beats) {
@@ -311,8 +314,7 @@ function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat
     const denominator = rowCenters.reduce((sum, row) => sum + (row.string - meanString) ** 2, 0);
     const slope = denominator === 0 ? 0 : rowCenters.reduce((sum, row) => sum + (row.string - meanString) * (row.y - meanY), 0) / denominator;
     const intercept = meanY - slope * meanString;
-    if (Math.abs(slope) > 0.1) return clampTabString((y - intercept) / slope);
-    return rowCenters.sort((a, b) => Math.abs(a.y - y) - Math.abs(b.y - y))[0].string;
+    if (slope > 0.1) return { top: intercept + slope, spacing: slope };
   }
   if (rowCenters.length === 1) {
     // A single visible note still gives us a useful row origin. AlphaTab's
@@ -320,14 +322,19 @@ function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat
     const row = rowCenters[0];
     const beatBounds = lookup.findBeat(beat);
     const spacing = beatBounds && beatBounds.visualBounds.h > 0 ? beatBounds.visualBounds.h / 4 : 14;
-    return clampTabString(row.string + (y - row.y) / spacing);
+    return { top: row.y - (row.string - 1) * spacing, spacing };
   }
   const beatBounds = lookup.findBeat(beat);
   if (beatBounds && beatBounds.visualBounds.h > 0) {
     const spacing = beatBounds.visualBounds.h / 4;
-    return clampTabString((y - beatBounds.visualBounds.y) / spacing + 1);
+    return { top: beatBounds.visualBounds.y, spacing };
   }
-  return 1;
+  return { top: 0, spacing: 14 };
+}
+
+function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat: model.Beat, y: number) {
+  const rows = editingStringRows(lookup, beat);
+  return clampTabString((y - rows.top) / rows.spacing + 1);
 }
 
 export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection) => void) {
@@ -642,7 +649,15 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const beatBounds = lookup?.findBeat(target.beat);
     if (!beatBounds) return;
     const noteBounds = target.note && beatBounds.notes?.find(item => item.note === target.note || item.note.id === target.note?.id);
-    const bounds = noteBounds?.noteHeadBounds ?? beatBounds.visualBounds;
+    const bounds = noteBounds?.noteHeadBounds ?? { ...beatBounds.visualBounds };
+    if (!noteBounds && currentSelection.string !== null && lookup) {
+      // Project a single string cell, rather than outlining the entire beat.
+      const rows = editingStringRows(lookup, target.beat);
+      bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - 6;
+      bounds.h = 12;
+      bounds.x = beatBounds.onNotesX;
+      bounds.w = 12;
+    }
     const surface = root.querySelector<HTMLElement>('.at-surface') ?? root;
     const position = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
     const overlay = document.createElement('div');

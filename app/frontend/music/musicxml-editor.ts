@@ -144,11 +144,12 @@ function setPitch(note: Element, midi: number) {
 }
 
 export function replaceTechnique(note: Element, choice: TechniqueChoice) {
+  if (choice === 'keep') return;
   const notations = child(note, 'notations') ?? (() => { const created = note.ownerDocument!.createElement('notations'); note.appendChild(created); return created; })();
   const technical = child(notations, 'technical') ?? (() => { const created = note.ownerDocument!.createElement('technical'); notations.appendChild(created); return created; })();
   const replaceable = ['fingering', 'hammer-on', 'pull-off', 'slide', 'bend', 'other-technical'];
   children(technical).filter(item => replaceable.includes(item.localName)).forEach(item => technical.removeChild(item));
-  if (choice === 'keep' || choice === 'none') return;
+  if (choice === 'none') return;
   const document = note.ownerDocument!;
   if (choice.startsWith('finger-')) {
     const fingering = document.createElement('fingering');
@@ -346,13 +347,29 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState): 
     setText(technical, 'string', String(edit.string));
     setText(technical, 'fret', String(edit.fret));
     setPitch(note, tuning[edit.string - 1] + edit.fret);
-    replaceTechnique(note, edit.technique);
+    // The inspector exposes one choice, but a source note can carry several
+    // independent markings (including a stop followed by another start).
+    // An unchanged choice must preserve all of those source elements.
+    if (edit.technique !== techniqueOf(note)) replaceTechnique(note, edit.technique);
   });
   removeIncompatibleDirectionalTechniques(sourceNotes);
   sourceNotes.forEach((note, index) => {
     if (deletedNoteIndexes.has(index)) {
       removePairedTechniqueForDeletedNote(sourceNotes, index);
-      note.parentNode?.removeChild(note);
+      const siblings = note.parentNode ? children(note.parentNode as Element) : [];
+      const next = siblings[siblings.indexOf(note) + 1];
+      if (!child(note, 'chord') && next?.localName === 'note' && child(next, 'chord')) {
+        // The first chord member carries the time advance. Promote the next
+        // member before removing it so the chord stays at the same onset.
+        removeChildren(next, 'chord');
+        note.parentNode?.removeChild(note);
+      } else if (child(note, 'chord') || child(note, 'grace')) {
+        note.parentNode?.removeChild(note);
+      } else {
+        // Keep an ordinary event's duration when removing its last note.
+        ['pitch', 'notations', 'accidental', 'tie', 'stem'].forEach(name => removeChildren(note, name));
+        note.insertBefore(document.createElement('rest'), note.firstChild);
+      }
     }
   });
 

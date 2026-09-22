@@ -8,6 +8,25 @@ vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
 
 describe('MusicXML score editing', () => {
+  it('preserves stacked techniques and later timing during a fret change and deletion', () => {
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+      .replace('<hammer-on type="start">', '<fingering>3</fingering><hammer-on type="start">');
+    const preview = readMusicXml(source, 'stacked.xml');
+    const state = musicXmlEditorState(source, preview.score);
+    state.notes[0].fret = 1;
+    const edited = applyMusicXmlEdits(source, state);
+    expect(edited).toContain('<fingering>3</fingering><hammer-on type="start">');
+    const next = readMusicXml(edited, 'stacked.xml');
+    const originalBeats = preview.score.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(next.score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].fret).toBe(1);
+    const deletion = musicXmlEditorState(edited, next.score);
+    deletion.notes[0].deleted = true;
+    const afterDelete = readMusicXml(applyMusicXmlEdits(edited, deletion), 'stacked.xml');
+    const beats = afterDelete.score.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats[0].isRest).toBe(true);
+    expect(beats.map(beat => beat.playbackStart)).toEqual(originalBeats.map(beat => beat.playbackStart));
+  });
+
   it('extracts editable notes and rich source metadata, then writes edits back', () => {
     const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
       .replace('<part-list>', '<identification><miscellaneous><miscellaneous-field name="playtab-lyrics">LYRICS &amp; CHORDS\n\nVERSE\nThere once was a ship</miscellaneous-field></miscellaneous></identification><part-list>')

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import fs from 'node:fs';
 
 test('ED-02 selects a rendered note and keeps its identity through layout changes', async ({ page }) => {
   await page.goto('/');
@@ -50,14 +51,14 @@ test('ED-02 edits and deletes the selected fret with keyboard input', async ({ p
   expect(noteBox).not.toBeNull();
   await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
   const notation = page.getByTestId('notation');
-  await notation.press('1');
+  await page.keyboard.press('1');
   // A redraw can return focus to the document body; the selected target
   // should remain keyboard-editable without another score click.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press('2');
   await expect(inspector).toContainText('Fret 12');
 
-  await notation.press('Backspace');
+  await page.keyboard.press('Backspace');
   await expect(inspector).not.toContainText('Fret 12');
 });
 
@@ -75,12 +76,17 @@ test('ED-02 selects an unoccupied staff string in the same beat', async ({ page 
   await expect(inspector).toContainText('Event 1');
   await expect(inspector).toContainText(/String [1245]/);
   await expect(inspector).not.toContainText('String 3');
+  const caret = (await page.locator('.editor-note-selection').boundingBox())!;
+  expect(caret.height).toBeLessThanOrEqual(16);
+  expect(Math.abs(caret.y + caret.height / 2 - (box!.y + 18))).toBeLessThan(12);
 });
 
 test('ED-02 edits and deletes an existing imported note', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
-  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/techniques.musicxml');
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<hammer-on type="start">', '<fingering>3</fingering><hammer-on type="start">');
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'stacked.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
   await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
   await page.getByRole('button', { name: 'Edit score' }).click();
 
@@ -89,10 +95,29 @@ test('ED-02 edits and deletes an existing imported note', async ({ page }) => {
   const noteBox = await note.boundingBox();
   expect(noteBox).not.toBeNull();
   await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
-  await page.getByTestId('notation').press('1');
+  await page.keyboard.press('1');
   await page.keyboard.press('2');
   await expect(inspector).toContainText('Fret 12');
-  await page.getByTestId('notation').press('Backspace');
+  await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(1);
+  await page.keyboard.press('Backspace');
   await expect(inspector).not.toContainText('Fret 12');
   await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('edits a private multi-row import through direct pointer and keyboard input', async ({ page }) => {
+  test.skip(!process.env.PLAYTAB_EDITOR_XML, 'Optional private score; never checked in.');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles(process.env.PLAYTAB_EDITOR_XML!);
+  const frets = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ });
+  await expect(frets.first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score' }).click();
+  const box = (await frets.first().boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.press('7');
+  await expect(frets.first()).toHaveText('7');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.keyboard.press('Delete');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('.editor-selection-summary')).not.toContainText('Fret 7');
 });

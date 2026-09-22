@@ -148,8 +148,15 @@ describe('notation player', () => {
     const voice = { index: 0, bar } as any;
     const beat = { index: 0, isRest: false, notes: [], voice } as any;
     const api = new alphaTab.FakeAlphaTabApi();
+    const systemAt = (rowBeat: any, top: number) => ({ bars: [{ bars: [{ beats: [{
+      beat: rowBeat,
+      notes: [
+        { note: { string: 5 }, noteHeadBounds: { y: top - 5, h: 10 } },
+        { note: { string: 1 }, noteHeadBounds: { y: top + 35, h: 10 } },
+      ],
+    }] }] }] });
     (api as any).boundsLookup = {
-      staffSystems: [],
+      staffSystems: [systemAt(beat, 0), systemAt({ ...beat, index: 1 }, 200)],
       getBeatAtPos: vi.fn(() => beat),
       findBeat: vi.fn(() => ({ beat, visualBounds: { y: 0, h: 40 } })),
       getNoteAtPos: vi.fn(() => null),
