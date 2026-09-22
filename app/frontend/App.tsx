@@ -38,6 +38,8 @@ export function App() {
   const [editMode, setEditMode] = useState(false);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [selection, setSelection] = useState<ScoreSelection | null>(null);
+  const [fretDraft, setFretDraft] = useState('');
+  const [moveString, setMoveString] = useState('');
   const [history, setHistory] = useState(emptyHistory);
   const [historyRevision, setHistoryRevision] = useState(0);
   const savedBaseline = useRef<string | null>(null);
@@ -88,6 +90,10 @@ export function App() {
       return next;
     });
   }
+  useEffect(() => {
+    setFretDraft(selection?.fret === null || selection?.fret === undefined ? '' : String(selection.fret));
+    setMoveString(selection?.string ? String(selection.string) : '');
+  }, [selection?.noteId, selection?.measure, selection?.event, selection?.string, selection?.fret]);
   function remember(after: Snapshot, description: string, group?: string) {
     setHistory(current => record(current, { before: { document: currentDocument, selection }, after, description, group }));
     setDirty(documentKey(after.document) !== savedBaseline.current);
@@ -170,8 +176,12 @@ export function App() {
     return true;
   }
   function updateSelectionFret(selectionToEdit: ScoreSelection, fret: number, group?: string) {
-    if (!Number.isInteger(fret) || fret < 0 || fret > 22) {
-      setError('Frets must be whole numbers from 0 to 22.');
+    if (!Number.isInteger(fret) || fret < 0 || fret > 36) {
+      setError('Frets must be whole numbers from 0 to 36.');
+      return;
+    }
+    if (!preview && fret > 22) {
+      setError('This native score supports frets 0 to 22. Save as MusicXML before using a higher fret.');
       return;
     }
     if (selectionToEdit.string === null) return;
@@ -183,6 +193,19 @@ export function App() {
       else notes.push({ string: selectionToEdit.string!, fret });
       notes.sort((left, right) => left.string - right.string);
     }, note => { note.fret = fret; }, after, `Change fret to ${fret}`, group)) return;
+    setSelection(after);
+  }
+  function moveSelectedString() {
+    if (!selection || selection.kind !== 'note' || selection.string === null) return;
+    const destination = Number(moveString);
+    if (!Number.isInteger(destination) || destination < 1 || destination > 5 || destination === selection.string) return;
+    const after = { ...selection, string: destination };
+    if (!updateSelectedScore(selection, notes => {
+      const existing = notes.find(note => note.string === selection.string);
+      if (!existing) return;
+      existing.string = destination;
+      notes.sort((left, right) => left.string - right.string);
+    }, note => { note.string = destination; }, after, `Move note to string ${destination}`)) return;
     setSelection(after);
   }
   function deleteSelection(selectionToDelete: ScoreSelection) {
@@ -282,6 +305,12 @@ export function App() {
               <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => setSelection(current => current ? { ...current, string: event.target.value ? Number(event.target.value) : null, noteId: null } : current)}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             </div>
             {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
+            {selection.kind === 'note' && selection.string !== null && <div className="editor-note-tools">
+              <label>Fret<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => setFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); updateSelectionFret(selection, Number(fretDraft)); } }} /></label>
+              <button type="button" onClick={() => updateSelectionFret(selection, Number(fretDraft))}>Apply</button>
+              <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
+              <button type="button" onClick={moveSelectedString} disabled={!moveString || Number(moveString) === selection.string}>Move</button>
+            </div>}
           </>}
         </div>
       </section>}
