@@ -48,6 +48,7 @@ vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlp
 import {
   availableSoundFonts,
   createHorizontalPageScrollHandler,
+  createEditingStaffInteractionHandler,
   createPaginatedCursorHandler,
   createPaginatedInteractionHandlers,
   cssLengthInPixels,
@@ -135,6 +136,42 @@ describe('notation player', () => {
     (api as any).score = scoreModel;
     fireEvent.keyDown(screen.getByTestId('notation'), { key: 'ArrowRight' });
     expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 2, string: 3, fret: 2 }));
+  });
+
+  it('selects an empty staff string from a point inside a beat', () => {
+    const root = document.createElement('div');
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 200, bottom: 200 } as DOMRect);
+    root.append(surface);
+    const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
+    const voice = { index: 0, bar } as any;
+    const beat = { index: 0, isRest: false, notes: [], voice } as any;
+    const api = new alphaTab.FakeAlphaTabApi();
+    (api as any).boundsLookup = {
+      staffSystems: [],
+      getBeatAtPos: vi.fn(() => beat),
+      findBeat: vi.fn(() => ({ beat, visualBounds: { y: 0, h: 40 } })),
+      getNoteAtPos: vi.fn(() => null),
+    };
+    const onSelection = vi.fn();
+    const detach = createEditingStaffInteractionHandler(root, api as any, 'continuous', onSelection);
+    fireEvent.mouseDown(root, { button: 0, clientX: 20, clientY: 20 });
+    expect(onSelection).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 1, string: 3, kind: 'empty' }));
+    detach();
+  });
+
+  it('commits multi-digit frets and delegates deletion keys', () => {
+    const onFretInput = vi.fn();
+    const onSelectionDelete = vi.fn();
+    const initial = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null } as any;
+    render(<Player score={demo} editing selection={initial} onFretInput={onFretInput} onSelectionDelete={onSelectionDelete} />);
+    const notation = screen.getByTestId('notation');
+    fireEvent.keyDown(notation, { key: '1' });
+    fireEvent.keyDown(notation, { key: '2' });
+    expect(onFretInput).toHaveBeenLastCalledWith(initial, 12);
+    fireEvent.keyDown(notation, { key: 'Backspace' });
+    expect(onSelectionDelete).toHaveBeenCalledWith(initial);
   });
 
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {

@@ -88,8 +88,17 @@ export function buildSelectionTargets(score: model.Score): SelectionTarget[] {
   const targets: SelectionTarget[] = [];
   score.tracks.forEach(track => track.staves.forEach(staff => staff.bars.forEach(bar => bar.voices.forEach(voice => {
     uniqueBeats(voice).forEach(beat => {
-      if (beat.notes.length > 0) beat.notes.forEach(note => targets.push({ selection: selectionFromNote(note), beat, note }));
-      else targets.push({ selection: selectionFromBeat(beat), beat, note: null });
+      const occupiedStrings = new Set<number>();
+      beat.notes.forEach(note => {
+        const selection = selectionFromNote(note);
+        if (selection.string !== null) occupiedStrings.add(selection.string);
+        targets.push({ selection, beat, note });
+      });
+      // Every beat exposes all five tab-string positions as navigation and
+      // insertion targets. A missing note is still a real place in the grid.
+      for (let string = 1; string <= 5; string++) {
+        if (!occupiedStrings.has(string)) targets.push({ selection: selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string), beat, note: null });
+      }
     });
   }))));
   return targets;
@@ -263,6 +272,85 @@ export function paginatedPoint(root: HTMLElement, event: MouseEvent) {
   };
 }
 
+function scorePoint(root: HTMLElement, event: MouseEvent, view: ScoreView) {
+  if (view !== 'continuous') return paginatedPoint(root, event);
+  const surface = root.querySelector<HTMLElement>('.at-surface');
+  if (!surface) return null;
+  const bounds = surface.getBoundingClientRect();
+  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+}
+
+function clampTabString(value: number) {
+  return Math.max(1, Math.min(5, Math.round(value)));
+}
+
+function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat: model.Beat, y: number) {
+  const samples: Array<{ string: number; y: number }> = [];
+  const staff = beat.voice.bar.staff;
+  for (const system of lookup.staffSystems) {
+    for (const masterBar of system.bars) {
+      for (const bar of masterBar.bars) {
+        for (const beatBounds of bar.beats) {
+          if (beatBounds.beat.voice.bar.staff !== staff || !beatBounds.notes) continue;
+          for (const noteBounds of beatBounds.notes) {
+            const modelString = noteBounds.note.string;
+            if (modelString < 1 || modelString > 5) continue;
+            samples.push({ string: 6 - modelString, y: noteBounds.noteHeadBounds.y + noteBounds.noteHeadBounds.h / 2 });
+          }
+        }
+      }
+    }
+  }
+
+  const rows = new Map<number, number[]>();
+  samples.forEach(sample => rows.set(sample.string, [...(rows.get(sample.string) ?? []), sample.y]));
+  const rowCenters = Array.from(rows, ([string, values]) => ({ string, y: values.reduce((sum, value) => sum + value, 0) / values.length }));
+  if (rowCenters.length >= 2) {
+    const meanString = rowCenters.reduce((sum, row) => sum + row.string, 0) / rowCenters.length;
+    const meanY = rowCenters.reduce((sum, row) => sum + row.y, 0) / rowCenters.length;
+    const denominator = rowCenters.reduce((sum, row) => sum + (row.string - meanString) ** 2, 0);
+    const slope = denominator === 0 ? 0 : rowCenters.reduce((sum, row) => sum + (row.string - meanString) * (row.y - meanY), 0) / denominator;
+    const intercept = meanY - slope * meanString;
+    if (Math.abs(slope) > 0.1) return clampTabString((y - intercept) / slope);
+    return rowCenters.sort((a, b) => Math.abs(a.y - y) - Math.abs(b.y - y))[0].string;
+  }
+  if (rowCenters.length === 1) {
+    // A single visible note still gives us a useful row origin. AlphaTab's
+    // tab staff uses a stable line spacing, so extrapolate the other strings.
+    const row = rowCenters[0];
+    const beatBounds = lookup.findBeat(beat);
+    const spacing = beatBounds && beatBounds.visualBounds.h > 0 ? beatBounds.visualBounds.h / 4 : 14;
+    return clampTabString(row.string + (y - row.y) / spacing);
+  }
+  const beatBounds = lookup.findBeat(beat);
+  if (beatBounds && beatBounds.visualBounds.h > 0) {
+    const spacing = beatBounds.visualBounds.h / 4;
+    return clampTabString((y - beatBounds.visualBounds.y) / spacing + 1);
+  }
+  return 1;
+}
+
+export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection) => void) {
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0) return;
+    const point = scorePoint(root, event, view);
+    const lookup = api.boundsLookup;
+    if (!point || !lookup) return;
+    const beat = lookup.getBeatAtPos(point.x, point.y);
+    if (!beat) return;
+    const beatBounds = lookup.findBeat(beat);
+    if (!beatBounds) return;
+    // AlphaTab's noteMouseDown callback owns populated note heads. This
+    // listener fills the gap around them: a point on an unoccupied string is
+    // still an editable target in the same beat.
+    if (lookup.getNoteAtPos(beat, point.x, point.y)) return;
+    const string = editingStringAtY(lookup, beat, point.y);
+    onSelection(selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string));
+  };
+  root.addEventListener('mousedown', onMouseDown);
+  return () => root.removeEventListener('mousedown', onMouseDown);
+}
+
 export function createPaginatedInteractionHandlers(root: HTMLElement, api: AlphaTabApi, isEditing: () => boolean = () => false) {
   let selectionStart: model.Beat | null = null;
   let interactionActive = false;
@@ -389,7 +477,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, onSelectionChange }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, onSelectionChange, onFretInput, onSelectionDelete }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -397,6 +485,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   editing?: boolean;
   selection?: ScoreSelection | null;
   onSelectionChange?: (selection: ScoreSelection | null) => void;
+  onFretInput?: (selection: ScoreSelection, fret: number) => void;
+  onSelectionDelete?: (selection: ScoreSelection) => void;
 }) {
   const defaults = preferences ?? defaultPlayerPreferences();
   const element = useRef<HTMLDivElement>(null);
@@ -408,9 +498,15 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const editingRef = useRef(editing);
   const selectionRef = useRef<ScoreSelection | null>(selection);
   const selectionCallbackRef = useRef(onSelectionChange);
+  const fretInputCallbackRef = useRef(onFretInput);
+  const selectionDeleteCallbackRef = useRef(onSelectionDelete);
+  const fretInputRef = useRef('');
+  const fretInputSelectionRef = useRef('');
   editingRef.current = editing;
   selectionRef.current = selection;
   selectionCallbackRef.current = onSelectionChange;
+  fretInputCallbackRef.current = onFretInput;
+  selectionDeleteCallbackRef.current = onSelectionDelete;
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
@@ -457,15 +553,25 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     api.current = instance;
     const selectNote = (note: model.Note) => {
       if (editingRef.current) {
+        element.current?.focus({ preventScroll: true });
         const source = note as model.Note & { playtabMappingReason?: string };
         selectionCallbackRef.current?.(selectionFromNote(note, source.playtabMappingReason));
       }
     };
     const selectBeat = (beat: model.Beat) => {
-      if (editingRef.current && beat.notes.length === 0) selectionCallbackRef.current?.(selectionFromBeat(beat));
+      if (editingRef.current && beat.notes.length === 0) {
+        element.current?.focus({ preventScroll: true });
+        selectionCallbackRef.current?.(selectionFromBeat(beat));
+      }
     };
     const detachNoteMouseDown = instance.noteMouseDown?.on(selectNote);
     const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
+    const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, selection => {
+      if (editingRef.current) {
+        element.current?.focus({ preventScroll: true });
+        selectionCallbackRef.current?.(selection);
+      }
+    });
     let detachPaginatedInteraction: (() => void) | undefined;
     let detachPaginatedSelection: (() => void) | undefined;
     if (scoreView !== 'continuous') {
@@ -502,6 +608,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     return () => {
       if (typeof detachNoteMouseDown === 'function') detachNoteMouseDown();
       if (typeof detachBeatMouseDown === 'function') detachBeatMouseDown();
+      detachEditingStaffInteraction();
       detachPaginatedInteraction?.();
       detachPaginatedSelection?.();
       instance.destroy();
@@ -579,6 +686,30 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     if (key === 'arrowleft' || key === 'arrowright' || key === 'arrowup' || key === 'arrowdown') {
       event.preventDefault();
       navigateSelection(key.slice(5) as 'left' | 'right' | 'up' | 'down');
+      return;
+    }
+    if (key === 'backspace' || key === 'delete') {
+      const current = selectionRef.current;
+      if (!current) return;
+      event.preventDefault();
+      fretInputRef.current = '';
+      fretInputSelectionRef.current = '';
+      selectionDeleteCallbackRef.current?.(current);
+      return;
+    }
+    if (/^[0-9]$/.test(event.key)) {
+      const current = selectionRef.current;
+      if (!current || current.string === null) return;
+      event.preventDefault();
+      const identity = `${current.track}:${current.staff}:${current.measure}:${current.event}:${current.voice}:${current.graceIndex ?? ''}:${current.string}`;
+      if (fretInputSelectionRef.current !== identity) fretInputRef.current = '';
+      const nextBuffer = `${fretInputRef.current}${event.key}`.slice(0, 2);
+      const fret = Number(nextBuffer);
+      if (fret <= 22) {
+        fretInputRef.current = nextBuffer;
+        fretInputSelectionRef.current = identity;
+        fretInputCallbackRef.current?.(current, fret);
+      }
     }
   }
 
@@ -787,7 +918,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       <pre style={{ columnCount: lyricsColumns }}>{preview.lyricsSection}</pre>
     </section>}
     {showPlayerTips && <aside className="player-tips" role="note" aria-label="Playback tips">
-      <p className="player-hint">Click a note to seek. Drag across notes to select a practice range, then turn on Loop.</p>
+      <p className="player-hint">{editing ? 'Click a note or empty string position to select it. Use the arrow keys to move, numbers to enter a fret, and Backspace to remove a note.' : 'Click a note to seek. Drag across notes to select a practice range, then turn on Loop.'}</p>
       {preview && <p className="player-hint">Audio preview: imported hammer-ons and pull-offs use held-note articulation; slides and bends retain their pitch movement.</p>}
       <button type="button" className="tip-dismiss" aria-label="Dismiss playback tips" onClick={() => setShowPlayerTips(false)}>×</button>
     </aside>}

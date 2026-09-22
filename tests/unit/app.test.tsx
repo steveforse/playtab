@@ -220,7 +220,7 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
     expect(screen.getByRole('button', { name: 'Done editing' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByLabelText('Edit tools')).toBeTruthy();
-    expect(screen.getByText('Select a note in the score to begin editing.')).toBeTruthy();
+    expect(screen.getByText('Select a note or empty string position to begin editing.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Practice demo/ })).toBeNull();
     expect(screen.getByTestId('player')).toBeTruthy();
 

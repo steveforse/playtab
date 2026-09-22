@@ -14,7 +14,7 @@ test('ED-01 enters explicit edit mode above playback and returns to practice mod
   await expect(page.getByRole('button', { name: 'Done editing' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('Edit tools')).toBeVisible();
   await expect(page.locator('.sidebar')).toHaveCSS('width', '300px');
-  await expect(page.getByText('Select a note in the score to begin editing.')).toBeVisible();
+  await expect(page.getByText('Select a note or empty string position to begin editing.')).toBeVisible();
   await expect(page.getByRole('button', { name: /Practice demo/ })).toHaveCount(0);
   await expect(page.locator('#playback-controls')).toBeVisible();
   const editorBeforePlayback = await page.locator('.editor-sidebar').evaluate(element => {

@@ -36,3 +36,36 @@ test('ED-02 selects a rendered note and keeps its identity through layout change
   await page.setViewportSize({ width: 1440, height: 1050 });
   await expect(inspector).toContainText('Measure 2');
 });
+
+test('ED-02 edits and deletes the selected fret with keyboard input', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score' }).click();
+
+  const inspector = page.getByLabel('Selection inspector');
+  const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ }).first();
+  await note.click({ force: true });
+  const notation = page.getByTestId('notation');
+  await notation.press('1');
+  await notation.press('2');
+  await expect(inspector).toContainText('Fret 12');
+
+  await notation.press('Backspace');
+  await expect(inspector).not.toContainText('Fret 12');
+});
+
+test('ED-02 selects an unoccupied staff string in the same beat', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score' }).click();
+
+  const inspector = page.getByLabel('Selection inspector');
+  const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ }).first();
+  const box = await note.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + 18);
+  await expect(inspector).toContainText('Measure 1');
+  await expect(inspector).toContainText('Event 1');
+  await expect(inspector).toContainText(/String [1245]/);
+  await expect(inspector).not.toContainText('String 3');
+});

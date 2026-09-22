@@ -72,6 +72,53 @@ export function App() {
       return next;
     });
   }
+  function updateNativeSelection(selectionToEdit: ScoreSelection, edit: (notes: { string: number; fret: number }[]) => void) {
+    if (preview) {
+      setError('Imported score editing is not available yet.');
+      return false;
+    }
+    if (selectionToEdit.string === null) return false;
+    const measureIndex = selectionToEdit.measure - 1;
+    const beatIndex = selectionToEdit.event - 1;
+    const measure = score.measures[measureIndex];
+    if (!measure?.beats[beatIndex]) return false;
+    const next = {
+      ...score,
+      measures: score.measures.map((currentMeasure, currentMeasureIndex) => currentMeasureIndex === measureIndex ? {
+        ...currentMeasure,
+        beats: currentMeasure.beats.map((currentBeat, currentBeatIndex) => currentBeatIndex === beatIndex ? { ...currentBeat, notes: currentBeat.notes.map(note => ({ ...note })) } : currentBeat),
+      } : currentMeasure),
+    };
+    const nextBeat = next.measures[measureIndex].beats[beatIndex];
+    edit(nextBeat.notes);
+    try { validateScore(next); } catch (error) { setError((error as Error).message); return false; }
+    setScore(next);
+    setDirty(true);
+    setError('');
+    return true;
+  }
+  function updateSelectionFret(selectionToEdit: ScoreSelection, fret: number) {
+    if (!Number.isInteger(fret) || fret < 0 || fret > 22) {
+      setError('Frets must be whole numbers from 0 to 22.');
+      return;
+    }
+    if (selectionToEdit.string === null) return;
+    if (!updateNativeSelection(selectionToEdit, notes => {
+      const existing = notes.find(note => note.string === selectionToEdit.string);
+      if (existing) existing.fret = fret;
+      else notes.push({ string: selectionToEdit.string!, fret });
+      notes.sort((left, right) => left.string - right.string);
+    })) return;
+    setSelection(current => current ? { ...current, kind: 'note', noteId: null, fret } : current);
+  }
+  function deleteSelection(selectionToDelete: ScoreSelection) {
+    if (selectionToDelete.string === null || selectionToDelete.kind !== 'note') return;
+    if (!updateNativeSelection(selectionToDelete, notes => {
+      const index = notes.findIndex(note => note.string === selectionToDelete.string);
+      if (index >= 0) notes.splice(index, 1);
+    })) return;
+    setSelection(current => current ? { ...current, kind: 'empty', noteId: null, fret: null } : current);
+  }
   async function openSong(id: number) {
     try {
       const song = await apiRequest(`/api/songs/${id}`);
@@ -135,9 +182,9 @@ export function App() {
       </div>}
       {editMode && <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
-        <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note in the score to begin editing.'}</span></p>
+        <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note or empty string position to begin editing.'}</span></p>
         <div className="editor-selection" aria-label="Selection inspector">
-          {!selection ? <p className="editor-selection-empty">No note or rest selected.</p> : <>
+          {!selection ? <p className="editor-selection-empty">No note, rest, or staff position selected.</p> : <>
             <div className="editor-selection-summary" aria-live="polite">
               <span>Measure {selection.measure}</span>
               <span>Event {selection.event}</span>
@@ -167,7 +214,7 @@ export function App() {
         {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}
         {showPracticeTip && <aside className="practice-note" role="note" aria-label="Practice tip"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span><button type="button" className="tip-dismiss" aria-label="Dismiss practice tip" onClick={() => setShowPracticeTip(false)}>×</button></aside>}
         <Player
-          key={preview?.id ?? JSON.stringify(score)}
+          key={preview?.id ?? 'score'}
           score={score}
           preview={preview}
           preferences={playerPreferences}
@@ -175,6 +222,8 @@ export function App() {
           editing={editMode}
           selection={selection}
           onSelectionChange={setSelection}
+          onFretInput={updateSelectionFret}
+          onSelectionDelete={deleteSelection}
         />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
