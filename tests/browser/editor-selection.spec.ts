@@ -121,3 +121,35 @@ test('edits a private multi-row import through direct pointer and keyboard input
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.locator('.editor-selection-summary')).not.toContainText('Fret 7');
 });
+
+test('edits paired notation in a saved TEF library document and reopens the correction', async ({ page }) => {
+  let saved = {
+    version: 2, kind: 'musicxml', title: 'Paired staff exercise', sourceFormat: 'tef',
+    sourceName: 'paired.tef', source: fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8'), warnings: [],
+  };
+  await page.route('**/api/songs', async route => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: [{ id: 42, title: saved.title }] });
+    } else {
+      saved = route.request().postDataJSON().score;
+      await route.fulfill({ json: { id: 42, title: saved.title } });
+    }
+  });
+  await page.route('**/api/songs/42', route => route.fulfill({ json: { id: 42, title: saved.title, score: saved, source_text: null } }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Paired staff exercise', exact: true }).click();
+  await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^0$/ }).first();
+  const box = (await note.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.press('7');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^7$/ })).toHaveCount(1);
+  await page.getByRole('button', { name: /Save to library/ }).click();
+  await page.reload();
+  await page.getByRole('button', { name: 'Paired staff exercise', exact: true }).click();
+  await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^7$/ })).toHaveCount(1);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(saved.sourceFormat).toBe('tef');
+});

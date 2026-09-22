@@ -84,7 +84,7 @@ export function App() {
           return false;
         }
         editImported(note);
-        const nextSource = applyMusicXmlEdits(preview.source, state);
+        const nextSource = applyMusicXmlEdits(preview.source, state, [note.index]);
         setPreview(readMusicXml(nextSource, preview.filename, preview.sourceFormat));
         setDirty(true);
         setError('');

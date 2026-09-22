@@ -8,6 +8,41 @@ vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
 
 describe('MusicXML score editing', () => {
+  it('updates both representations by musical identity and preserves unrelated source notes', () => {
+    const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
+    const preview = readMusicXml(source, 'paired.musicxml', 'tef');
+    const state = musicXmlEditorState(source, preview.score);
+    const target = state.notes.find(note => note.beat === 0 && note.string === 3)!;
+    target.fret = 2;
+    const edited = applyMusicXmlEdits(source, state, [target.index]);
+    const next = readMusicXml(edited, 'paired.musicxml', 'tef');
+    const beats = next.score.tracks[0].staves[0].bars[0].voices.find(voice => voice.beats.some(beat => beat.notes.length))!.beats;
+    expect(beats[0].notes.map(note => [note.string, note.fret])).toEqual([[5, 0], [3, 2]]);
+    expect(beats[1].notes[0].fret).toBe(0);
+    const document = new DOMParser().parseFromString(edited, 'application/xml');
+    const notes = Array.from(document.getElementsByTagName('note'));
+    expect(notes[0].getElementsByTagName('step')[0].textContent).toBe('A');
+    expect(notes[1].getElementsByTagName('step')[0].textContent).toBe('D');
+    expect(notes[2].getElementsByTagName('step')[0].textContent).toBe('G');
+    const deletion = musicXmlEditorState(edited, next.score);
+    const deleted = deletion.notes.find(note => note.beat === 0 && note.string === 3)!;
+    deleted.deleted = true;
+    const afterDelete = readMusicXml(applyMusicXmlEdits(edited, deletion, [deleted.index]), 'paired.musicxml');
+    const remaining = afterDelete.score.tracks[0].staves[0].bars[0].voices.find(voice => voice.beats.some(beat => beat.notes.length))!.beats;
+    expect(remaining[0].notes).toHaveLength(1);
+    expect(remaining[1].playbackStart).toBe(beats[1].playbackStart);
+  });
+
+  it('rejects ambiguous paired unisons instead of changing an arbitrary chord member', () => {
+    const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8')
+      .replaceAll('<step>G</step><octave>3</octave>', '<step>D</step><octave>4</octave>')
+      .replaceAll('<string>3</string><fret>0</fret>', '<string>3</string><fret>7</fret>');
+    const preview = readMusicXml(source, 'unisons.musicxml');
+    const state = musicXmlEditorState(source, preview.score);
+    state.notes[0].fret = 1;
+    expect(() => applyMusicXmlEdits(source, state, [0])).toThrow('cannot be uniquely matched');
+  });
+
   it('preserves stacked techniques and later timing during a fret change and deletion', () => {
     const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
       .replace('<hammer-on type="start">', '<fingering>3</fingering><hammer-on type="start">');
