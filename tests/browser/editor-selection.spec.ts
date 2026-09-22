@@ -72,3 +72,21 @@ test('ED-02 selects an unoccupied staff string in the same beat', async ({ page 
   await expect(inspector).toContainText(/String [1245]/);
   await expect(inspector).not.toContainText('String 3');
 });
+
+test('ED-02 edits and deletes an existing imported note', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/techniques.musicxml');
+  await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score' }).click();
+
+  const inspector = page.getByLabel('Selection inspector');
+  const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ }).first();
+  await note.click({ force: true });
+  await page.getByTestId('notation').press('1');
+  await page.keyboard.press('2');
+  await expect(inspector).toContainText('Fret 12');
+  await page.getByTestId('notation').press('Backspace');
+  await expect(inspector).not.toContainText('Fret 12');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});

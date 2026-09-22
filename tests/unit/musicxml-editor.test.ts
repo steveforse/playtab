@@ -69,6 +69,10 @@ describe('MusicXML score editing', () => {
     expect(directState.notes).toHaveLength(4);
     const directEdited = applyMusicXmlEdits(directTechnical, { ...directState, notes: directState.notes.map((note, index) => index === 0 ? { ...note, technique: 'keep' as const } : { ...note, technique: 'none' as const }) });
     expect(directEdited).toContain('<notations><technical>');
+
+    const deleted = applyMusicXmlEdits(preview.source, { ...state, notes: state.notes.map((note, index) => index === 0 ? { ...note, deleted: true } : note) });
+    const deletedPreview = readMusicXml(deleted, 'edit.xml');
+    expect(deletedPreview.score.tracks[0].staves[0].bars[0].voices[0].beats.flatMap(beat => beat.notes)).toHaveLength(3);
   });
 
   it('can remove and add imported measures and lyrics metadata', () => {

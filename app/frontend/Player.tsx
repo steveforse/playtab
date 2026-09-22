@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlphaTabApi, PlayerOutputMode, model } from '@coderline/alphatab';
 import { toAlphaTab } from './music/alphatab';
@@ -680,10 +680,6 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     selectionCallbackRef.current?.((sameString ?? nextLocation).selection);
   }
 
-  function handleNotationKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    handleEditorKeyDown(event);
-  }
-
   function handleEditorKeyDown(event: { key: string; preventDefault: () => void }) {
     if (!editingRef.current) return;
     const key = event.key.toLowerCase();
@@ -718,17 +714,16 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   }
 
   useEffect(() => {
-    // AlphaTab redraws its canvas after a fret edit. If that redraw moves
-    // focus back to the document body, keep the selected edit target usable
-    // without requiring the musician to click the note again.
-    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!editingRef.current || (event.target instanceof Node && element.current?.contains(event.target))) return;
+    // Capture before alphaTab's canvas handlers so a redraw or canvas focus
+    // cannot swallow the selected target's editing keys.
+    const onDocumentKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!editingRef.current) return;
       const target = event.target instanceof HTMLElement ? event.target : document.activeElement;
       if (target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)) return;
       handleEditorKeyDown(event);
     };
-    window.addEventListener('keydown', onWindowKeyDown);
-    return () => window.removeEventListener('keydown', onWindowKeyDown);
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    return () => document.removeEventListener('keydown', onDocumentKeyDown, true);
   }, []);
 
   useEffect(() => {
@@ -927,7 +922,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     <section ref={scorePaper} id="tab-score" role="tabpanel" aria-labelledby="tab-tablature" className={`score-paper score-paper-${scoreView} score-paper-${scrollDirection}${scoreView !== 'continuous' ? ' score-paper-paginated' : ''}`} aria-label="Banjo tablature" hidden={activeView !== 'tablature'}>
       <div className="paper-topline"><span>PLAYTAB / {preview ? 'IMPORT PREVIEW' : 'PRACTICE SERIES'}</span><span>{preview ? preview.tuningLabel : 'OPEN G · 4/4'}</span></div>
       {!rendered && <p className="loading">Setting out your music…</p>}
-      <div ref={element} data-testid="notation" tabIndex={editing ? 0 : -1} onKeyDown={handleNotationKeyDown} />
+      <div ref={element} data-testid="notation" tabIndex={editing ? 0 : -1} />
       <div className="paper-footer">Take it slowly. Let every note ring.</div>
     </section>
     </div>

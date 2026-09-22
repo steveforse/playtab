@@ -3,6 +3,7 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
+import { applyMusicXmlEdits, musicXmlEditorState } from './music/musicxml-editor';
 
 type LibraryItem = { id: number; title: string };
 const initialText = exportAscii(demo);
@@ -72,10 +73,26 @@ export function App() {
       return next;
     });
   }
-  function updateNativeSelection(selectionToEdit: ScoreSelection, edit: (notes: { string: number; fret: number }[]) => void) {
+  function updateSelectedScore(selectionToEdit: ScoreSelection, editNative: (notes: { string: number; fret: number }[]) => void, editImported: (note: ReturnType<typeof musicXmlEditorState>['notes'][number]) => void) {
     if (preview) {
-      setError('Imported score editing is not available yet.');
-      return false;
+      if (selectionToEdit.string === null) return false;
+      try {
+        const state = musicXmlEditorState(preview.source, preview.score);
+        const note = state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.event - 1 && candidate.string === selectionToEdit.string);
+        if (!note) {
+          setError('This imported position has no source note to edit yet.');
+          return false;
+        }
+        editImported(note);
+        const nextSource = applyMusicXmlEdits(preview.source, state);
+        setPreview(readMusicXml(nextSource, preview.filename, preview.sourceFormat));
+        setDirty(true);
+        setError('');
+        return true;
+      } catch (error) {
+        setError((error as Error).message);
+        return false;
+      }
     }
     if (selectionToEdit.string === null) return false;
     const measureIndex = selectionToEdit.measure - 1;
@@ -90,7 +107,7 @@ export function App() {
       } : currentMeasure),
     };
     const nextBeat = next.measures[measureIndex].beats[beatIndex];
-    edit(nextBeat.notes);
+    editNative(nextBeat.notes);
     try { validateScore(next); } catch (error) { setError((error as Error).message); return false; }
     setScore(next);
     setDirty(true);
@@ -103,20 +120,20 @@ export function App() {
       return;
     }
     if (selectionToEdit.string === null) return;
-    if (!updateNativeSelection(selectionToEdit, notes => {
+    if (!updateSelectedScore(selectionToEdit, notes => {
       const existing = notes.find(note => note.string === selectionToEdit.string);
       if (existing) existing.fret = fret;
       else notes.push({ string: selectionToEdit.string!, fret });
       notes.sort((left, right) => left.string - right.string);
-    })) return;
+    }, note => { note.fret = fret; })) return;
     setSelection(current => current ? { ...current, kind: 'note', noteId: null, fret } : current);
   }
   function deleteSelection(selectionToDelete: ScoreSelection) {
     if (selectionToDelete.string === null || selectionToDelete.kind !== 'note') return;
-    if (!updateNativeSelection(selectionToDelete, notes => {
+    if (!updateSelectedScore(selectionToDelete, notes => {
       const index = notes.findIndex(note => note.string === selectionToDelete.string);
       if (index >= 0) notes.splice(index, 1);
-    })) return;
+    }, note => { note.deleted = true; })) return;
     setSelection(current => current ? { ...current, kind: 'empty', noteId: null, fret: null } : current);
   }
   async function openSong(id: number) {
@@ -214,7 +231,7 @@ export function App() {
         {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}
         {showPracticeTip && <aside className="practice-note" role="note" aria-label="Practice tip"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span><button type="button" className="tip-dismiss" aria-label="Dismiss practice tip" onClick={() => setShowPracticeTip(false)}>×</button></aside>}
         <Player
-          key={preview?.id ?? 'score'}
+          key="score"
           score={score}
           preview={preview}
           preferences={playerPreferences}

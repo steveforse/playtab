@@ -10,6 +10,7 @@ export type EditableMusicXmlNote = {
   string: number;
   fret: number;
   technique: TechniqueChoice;
+  deleted?: boolean;
 };
 
 export type MusicXmlEditorState = {
@@ -260,6 +261,48 @@ function setMeasureCount(document: Document, count: number) {
   }
 }
 
+function removePairedTechniqueForDeletedNote(sourceNotes: Element[], index: number) {
+  const note = sourceNotes[index];
+  const technical = child(child(note, 'notations') ?? note, 'technical');
+  if (!technical) return;
+  const string = text(child(technical, 'string'));
+  children(technical).filter(item => item.localName === 'hammer-on' || item.localName === 'pull-off').forEach(marker => {
+    const type = marker.getAttribute('type') || 'start';
+    const step = type === 'stop' ? -1 : 1;
+    for (let cursor = index + step; cursor >= 0 && cursor < sourceNotes.length; cursor += step) {
+      const candidateTechnical = child(child(sourceNotes[cursor], 'notations') ?? sourceNotes[cursor], 'technical');
+      if (!candidateTechnical || text(child(candidateTechnical, 'string')) !== string) continue;
+      const paired = children(candidateTechnical).find(item => item.localName === marker.localName && (item.getAttribute('type') || 'start') === (type === 'stop' ? 'start' : 'stop'));
+      if (paired) candidateTechnical.removeChild(paired);
+      break;
+    }
+  });
+}
+
+function removeIncompatibleDirectionalTechniques(sourceNotes: Element[]) {
+  sourceNotes.forEach((note, index) => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    if (!technical) return;
+    const string = text(child(technical, 'string'));
+    const fret = Number(text(child(technical, 'fret')));
+    children(technical).filter(item => (item.localName === 'hammer-on' || item.localName === 'pull-off') && (item.getAttribute('type') || 'start') === 'start').forEach(marker => {
+      for (let cursor = index + 1; cursor < sourceNotes.length; cursor++) {
+        const candidateTechnical = child(child(sourceNotes[cursor], 'notations') ?? sourceNotes[cursor], 'technical');
+        if (!candidateTechnical || text(child(candidateTechnical, 'string')) !== string) continue;
+        const paired = children(candidateTechnical).find(item => item.localName === marker.localName && (item.getAttribute('type') || 'start') === 'stop');
+        if (!paired) continue;
+        const destinationFret = Number(text(child(candidateTechnical, 'fret')));
+        const validDirection = marker.localName === 'hammer-on' ? destinationFret > fret : destinationFret < fret;
+        if (!validDirection) {
+          technical.removeChild(marker);
+          candidateTechnical.removeChild(paired);
+        }
+        break;
+      }
+    });
+  });
+}
+
 export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState): string {
   const document = parseDocument(source);
   const root = document.documentElement;
@@ -293,7 +336,9 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState): 
 
   const sourceNotes = sourceTabNotes(document);
   const tuning = state.tuning.length === 5 ? state.tuning : [62, 59, 55, 50, 67];
+  const deletedNoteIndexes = new Set(state.notes.filter(edit => edit.deleted).map(edit => edit.index));
   state.notes.forEach(edit => {
+    if (edit.deleted) return;
     const note = sourceNotes[edit.index];
     if (!note) return;
     const notations = child(note, 'notations') ?? (() => { const created = document.createElement('notations'); note.appendChild(created); return created; })();
@@ -302,6 +347,13 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState): 
     setText(technical, 'fret', String(edit.fret));
     setPitch(note, tuning[edit.string - 1] + edit.fret);
     replaceTechnique(note, edit.technique);
+  });
+  removeIncompatibleDirectionalTechniques(sourceNotes);
+  sourceNotes.forEach((note, index) => {
+    if (deletedNoteIndexes.has(index)) {
+      removePairedTechniqueForDeletedNote(sourceNotes, index);
+      note.parentNode?.removeChild(note);
+    }
   });
 
   setLyrics(document, state.lyricsSection);
