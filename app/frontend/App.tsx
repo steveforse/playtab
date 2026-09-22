@@ -4,6 +4,7 @@ import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { applyMusicXmlEdits, musicXmlEditorState } from './music/musicxml-editor';
+import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 
 type LibraryItem = { id: number; title: string };
 const initialText = exportAscii(demo);
@@ -37,6 +38,13 @@ export function App() {
   const [editMode, setEditMode] = useState(false);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [selection, setSelection] = useState<ScoreSelection | null>(null);
+  const [history, setHistory] = useState(emptyHistory);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const savedBaseline = useRef<string | null>(null);
+  const session = useRef(0);
+  const currentDocument = preview ? toImportedScoreDocument(preview, warnings) : score;
+  const currentDocumentRef = useRef(currentDocument);
+  currentDocumentRef.current = currentDocument;
   const dialog = useRef<HTMLDialogElement>(null);
   const [text, setText] = useState(initialText);
   const [title, setTitle] = useState('My banjo tab');
@@ -56,24 +64,70 @@ export function App() {
 
   useEffect(() => { apiRequest('/api/songs').then(setLibrary).catch(e => setError(e.message)); }, []);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null) {
+    session.current++;
+    savedBaseline.current = id === null ? null : documentKey(next);
+    setHistory(emptyHistory()); setHistoryRevision(value => value + 1);
     setPreview(null);
     setEditMode(false); setLibraryCollapsed(false);
     setSelection(null);
     setScore(next); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null) {
+    session.current++;
+    savedBaseline.current = id === null ? null : documentKey(toImportedScoreDocument(next, diagnostics));
+    setHistory(emptyHistory()); setHistoryRevision(value => value + 1);
     setEditMode(false); setLibraryCollapsed(false);
     setSelection(null);
     setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function toggleEditMode() {
+    setHistoryRevision(value => value + 1);
     setEditMode(current => {
       const next = !current;
       setLibraryCollapsed(next);
       return next;
     });
   }
-  function updateSelectedScore(selectionToEdit: ScoreSelection, editNative: (notes: { string: number; fret: number }[]) => void, editImported: (note: ReturnType<typeof musicXmlEditorState>['notes'][number]) => void) {
+  function remember(after: Snapshot, description: string, group?: string) {
+    setHistory(current => record(current, { before: { document: currentDocument, selection }, after, description, group }));
+    setDirty(documentKey(after.document) !== savedBaseline.current);
+  }
+  function moveHistory(direction: 'undo' | 'redo') {
+    const result = travel(history, direction);
+    if (!result) return;
+    try {
+      const document = result.snapshot.document;
+      // Parse before publishing; a failed restoration keeps the current draft.
+      const restored = isImportedScoreDocument(document) ? readMusicXml(document.source, document.sourceName, document.sourceFormat) : null;
+      setPreview(restored);
+      if (!isImportedScoreDocument(document)) setScore(document);
+      else setWarnings(document.warnings);
+      setSelection(result.snapshot.selection);
+      setHistory(result.history);
+      setHistoryRevision(value => value + 1);
+      setDirty(documentKey(document) !== savedBaseline.current);
+      setError(''); setMessage(result.description);
+      documentRefocus();
+    } catch (error) { setError((error as Error).message); }
+  }
+  function documentRefocus() { document.querySelector<HTMLElement>('[data-testid="notation"]')?.focus({ preventScroll: true }); }
+  const historyAction = useRef(moveHistory);
+  historyAction.current = moveHistory;
+  useEffect(() => {
+    if (!editMode) return;
+    const keydown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.closest('input, textarea, select, [contenteditable="true"]'))) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+      event.preventDefault();
+      historyAction.current(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+    };
+    document.addEventListener('keydown', keydown, true);
+    return () => document.removeEventListener('keydown', keydown, true);
+  }, [editMode]);
+  function updateSelectedScore(selectionToEdit: ScoreSelection, editNative: (notes: { string: number; fret: number }[]) => void, editImported: (note: ReturnType<typeof musicXmlEditorState>['notes'][number]) => void, afterSelection: ScoreSelection, description: string, group?: string) {
     if (preview) {
       if (selectionToEdit.string === null) return false;
       try {
@@ -85,8 +139,9 @@ export function App() {
         }
         editImported(note);
         const nextSource = applyMusicXmlEdits(preview.source, state, [note.index]);
-        setPreview(readMusicXml(nextSource, preview.filename, preview.sourceFormat));
-        setDirty(true);
+        const nextPreview = readMusicXml(nextSource, preview.filename, preview.sourceFormat);
+        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: afterSelection }, description, group);
+        setPreview(nextPreview);
         setError('');
         return true;
       } catch (error) {
@@ -110,31 +165,34 @@ export function App() {
     editNative(nextBeat.notes);
     try { validateScore(next); } catch (error) { setError((error as Error).message); return false; }
     setScore(next);
-    setDirty(true);
+    remember({ document: next, selection: afterSelection }, description, group);
     setError('');
     return true;
   }
-  function updateSelectionFret(selectionToEdit: ScoreSelection, fret: number) {
+  function updateSelectionFret(selectionToEdit: ScoreSelection, fret: number, group?: string) {
     if (!Number.isInteger(fret) || fret < 0 || fret > 22) {
       setError('Frets must be whole numbers from 0 to 22.');
       return;
     }
     if (selectionToEdit.string === null) return;
+    if (selectionToEdit.kind === 'note' && selectionToEdit.fret === fret) return;
+    const after: ScoreSelection = { ...selectionToEdit, kind: 'note', noteId: null, fret };
     if (!updateSelectedScore(selectionToEdit, notes => {
       const existing = notes.find(note => note.string === selectionToEdit.string);
       if (existing) existing.fret = fret;
       else notes.push({ string: selectionToEdit.string!, fret });
       notes.sort((left, right) => left.string - right.string);
-    }, note => { note.fret = fret; })) return;
-    setSelection(current => current ? { ...current, kind: 'note', noteId: null, fret } : current);
+    }, note => { note.fret = fret; }, after, `Change fret to ${fret}`, group)) return;
+    setSelection(after);
   }
   function deleteSelection(selectionToDelete: ScoreSelection) {
+    const after: ScoreSelection = { ...selectionToDelete, kind: 'empty', noteId: null, fret: null };
     if (selectionToDelete.string === null || selectionToDelete.kind !== 'note') return;
     if (!updateSelectedScore(selectionToDelete, notes => {
       const index = notes.findIndex(note => note.string === selectionToDelete.string);
       if (index >= 0) notes.splice(index, 1);
-    }, note => { note.deleted = true; })) return;
-    setSelection(current => current ? { ...current, kind: 'empty', noteId: null, fret: null } : current);
+    }, note => { note.deleted = true; }, after, 'Remove note')) return;
+    setSelection(after);
   }
   async function openSong(id: number) {
     try {
@@ -146,10 +204,14 @@ export function App() {
   }
   async function save() {
     setSaving(true); setError('');
+    const savingSession = session.current;
     try {
       const document = preview ? toImportedScoreDocument(preview, warnings) : score;
       const item = await apiRequest('/api/songs', { method: 'POST', body: JSON.stringify({ score: document, source_text: preview ? null : source }) });
-      setSavedId(item.id); setDirty(false); setLibrary(items => [item, ...items]); setMessage('Saved to your library.');
+      if (savingSession !== session.current) return;
+      savedBaseline.current = documentKey(document);
+      setHistoryRevision(value => value + 1);
+      setSavedId(item.id); setDirty(documentKey(currentDocumentRef.current) !== savedBaseline.current); setLibrary(items => [item, ...items]); setMessage('Saved to your library.');
     } catch (e) { setError((e as Error).message); } finally { setSaving(false); }
   }
   async function readFile(file?: File) {
@@ -199,6 +261,11 @@ export function App() {
       </div>}
       {editMode && <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
+        <div className="editor-history">
+          <button type="button" disabled={!history.undo.length} title={history.undo.length ? `Undo: ${history.undo.at(-1)!.description}` : 'Nothing to undo'} onClick={() => moveHistory('undo')}>Undo</button>
+          <button type="button" disabled={!history.redo.length} title={history.redo.length ? `Redo: ${history.redo.at(-1)!.description}` : 'Nothing to redo'} onClick={() => moveHistory('redo')}>Redo</button>
+        </div>
+        <p className="editor-selection-empty">Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z redoes. History lasts while this score is open; older actions expire after 100 edits or 32 MB.</p>
         <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note or empty string position to begin editing.'}</span></p>
         <div className="editor-selection" aria-label="Selection inspector">
           {!selection ? <p className="editor-selection-empty">No note, rest, or staff position selected.</p> : <>
@@ -241,6 +308,7 @@ export function App() {
           onSelectionChange={setSelection}
           onFretInput={updateSelectionFret}
           onSelectionDelete={deleteSelection}
+          historyRevision={historyRevision}
         />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
