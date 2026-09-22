@@ -7,7 +7,9 @@ test('ED-02 selects a rendered note and keeps its identity through layout change
 
   const inspector = page.getByLabel('Selection inspector');
   const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ }).first();
-  await note.click({ force: true });
+  const noteBox = await note.boundingBox();
+  expect(noteBox).not.toBeNull();
+  await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
   await expect(inspector).toContainText('Measure 1');
   await expect(inspector).toContainText('Event 1');
   await expect(inspector).toContainText('String 3');
@@ -44,7 +46,9 @@ test('ED-02 edits and deletes the selected fret with keyboard input', async ({ p
 
   const inspector = page.getByLabel('Selection inspector');
   const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ }).first();
-  await note.click({ force: true });
+  const noteBox = await note.boundingBox();
+  expect(noteBox).not.toBeNull();
+  await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
   const notation = page.getByTestId('notation');
   await notation.press('1');
   // A redraw can return focus to the document body; the selected target
@@ -82,7 +86,9 @@ test('ED-02 edits and deletes an existing imported note', async ({ page }) => {
 
   const inspector = page.getByLabel('Selection inspector');
   const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ }).first();
-  await note.click({ force: true });
+  const noteBox = await note.boundingBox();
+  expect(noteBox).not.toBeNull();
+  await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
   await page.getByTestId('notation').press('1');
   await page.keyboard.press('2');
   await expect(inspector).toContainText('Fret 12');

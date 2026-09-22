@@ -340,10 +340,18 @@ export function createEditingStaffInteractionHandler(root: HTMLElement, api: Alp
     if (!beat) return;
     const beatBounds = lookup.findBeat(beat);
     if (!beatBounds) return;
-    // AlphaTab's noteMouseDown callback owns populated note heads. This
-    // listener fills the gap around them: a point on an unoccupied string is
-    // still an editable target in the same beat.
-    if (lookup.getNoteAtPos(beat, point.x, point.y)) return;
+    // Resolve populated note heads here as well as through alphaTab's event.
+    // SVG glyphs (clefs, stems, and labels) can sit above a note's text in the
+    // DOM, so relying only on alphaTab's noteMouseDown event leaves real mouse
+    // clicks unable to select an otherwise valid note.
+    const note = lookup.getNoteAtPos(beat, point.x, point.y);
+    if (note) {
+      const source = note as model.Note & { playtabMappingReason?: string };
+      onSelection(selectionFromNote(note, source.playtabMappingReason));
+      return;
+    }
+    // A point on an unoccupied string is still an editable target in the same
+    // beat.
     const string = editingStringAtY(lookup, beat, point.y);
     onSelection(selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string));
   };
