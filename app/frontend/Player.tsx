@@ -681,6 +681,10 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   }
 
   function handleNotationKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    handleEditorKeyDown(event);
+  }
+
+  function handleEditorKeyDown(event: { key: string; preventDefault: () => void }) {
     if (!editingRef.current) return;
     const key = event.key.toLowerCase();
     if (key === 'arrowleft' || key === 'arrowright' || key === 'arrowup' || key === 'arrowdown') {
@@ -712,6 +716,20 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       }
     }
   }
+
+  useEffect(() => {
+    // AlphaTab redraws its canvas after a fret edit. If that redraw moves
+    // focus back to the document body, keep the selected edit target usable
+    // without requiring the musician to click the note again.
+    const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!editingRef.current || (event.target instanceof Node && element.current?.contains(event.target))) return;
+      const target = event.target instanceof HTMLElement ? event.target : document.activeElement;
+      if (target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)) return;
+      handleEditorKeyDown(event);
+    };
+    window.addEventListener('keydown', onWindowKeyDown);
+    return () => window.removeEventListener('keydown', onWindowKeyDown);
+  }, []);
 
   useEffect(() => {
     if (editing && selection && api.current?.score) {

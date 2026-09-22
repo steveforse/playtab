@@ -47,7 +47,10 @@ test('ED-02 edits and deletes the selected fret with keyboard input', async ({ p
   await note.click({ force: true });
   const notation = page.getByTestId('notation');
   await notation.press('1');
-  await notation.press('2');
+  // A redraw can return focus to the document body; the selected target
+  // should remain keyboard-editable without another score click.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('2');
   await expect(inspector).toContainText('Fret 12');
 
   await notation.press('Backspace');
