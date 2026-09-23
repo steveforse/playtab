@@ -63,6 +63,23 @@ describe('workspace application', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
+  it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Select passage'));
+    fireEvent.click(screen.getByRole('button', { name: 'Set range start' }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.click(screen.getByRole('button', { name: 'Set range end' }));
+    expect((screen.getByRole('button', { name: 'Clear passage' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear passage' }));
+    expect((screen.getByRole('button', { name: 'Clear passage' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('loads the library, opens plaintext and saves the native score', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response([]))

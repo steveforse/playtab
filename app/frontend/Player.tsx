@@ -6,6 +6,7 @@ import { exportAscii } from './music/ascii';
 import type { Score } from './music/score';
 import { configureChordDiagrams, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { PlaybackTransport } from './PlaybackTransport';
+import { linearAuditionMidi, scoreHasRepeats, writtenPlaybackRange, type PlaybackEndpoints } from './editor/audition';
 
 export type SoundFontOption = PlaytabSoundFontOption;
 const bundledSoundFont: SoundFontOption = {
@@ -355,33 +356,50 @@ function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat
   return clampTabString((y - rows.top) / rows.spacing + 1);
 }
 
-export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection) => void) {
-  const onMouseDown = (event: MouseEvent) => {
-    if (event.button !== 0) return;
+export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection, extend: boolean) => void) {
+  let dragStart: { x: number; y: number } | null = null;
+  const selectionAt = (event: MouseEvent): ScoreSelection | null => {
     const point = scorePoint(root, event, view);
     const lookup = api.boundsLookup;
-    if (!point || !lookup) return;
+    if (!point || !lookup) return null;
     const beat = lookup.getBeatAtPos(point.x, point.y);
-    if (!beat) return;
-    const beatBounds = lookup.findBeat(beat);
-    if (!beatBounds) return;
+    if (!beat || !lookup.findBeat(beat)) return null;
+    const note = lookup.getNoteAtPos(beat, point.x, point.y);
+    if (note) {
+      const source = note as model.Note & { playtabMappingReason?: string };
+      return selectionFromNote(note, source.playtabMappingReason);
+    }
+    const string = editingStringAtY(lookup, beat, point.y);
+    return selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string);
+  };
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0) return;
+    const selection = selectionAt(event);
+    if (!selection) return;
+    event.preventDefault();
     // Resolve populated note heads here as well as through alphaTab's event.
     // SVG glyphs (clefs, stems, and labels) can sit above a note's text in the
     // DOM, so relying only on alphaTab's noteMouseDown event leaves real mouse
     // clicks unable to select an otherwise valid note.
-    const note = lookup.getNoteAtPos(beat, point.x, point.y);
-    if (note) {
-      const source = note as model.Note & { playtabMappingReason?: string };
-      onSelection(selectionFromNote(note, source.playtabMappingReason));
-      return;
-    }
-    // A point on an unoccupied string is still an editable target in the same
-    // beat.
-    const string = editingStringAtY(lookup, beat, point.y);
-    onSelection(selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string));
+    dragStart = { x: event.clientX, y: event.clientY };
+    onSelection(selection, event.shiftKey);
   };
-  root.addEventListener('mousedown', onMouseDown);
-  return () => root.removeEventListener('mousedown', onMouseDown);
+  const onMouseMove = (event: MouseEvent) => {
+    if (!dragStart || (event.buttons & 1) === 0 || Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) < 6) return;
+    const selection = selectionAt(event);
+    if (!selection) return;
+    event.preventDefault();
+    onSelection(selection, true);
+  };
+  const onMouseUp = () => { dragStart = null; };
+  root.addEventListener('mousedown', onMouseDown, true);
+  window.addEventListener('mousemove', onMouseMove, true);
+  window.addEventListener('mouseup', onMouseUp, true);
+  return () => {
+    root.removeEventListener('mousedown', onMouseDown, true);
+    window.removeEventListener('mousemove', onMouseMove, true);
+    window.removeEventListener('mouseup', onMouseUp, true);
+  };
 }
 
 export function createPaginatedInteractionHandlers(root: HTMLElement, api: AlphaTabApi, isEditing: () => boolean = () => false) {
@@ -510,17 +528,20 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, onSelectionChange, onFretInput, onSelectionDelete, historyRevision = 0 }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0 }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
   onPreferencesChange?: (changes: Partial<PlayerPreferences>) => void;
   editing?: boolean;
   selection?: ScoreSelection | null;
+  passage?: PlaybackEndpoints | null;
   onSelectionChange?: (selection: ScoreSelection | null) => void;
+  onPassageChange?: (passage: PlaybackEndpoints | null) => void;
   onFretInput?: (selection: ScoreSelection, fret: number, group?: string) => void;
   onSelectionDelete?: (selection: ScoreSelection) => void;
   historyRevision?: number;
+  sessionKey?: number;
 }) {
   const defaults = preferences ?? defaultPlayerPreferences();
   const element = useRef<HTMLDivElement>(null);
@@ -532,13 +553,22 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const renderedDocument = useRef<{ score: Score; preview: MusicXmlPreview | null } | null>(null);
   const editingRef = useRef(editing);
   const selectionRef = useRef<ScoreSelection | null>(selection);
+  const passageRef = useRef<PlaybackEndpoints | null>(passage);
   const selectionCallbackRef = useRef(onSelectionChange);
+  const passageCallbackRef = useRef(onPassageChange);
   const fretInputCallbackRef = useRef(onFretInput);
   const selectionDeleteCallbackRef = useRef(onSelectionDelete);
   const fretInputRef = useRef('');
   const fretInputSelectionRef = useRef('');
   const fretGroup = useRef(0);
   const previousHistoryRevision = useRef(historyRevision);
+  const previousSessionKey = useRef(sessionKey);
+  const [playbackEndpoints, setPlaybackEndpoints] = useState<PlaybackEndpoints | null>(null);
+  const playbackEndpointsRef = useRef<PlaybackEndpoints | null>(null);
+  const usingLinearMidi = useRef(false);
+  const [updatingScore, setUpdatingScore] = useState(false);
+  const [playbackMessage, setPlaybackMessage] = useState('');
+  playbackEndpointsRef.current = playbackEndpoints;
   if (previousHistoryRevision.current !== historyRevision) {
     previousHistoryRevision.current = historyRevision;
     fretInputRef.current = '';
@@ -547,12 +577,15 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   }
   editingRef.current = editing;
   selectionRef.current = selection;
+  passageRef.current = passage;
   selectionCallbackRef.current = onSelectionChange;
+  passageCallbackRef.current = onPassageChange;
   fretInputCallbackRef.current = onFretInput;
   selectionDeleteCallbackRef.current = onSelectionDelete;
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState('');
+  const [audioRetryRevision, setAudioRetryRevision] = useState(0);
   const [exportNotice, setExportNotice] = useState('');
   const [speed, setSpeed] = useState(defaults.speed);
   const [volume, setVolume] = useState(defaults.volume);
@@ -574,6 +607,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const soundFont = availableSoundFonts.find(option => option.id === soundFontId) ?? availableSoundFonts[0] ?? bundledSoundFont;
   const currentPreview = preview ?? null;
   const previewMode = currentPreview !== null;
+  useEffect(() => {
+    if (previousSessionKey.current === sessionKey) return;
+    previousSessionKey.current = sessionKey;
+    playbackEndpointsRef.current = null;
+    usingLinearMidi.current = false;
+    setPlaybackEndpoints(null);
+    setPlaybackMessage('');
+  }, [sessionKey]);
   useLayoutEffect(() => {
     const narrowScreen = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches;
     setPlaybackHost(narrowScreen ? null : document.getElementById('playback-controls'));
@@ -613,10 +654,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     };
     const detachNoteMouseDown = instance.noteMouseDown?.on(selectNote);
     const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
-    const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, selection => {
+    const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, (selection, extend) => {
       if (editingRef.current) {
         fretInputRef.current = '';
         element.current?.focus({ preventScroll: true });
+        if (extend && selectionRef.current) {
+          const anchor = passageRef.current?.start ?? selectionRef.current;
+          passageCallbackRef.current?.(compareSelections(anchor, selection) <= 0 ? { start: anchor, end: selection } : { start: selection, end: anchor });
+        } else passageCallbackRef.current?.(null);
         selectionCallbackRef.current?.(selection);
       }
     });
@@ -639,6 +684,21 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     instance.playerPositionChanged.on(event => setPosition({ currentTime: event.currentTime, endTime: event.endTime }));
     instance.renderFinished.on(() => {
       setRendered(true);
+      const activeRange = playbackEndpointsRef.current;
+      if (activeRange && instance.score) {
+        const ticks = writtenPlaybackRange(instance.score, activeRange);
+        if (ticks) {
+          usingLinearMidi.current = scoreHasRepeats(instance.score);
+          if (usingLinearMidi.current) instance.player?.loadMidiFile(linearAuditionMidi(instance.score));
+          instance.playbackRange = ticks;
+          instance.tickPosition = ticks.startTick;
+        } else {
+          playbackEndpointsRef.current = null;
+          setPlaybackEndpoints(null);
+          instance.playbackRange = null;
+        }
+      }
+      setUpdatingScore(false);
       const surface = element.current?.querySelector('.at-surface');
       const finishLayout = () => {
         if (scoreView !== 'continuous' && surface instanceof HTMLElement) paginateAlphaTabSurface(surface, scoreView, scrollDirection === 'horizontal');
@@ -660,13 +720,18 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       api.current = null;
       renderedDocument.current = null;
     };
-  }, [previewMode, scoreView, barsPerRow, scrollDirection, showChordDiagrams, hideTabClef, soundFont]);
+  }, [previewMode, scoreView, barsPerRow, scrollDirection, showChordDiagrams, hideTabClef, soundFont, audioRetryRevision]);
 
   // Keep the existing surface mounted so the document height cannot collapse on each edit.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const instance = api.current;
     const previous = renderedDocument.current;
     if (!instance || (previous?.score === score && previous.preview === currentPreview)) return;
+    instance.pause();
+    instance.stop();
+    setPlaying(false);
+    setUpdatingScore(true);
+    setPlaybackMessage('Score updated. Press Play to listen.');
     renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef, true);
     renderedDocument.current = { score, preview: currentPreview };
   }, [score, currentPreview, showChordDiagrams, hideTabClef]);
@@ -675,11 +740,44 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     if (api.current) api.current.settings.player.enableUserInteraction = !editing;
   }, [editing]);
 
+  function renderRangeOverlay(endpoints: PlaybackEndpoints | null, className: string) {
+    const root = element.current;
+    if (!root) return;
+    root.querySelectorAll(`.${className}`).forEach(node => node.remove());
+    const instance = api.current;
+    if (!editingRef.current || !instance?.score || !endpoints || !instance.boundsLookup) return;
+    const range = writtenPlaybackRange(instance.score, endpoints);
+    const surface = root.querySelector<HTMLElement>('.at-surface');
+    if (!range || !surface) return;
+    const seen = new Set<number>();
+    for (const bar of instance.score.tracks[0]?.staves[0]?.bars ?? []) {
+      for (const voice of bar.voices) for (const beat of voice.beats) {
+        if (seen.has(beat.id)) continue;
+        seen.add(beat.id);
+        const start = instance.score.masterBars[bar.index].start + beat.playbackStart;
+        if (start >= range.endTick || start + beat.playbackDuration <= range.startTick) continue;
+        const bounds = instance.boundsLookup.findBeat(beat)?.visualBounds;
+        if (!bounds) continue;
+        const page = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
+        const overlay = document.createElement('div');
+        overlay.className = className;
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.style.left = `${bounds.x + page.x}px`;
+        overlay.style.top = `${page.y}px`;
+        overlay.style.width = `${bounds.w}px`;
+        overlay.style.height = `${bounds.h}px`;
+        surface.append(overlay);
+      }
+    }
+  }
+
   function renderSelectionOverlay() {
     const root = element.current;
     const currentApi = api.current;
     const currentSelection = selectionRef.current;
     if (!root) return;
+    renderRangeOverlay(playbackEndpointsRef.current, 'editor-playback-selection');
+    renderRangeOverlay(passageRef.current, 'editor-passage-selection');
     root.querySelectorAll('.editor-note-selection').forEach(node => node.remove());
     if (!editingRef.current || !currentApi || !currentSelection) return;
     const renderedScore = currentApi.score;
@@ -836,17 +934,61 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       return () => window.cancelAnimationFrame(frame);
     }
     update();
-  }, [editing, selection, scoreView, scrollDirection]);
+  }, [editing, selection, passage, playbackEndpoints, scoreView, scrollDirection]);
 
   const baseTempo = preview?.score.tempo ?? score.tempo;
   const maxPlaybackSpeed = Math.max(
     DEFAULT_MAX_PLAYBACK_SPEED,
     Math.ceil((MAX_PLAYBACK_BPM / baseTempo) / PLAYBACK_SPEED_STEP) * PLAYBACK_SPEED_STEP,
   );
-  const transport = { ready, playing, ...position, onRestart: () => api.current?.stop(), onPlayPause: () => api.current?.playPause() };
+  function playSelection() {
+    const instance = api.current;
+    const endpoints = passage ?? (selection ? { start: selection, end: selection } : null);
+    if (!instance?.score || !endpoints || !ready || updatingScore) return;
+    const ticks = writtenPlaybackRange(instance.score, endpoints);
+    if (!ticks) { setError('The selected passage cannot be mapped to playable score events.'); return; }
+    if (playing) instance.stop();
+    usingLinearMidi.current = scoreHasRepeats(instance.score);
+    if (usingLinearMidi.current) instance.player?.loadMidiFile(linearAuditionMidi(instance.score));
+    instance.playbackRange = ticks;
+    instance.tickPosition = ticks.startTick;
+    playbackEndpointsRef.current = endpoints;
+    setPlaybackEndpoints(endpoints);
+    setPlaybackMessage('');
+    instance.play();
+  }
+  function clearPlaybackRange() {
+    const instance = api.current;
+    if (instance) {
+      if (usingLinearMidi.current) instance.stop();
+      instance.playbackRange = null;
+      if (usingLinearMidi.current) instance.loadMidiForScore();
+    }
+    usingLinearMidi.current = false;
+    playbackEndpointsRef.current = null;
+    setPlaybackEndpoints(null);
+  }
+  function restartPlayback() {
+    const instance = api.current;
+    if (!instance) return;
+    instance.stop();
+    const ticks = playbackEndpoints && instance.score ? writtenPlaybackRange(instance.score, playbackEndpoints) : null;
+    instance.tickPosition = ticks?.startTick ?? 0;
+  }
+  const transport = { ready: ready && !error, updating: updatingScore, playing, ...position, onRestart: restartPlayback,
+    onPlayPause: () => updatingScore ? api.current?.pause() : api.current?.playPause() };
   const playbackPanel = <section className="playback-panel" aria-label="Playback settings">
     <div className="sidebar-section playback-heading">PLAYBACK</div>
     <PlaybackTransport {...transport} ariaLabel="Playback controls" />
+    {editing && <div className="audition-controls" aria-label="Selection playback">
+      <button type="button" disabled={!selection || !ready || updatingScore || Boolean(error)} onClick={playSelection}>Play selection</button>
+      <button type="button" disabled={!playbackEndpoints} onClick={clearPlaybackRange}>Clear playback range</button>
+      {passage && <span className="audition-range">Passage: M{passage.start.measure} E{passage.start.event}–M{passage.end.measure} E{passage.end.event}</span>}
+      {playbackEndpoints && <span className="audition-range">Playing range: M{playbackEndpoints.start.measure} E{playbackEndpoints.start.event}–M{playbackEndpoints.end.measure} E{playbackEndpoints.end.event}</span>}
+      {updatingScore && <span role="status">Updating score</span>}
+      {playbackMessage && <span role="status">{playbackMessage}</span>}
+    </div>}
+    {error && <button type="button" className="retry-audio" onClick={() => { setError(''); setAudioRetryRevision(value => value + 1); }}>Retry audio</button>}
     <label className="speed-control">
       <span className="speed-value">{Math.round(baseTempo * speed)} <span>BPM</span></span>
       <input aria-label="Playback speed" type="range" min="0.25" max={maxPlaybackSpeed} step={PLAYBACK_SPEED_STEP} value={speed} onChange={e => { const value = Number(e.target.value); setSpeed(value); onPreferencesChange?.({ speed: value }); if (api.current) api.current.playbackSpeed = value; }} />
