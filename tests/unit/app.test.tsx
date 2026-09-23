@@ -6,7 +6,7 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes } = vi.hoisted(() => ({ readMusicXml: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn() }));
+const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
@@ -23,7 +23,7 @@ vi.mock('../../app/frontend/Player', () => ({
   }),
 }));
 vi.mock('../../app/frontend/music/musicxml', () => ({
-  readMusicXml,
+  readMusicXml, promoteNativeScore,
   toImportedScoreDocument: (preview: any, warnings: string[]) => ({
     version: 2, kind: 'musicxml', title: preview.score.title, sourceName: preview.filename,
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
@@ -60,7 +60,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -107,6 +107,31 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'My banjo tab' }));
     openImport();
     fireEvent.click(screen.getByRole('button', { name: 'Close import' }));
+  });
+
+  it('promotes a high native fret in one undoable command before saving', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({ id: 9, title: score.title, revision: 0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    promoteNativeScore.mockReturnValue('<score-partwise/>');
+    readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename, score: { title: score.title, masterBars: [{}] } }));
+    musicXmlEditorState.mockReturnValue({ notes: [{ index: 0, measure: 0, beat: 0, string: 3, fret: 0, technique: 'none' }] });
+    applyMusicXmlEdits.mockReturnValue('<score-partwise><edited/></score-partwise>');
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '28' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(promoteNativeScore).toHaveBeenCalledOnce();
+    expect(screen.getByText('Fret 28')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo', exact: true }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Redo', exact: true }));
+    expect(screen.getByText('Fret 28')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '＋ Save to library' }));
+    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
+    const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(sent.score).toMatchObject({ version: 2, kind: 'musicxml', source: '<score-partwise><edited/></score-partwise>' });
   });
 
   it('updates the same record with a revision and keeps a newer edit unsaved while the request finishes', async () => {

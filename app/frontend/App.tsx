@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSelection } from './Player';
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
-import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
+import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -156,9 +156,9 @@ export function App() {
     setPendingRemoval(null);
     setScore(next); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setSavedRevision(revision); setDirty(id === null); setMessage(''); setError('');
   }
-  function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
+  function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null, revision: number | null = null, original: string | null = null) {
     session.current++;
-    const snapshot = { document: toImportedScoreDocument(next, diagnostics), original: null, diagnostics, id, revision };
+    const snapshot = { document: toImportedScoreDocument(next, diagnostics), original, diagnostics, id, revision };
     initialSnapshot.current = snapshot; savedSnapshot.current = id === null ? null : snapshot;
     saveInFlight.current = null; setSaving(false); setSaveError(''); setConflicted(false); setFailedCopyName(null);
     savedBaseline.current = id === null ? null : documentKey(toImportedScoreDocument(next, diagnostics));
@@ -167,7 +167,7 @@ export function App() {
     setSelection(null);
     setPassage(null);
     setPendingRemoval(null);
-    setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setSavedRevision(revision); setDirty(id === null); setMessage(''); setError('');
+    setPreview(next); setScore(demo); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setSavedRevision(revision); setDirty(id === null); setMessage(''); setError('');
   }
   function toggleEditMode() {
     setHistoryRevision(value => value + 1);
@@ -268,13 +268,31 @@ export function App() {
       setError('Frets must be whole numbers from 0 to 36.');
       return;
     }
-    if (!preview && fret > 22) {
-      setError('This native score supports frets 0 to 22. Save as MusicXML before using a higher fret.');
-      return;
-    }
     if (selectionToEdit.string === null) return;
     if (selectionToEdit.kind === 'note' && selectionToEdit.fret === fret) return;
     const after: ScoreSelection = { ...selectionToEdit, kind: 'note', noteId: null, fret };
+    if (!preview && fret > 22) {
+      try {
+        validateScore(score);
+        const filename = `${score.title.slice(0, 148)}.musicxml`;
+        const promoted = withPreviewTitle(readMusicXml(promoteNativeScore(score), filename), score.title);
+        let nextSource: string;
+        if (selectionToEdit.kind === 'note') {
+          const state = musicXmlEditorState(promoted.source, promoted.score);
+          const note = state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.event - 1 && candidate.string === selectionToEdit.string);
+          if (!note) throw new Error('The selected note could not be matched after promotion.');
+          note.fret = fret;
+          nextSource = applyMusicXmlEdits(promoted.source, state, [note.index]);
+        } else nextSource = addMusicXmlNote(promoted.source, promoted.score, {
+          measure: selectionToEdit.measure - 1, beat: selectionToEdit.event - 1,
+          voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
+        });
+        const nextPreview = withPreviewTitle(readMusicXml(nextSource, filename), score.title);
+        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after }, `Promote score and change fret to ${fret}`);
+        setPreview(nextPreview); setSelection(after); setError('');
+      } catch (error) { setError((error as Error).message); }
+      return;
+    }
     if (preview && selectionToEdit.kind !== 'note') {
       try {
         const nextSource = addMusicXmlNote(preview.source, preview.score, {
@@ -381,7 +399,7 @@ export function App() {
     if (leaveOpener.current?.isConnected) requestAnimationFrame(() => leaveOpener.current?.focus({ preventScroll: true }));
   }
   function restoreSnapshot(snapshot: SessionSnapshot) {
-    if (isImportedScoreDocument(snapshot.document)) loadPreview(readImportedDocument(snapshot.document), snapshot.diagnostics, snapshot.id, snapshot.revision);
+    if (isImportedScoreDocument(snapshot.document)) loadPreview(readImportedDocument(snapshot.document), snapshot.diagnostics, snapshot.id, snapshot.revision, snapshot.original);
     else load(snapshot.document, snapshot.original, snapshot.diagnostics, snapshot.id, snapshot.revision);
   }
   function askDiscard(action: () => void | Promise<void>) {
@@ -444,7 +462,7 @@ export function App() {
       validateStoredScore(song.score);
       const candidate = isImportedScoreDocument(song.score) ? readImportedDocument(song.score) : null;
       requestLeave(() => {
-        if (candidate) loadPreview(candidate, song.score.warnings, id, song.revision);
+        if (candidate) loadPreview(candidate, song.score.warnings, id, song.revision, song.source_text);
         else load(song.score, song.source_text, song.source_text ? ['Imported from plaintext using equal-note rhythm. Original text is preserved with this score.'] : [], id, song.revision);
       });
     } catch (e) { setError((e as Error).message); }
@@ -454,7 +472,7 @@ export function App() {
     try {
       const song = await apiRequest(`/api/songs/${savedId}`);
       validateStoredScore(song.score);
-      if (isImportedScoreDocument(song.score)) restoreSnapshot({ document: song.score, original: null, diagnostics: song.score.warnings, id: savedId, revision: song.revision });
+      if (isImportedScoreDocument(song.score)) restoreSnapshot({ document: song.score, original: song.source_text, diagnostics: song.score.warnings, id: savedId, revision: song.revision });
       else restoreSnapshot({ document: song.score, original: song.source_text, diagnostics: song.source_text ? ['Imported from plaintext using equal-note rhythm. Original text is preserved with this score.'] : [], id: savedId, revision: song.revision });
     } catch (failure) { setError((failure as Error).message); }
   }
@@ -472,7 +490,7 @@ export function App() {
       const updating = id !== null && !copy;
       const item: LibraryItem = await apiRequest(updating ? `/api/songs/${id}` : '/api/songs', {
         method: updating ? 'PATCH' : 'POST',
-        body: JSON.stringify({ score: document, source_text: preview ? null : source, ...(updating ? { revision } : {}) }),
+        body: JSON.stringify({ score: document, source_text: source, ...(updating ? { revision } : {}) }),
       });
       if (savingSession !== session.current) return false;
       if (copy) {
@@ -483,7 +501,7 @@ export function App() {
       }
       savedBaseline.current = documentKey(document);
       setConflicted(false);
-      savedSnapshot.current = { document, original: preview ? null : source, diagnostics: warnings, id: item.id, revision: item.revision ?? null };
+      savedSnapshot.current = { document, original: source, diagnostics: warnings, id: item.id, revision: item.revision ?? null };
       setHistoryRevision(value => value + 1);
       setSavedId(item.id); setSavedRevision(item.revision ?? null);
       setDirty(documentKey(currentDocumentRef.current) !== savedBaseline.current);

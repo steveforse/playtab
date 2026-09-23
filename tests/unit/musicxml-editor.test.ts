@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { readMusicXml } from '../../app/frontend/music/musicxml';
+import { promoteNativeScore, readMusicXml } from '../../app/frontend/music/musicxml';
+import { OPEN_G, type Score } from '../../app/frontend/music/score';
 import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes, replaceTechnique } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
@@ -237,7 +238,7 @@ describe('MusicXML score editing', () => {
     expect(next.score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].leftHandFinger).toBe(3);
 
     const thumbAndEffects = applyMusicXmlEdits(preview.source, {
-      ...state,
+      ...state, origin: undefined,
       notes: [...state.notes.map((note, index) => index === 0 ? { ...note, technique: 'thumb' as const } : index === 1 ? { ...note, technique: 'none' as const } : index === 2 ? { ...note, technique: 'slide' as const } : { ...note, technique: 'bend' as const }), { index: 99, measure: 0, beat: 0, string: 1, fret: 0, technique: 'keep' as const }],
       annotations: [], chords: ['???', 'C7'],
     });
@@ -288,9 +289,100 @@ describe('MusicXML score editing', () => {
     expect(reduced).not.toContain('playtab-lyrics');
 
     const noMeasures = '<score-partwise><part id="P1"/></score-partwise>';
-    expect(applyMusicXmlEdits(noMeasures, { ...state, tuning: [], notes: [], measureCount: 2 })).toContain('<part id="P1"/>');
-    expect(() => applyMusicXmlEdits('<score-partwise/>', { ...state, annotations: ['Extra section'], chords: ['C'], notes: [], measureCount: 1 })).not.toThrow();
-    expect(applyMusicXmlEdits('<score-partwise><part id="P1"><measure number="1"/></part></score-partwise>', { ...state, annotations: [], chords: [], notes: [], measureCount: 2 })).toContain('<duration>4</duration>');
-    expect(applyMusicXmlEdits(source.replace('</work>', '</work><movement-title>Old title</movement-title>'), state)).toContain('<movement-title>Technique exercise</movement-title>');
+    expect(applyMusicXmlEdits(noMeasures, { ...state, origin: undefined, tuning: [], notes: [], measureCount: 2 })).toContain('<part id="P1"/>');
+    expect(() => applyMusicXmlEdits('<score-partwise/>', { ...state, origin: undefined, annotations: ['Extra section'], chords: ['C'], notes: [], measureCount: 1 })).not.toThrow();
+    expect(applyMusicXmlEdits('<score-partwise><part id="P1"><measure number="1"/></part></score-partwise>', { ...state, origin: undefined, annotations: [], chords: [], notes: [], measureCount: 2 })).toContain('<duration>4</duration>');
+    expect(applyMusicXmlEdits(source.replace('</work>', '</work><movement-title>Old title</movement-title>'), { ...state, origin: undefined })).toContain('<movement-title>Technique exercise</movement-title>');
+  });
+
+  it('preserves a no-op source byte for byte and rejects a stale editor draft', () => {
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+      .replace('</part-list>', '</part-list><credit><credit-words custom="opaque">Do not rewrite</credit-words></credit>');
+    const preview = readMusicXml(source, 'source.xml');
+    const state = musicXmlEditorState(source, preview.score);
+    expect(applyMusicXmlEdits(source, state)).toBe(source);
+    const changedSource = source.replace('Do not rewrite', 'Another revision');
+    state.notes[0].fret = 1;
+    expect(() => applyMusicXmlEdits(changedSource, state, [state.notes[0].index])).toThrow('changed since this edit began');
+  });
+
+  it('changes only the selected note and retains unrelated metadata and source spelling', () => {
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+      .replace('<work-title>Technique exercise</work-title>', '<work-title>Technique exercise</work-title><opaque xmlns="urn:playtab:test" attr="keep"><inner>value</inner></opaque>')
+      .replace('<pitch><step>C</step><octave>3</octave></pitch>', '<pitch><step>C</step><alter>0</alter><octave>3</octave></pitch>');
+    const preview = readMusicXml(source, 'source.xml');
+    const state = musicXmlEditorState(source, preview.score);
+    const originalSecond = '<pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch>';
+    state.notes[0].fret = 1;
+    const edited = applyMusicXmlEdits(source, state, [state.notes[0].index]);
+    expect(edited).toContain('<opaque xmlns="urn:playtab:test" attr="keep"><inner>value</inner></opaque>');
+    expect(edited).toContain(originalSecond);
+    expect(edited).toContain('<work-title>Technique exercise</work-title>');
+    expect(readMusicXml(edited, 'source.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].fret).toBe(1);
+  });
+
+  it('maps a chord member by its source identity when XML order differs from rendered order', () => {
+    const document = new DOMParser().parseFromString(fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8'), 'application/xml');
+    const notes = Array.from(document.getElementsByTagName('note'));
+    const firstTab = notes[4];
+    const secondTab = notes[5];
+    const chordMarker = secondTab.getElementsByTagName('chord')[0];
+    secondTab.removeChild(chordMarker);
+    firstTab.insertBefore(chordMarker, firstTab.firstChild);
+    firstTab.parentNode!.insertBefore(secondTab, firstTab);
+    const source = new XMLSerializer().serializeToString(document);
+    const preview = readMusicXml(source, 'reordered.xml');
+    const state = musicXmlEditorState(source, preview.score);
+    const target = state.notes.find(note => note.measure === 0 && note.beat === 0 && note.string === 1)!;
+    expect(target).toBeTruthy();
+    target.fret = 2;
+    const edited = applyMusicXmlEdits(source, state, [target.index]);
+    const result = new DOMParser().parseFromString(edited, 'application/xml');
+    const tabMembers = Array.from(result.getElementsByTagName('note')).filter(note => note.getElementsByTagName('string').length);
+    expect(tabMembers.map(note => [note.getElementsByTagName('string')[0].textContent, note.getElementsByTagName('fret')[0].textContent]).slice(0, 2))
+      .toEqual([['3', '0'], ['1', '2']]);
+    expect(readMusicXml(edited, 'reordered.xml').score.tracks[0].staves[0].bars[0].voices[1].beats[0].notes.some(note => note.fret === 2 && 6 - note.string === 1)).toBe(true);
+  });
+
+  it('promotes a native score without changing fret convention, rhythm, rests or metadata', () => {
+    const native: Score = { version: 1, title: 'A & B <banjo>', tempo: 112, tuning: OPEN_G,
+      fretConvention: 'relative-to-string-nut', measures: [{ beats: [
+        { duration: 4, notes: [{ string: 5, fret: 0 }, { string: 1, fret: 2 }] },
+        { duration: 4, notes: [] },
+        { duration: 4, notes: [{ string: 4, fret: 3 }] },
+        { duration: 4, notes: [] },
+      ] }] };
+    const source = promoteNativeScore(native);
+    expect(source).toContain('A &amp; B &lt;banjo&gt;');
+    const preview = readMusicXml(source, 'promoted.musicxml');
+    expect(preview.score.title.replaceAll('\u00a0', ' ')).toBe(native.title);
+    expect(preview.score.tempo).toBe(112);
+    expect(preview.score.tracks[0].staves[0].tuning).toEqual(OPEN_G);
+    const beats = preview.score.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats.map(beat => beat.playbackStart)).toEqual([0, 960, 1920, 2880]);
+    expect(beats.map(beat => beat.isRest)).toEqual([false, true, false, true]);
+    expect(beats[0].notes.map(note => [6 - note.string, note.fret, note.realValue]).sort((a, b) => a[0] - b[0]))
+      .toEqual([[1, 2, OPEN_G[0] + 2], [5, 0, OPEN_G[4]]]);
+    const state = musicXmlEditorState(source, preview.score);
+    const highFret = state.notes.find(note => note.string === 1)!;
+    highFret.fret = 28;
+    const edited = readMusicXml(applyMusicXmlEdits(source, state, [highFret.index]), 'promoted.musicxml');
+    expect(edited.score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes.find(note => 6 - note.string === 1)?.fret).toBe(28);
+  });
+
+  it('keeps an unsupported source subtree and overfull timing through an isolated fret correction', () => {
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+      .replace('<score-partwise version="4.0">', '<score-partwise version="4.0" xmlns:custom="urn:playtab:opaque">')
+      .replace('<note><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>4</string><fret>0</fret><pull-off type="stop"/>',
+        '<note><pitch><step>C</step><octave>3</octave></pitch><duration>2</duration><type>half</type><notations><technical><string>4</string><fret>0</fret><pull-off type="stop"/>')
+      .replace('<pull-off type="stop"/>', '<pull-off type="stop"/><custom:opaque data="retain"><custom:nested>yes</custom:nested></custom:opaque>');
+    const preview = readMusicXml(source, 'imperfect.xml');
+    const state = musicXmlEditorState(source, preview.score);
+    const first = state.notes.find(note => note.beat === 0 && note.string === 4)!;
+    first.fret = 1;
+    const edited = applyMusicXmlEdits(source, state, [first.index]);
+    expect(edited).toContain('<custom:opaque data="retain"><custom:nested>yes</custom:nested></custom:opaque>');
+    expect(edited).toContain('<duration>2</duration><type>half</type>');
+    expect(edited).not.toContain('<duration>1</duration><type>half</type>');
   });
 });

@@ -1,6 +1,6 @@
 import { importer, model } from '@coderline/alphatab';
 import { extractTechniques, applyTechniques } from './musicxml-techniques';
-import type { ImportedScoreDocument } from './score';
+import type { ImportedScoreDocument, Score } from './score';
 
 export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
 export type TimedLyric = { measure: number; beat: number; text: string };
@@ -194,4 +194,28 @@ export function toImportedScoreDocument(preview: MusicXmlPreview, warnings: stri
     source: preview.source,
     warnings,
   };
+}
+
+// Native v1 frets are relative to each string's nut. Materializing the same
+// concert pitches in MusicXML lets a richer edit start without changing the
+// stored v1 record until the caller explicitly saves the promoted document.
+export function promoteNativeScore(score: Score): string {
+  const escape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  const pitch = (midi: number, prefix = '') => {
+    const names: [string, number][] = [['C', 0], ['C', 1], ['D', 0], ['D', 1], ['E', 0], ['F', 0], ['F', 1], ['G', 0], ['G', 1], ['A', 0], ['A', 1], ['B', 0]];
+    const [step, alter] = names[((midi % 12) + 12) % 12];
+    return `<${prefix}step>${step}</${prefix}step>${alter ? `<${prefix}alter>${alter}</${prefix}alter>` : ''}<${prefix}octave>${Math.floor(midi / 12) - 1}</${prefix}octave>`;
+  };
+  const tuning = score.tuning.map((midi, index) => `<staff-tuning line="${5 - index}">${pitch(midi, 'tuning-')}</staff-tuning>`).reverse().join('');
+  const measures = score.measures.map((measure, index) => {
+    const attributes = index === 0 ? `<attributes><divisions>16</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>TAB</sign><line>5</line></clef><staff-details><staff-lines>5</staff-lines>${tuning}</staff-details></attributes><direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${score.tempo}</per-minute></metronome></direction-type><sound tempo="${score.tempo}"/></direction>` : '';
+    const events = measure.beats.map(beat => {
+      const duration = 64 / beat.duration;
+      const type = beat.duration === 4 ? 'quarter' : beat.duration === 8 ? 'eighth' : '16th';
+      if (!beat.notes.length) return `<note><rest/><duration>${duration}</duration><voice>1</voice><type>${type}</type><staff>1</staff></note>`;
+      return beat.notes.map((note, member) => `<note>${member ? '<chord/>' : ''}<pitch>${pitch(score.tuning[note.string - 1] + note.fret)}</pitch><duration>${duration}</duration><voice>1</voice><type>${type}</type><staff>1</staff><notations><technical><string>${note.string}</string><fret>${note.fret}</fret></technical></notations></note>`).join('');
+    }).join('');
+    return `<measure number="${index + 1}">${attributes}${events}</measure>`;
+  }).join('');
+  return `<?xml version="1.0" encoding="utf-8"?><score-partwise version="4.0"><work><work-title>${escape(score.title)}</work-title></work><movement-title>${escape(score.title)}</movement-title><part-list><score-part id="P1"><part-name>Banjo</part-name></score-part></part-list><part id="P1">${measures}</part></score-partwise>`;
 }
