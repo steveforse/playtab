@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSelection } from './Player';
-import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score } from './music/score';
+import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
@@ -9,6 +10,8 @@ import type { PlaybackEndpoints } from './editor/audition';
 
 type LibraryItem = { id: number; title: string; revision?: number };
 type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: 'note' | 'rest'; dependencies: string[] };
+type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
+class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
 const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
 function withPreviewTitle(preview: MusicXmlPreview, title: string): MusicXmlPreview {
@@ -25,7 +28,7 @@ async function apiRequest(path: string, options?: RequestInit) {
   } });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(typeof body.error === 'string' ? body.error : `Request failed (${response.status}).`);
+    throw new ApiError(typeof body.error === 'string' ? body.error : `Request failed (${response.status}).`, response.status);
   }
   return response.json();
 }
@@ -42,6 +45,7 @@ export function App() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [conflicted, setConflicted] = useState(false);
   const [failedCopyName, setFailedCopyName] = useState<string | null>(null);
   const [copyTitle, setCopyTitle] = useState('');
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -56,16 +60,32 @@ export function App() {
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
   const removalDialog = useRef<HTMLDialogElement>(null);
   const copyDialog = useRef<HTMLDialogElement>(null);
+  const leaveDialog = useRef<HTMLDialogElement>(null);
+  const discardDialog = useRef<HTMLDialogElement>(null);
+  const conflictDialog = useRef<HTMLDialogElement>(null);
+  const leaveAction = useRef<(() => void | Promise<void>) | null>(null);
+  const leaveOpener = useRef<HTMLElement | null>(null);
+  const discardAction = useRef<(() => void | Promise<void>) | null>(null);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [conflictOpen, setConflictOpen] = useState(false);
+  const [guardError, setGuardError] = useState('');
   const removalOpener = useRef<HTMLElement | null>(null);
   const [history, setHistory] = useState(emptyHistory);
   const [historyRevision, setHistoryRevision] = useState(0);
   const savedBaseline = useRef<string | null>(null);
+  const initialSnapshot = useRef<SessionSnapshot>({ document: demo, original: null, diagnostics: [], id: null, revision: null });
+  const savedSnapshot = useRef<SessionSnapshot | null>(null);
   const session = useRef(0);
   const saveInFlight = useRef<number | null>(null);
   const saveSequence = useRef(0);
   const currentDocument = preview ? toImportedScoreDocument(preview, warnings) : score;
   const currentDocumentRef = useRef(currentDocument);
   currentDocumentRef.current = currentDocument;
+  const hasDocumentEdits = documentKey(currentDocument) !== (savedBaseline.current ?? documentKey(initialSnapshot.current.document));
+  const pendingFret = editMode && selection?.string !== null && selection?.string !== undefined && fretDraft !== (selection.fret === null ? '' : String(selection.fret));
+  const pendingFretRef = useRef<{ selection: ScoreSelection; value: string } | null>(null);
+  pendingFretRef.current = pendingFret && selection ? { selection, value: fretDraft } : null;
   const dialog = useRef<HTMLDialogElement>(null);
   const [text, setText] = useState(initialText);
   const [title, setTitle] = useState('My banjo tab');
@@ -85,6 +105,32 @@ export function App() {
 
   useEffect(() => { apiRequest('/api/songs').then(setLibrary).catch(e => setError(e.message)); }, []);
   useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (documentKey(currentDocumentRef.current) === (savedBaseline.current ?? documentKey(initialSnapshot.current.document)) && !pendingFretRef.current) return;
+      event.preventDefault(); event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, []);
+  useEffect(() => {
+    const element = leaveDialog.current;
+    if (!element) return;
+    if (leaveOpen && !element.open) { element.showModal(); element.querySelector<HTMLElement>('[data-leave-cancel]')?.focus(); }
+    else if (!leaveOpen && element.open) element.close();
+  }, [leaveOpen]);
+  useEffect(() => {
+    const element = discardDialog.current;
+    if (!element) return;
+    if (discardOpen && !element.open) { element.showModal(); element.querySelector<HTMLElement>('[data-discard-cancel]')?.focus(); }
+    else if (!discardOpen && element.open) element.close();
+  }, [discardOpen]);
+  useEffect(() => {
+    const element = conflictDialog.current;
+    if (!element) return;
+    if (conflictOpen && !element.open) { element.showModal(); element.querySelector<HTMLElement>('[data-conflict-keep]')?.focus(); }
+    else if (!conflictOpen && element.open) element.close();
+  }, [conflictOpen]);
+  useEffect(() => {
     const dialog = removalDialog.current;
     if (!dialog) return;
     if (pendingRemoval) {
@@ -98,7 +144,9 @@ export function App() {
   }, [pendingRemoval]);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
     session.current++;
-    saveInFlight.current = null; setSaving(false); setSaveError(''); setFailedCopyName(null);
+    const snapshot = { document: next, original, diagnostics, id, revision };
+    initialSnapshot.current = snapshot; savedSnapshot.current = id === null ? null : snapshot;
+    saveInFlight.current = null; setSaving(false); setSaveError(''); setConflicted(false); setFailedCopyName(null);
     savedBaseline.current = id === null ? null : documentKey(next);
     setHistory(emptyHistory()); setHistoryRevision(value => value + 1);
     setPreview(null);
@@ -110,7 +158,9 @@ export function App() {
   }
   function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
     session.current++;
-    saveInFlight.current = null; setSaving(false); setSaveError(''); setFailedCopyName(null);
+    const snapshot = { document: toImportedScoreDocument(next, diagnostics), original: null, diagnostics, id, revision };
+    initialSnapshot.current = snapshot; savedSnapshot.current = id === null ? null : snapshot;
+    saveInFlight.current = null; setSaving(false); setSaveError(''); setConflicted(false); setFailedCopyName(null);
     savedBaseline.current = id === null ? null : documentKey(toImportedScoreDocument(next, diagnostics));
     setHistory(emptyHistory()); setHistoryRevision(value => value + 1);
     setEditMode(false); setLibraryCollapsed(false);
@@ -317,31 +367,114 @@ export function App() {
     }
     commitImportedRemoval(pending.afterSource, pending.selection, pending.mode);
   }
+  function hasUnsavedWork() {
+    return documentKey(currentDocumentRef.current) !== (savedBaseline.current ?? documentKey(initialSnapshot.current.document)) || pendingFretRef.current !== null || saveInFlight.current !== null;
+  }
+  function requestLeave(action: () => void | Promise<void>, opener: HTMLElement | null = document.activeElement as HTMLElement | null) {
+    if (!hasUnsavedWork()) { void action(); return; }
+    leaveAction.current = action;
+    leaveOpener.current = opener;
+    setGuardError(''); setLeaveOpen(true);
+  }
+  function cancelLeave() {
+    setLeaveOpen(false); setGuardError(''); leaveAction.current = null;
+    if (leaveOpener.current?.isConnected) requestAnimationFrame(() => leaveOpener.current?.focus({ preventScroll: true }));
+  }
+  function restoreSnapshot(snapshot: SessionSnapshot) {
+    if (isImportedScoreDocument(snapshot.document)) loadPreview(readImportedDocument(snapshot.document), snapshot.diagnostics, snapshot.id, snapshot.revision);
+    else load(snapshot.document, snapshot.original, snapshot.diagnostics, snapshot.id, snapshot.revision);
+  }
+  function askDiscard(action: () => void | Promise<void>) {
+    discardAction.current = action;
+    setDiscardOpen(true);
+  }
+  async function confirmDiscard() {
+    const action = discardAction.current;
+    discardAction.current = null;
+    setDiscardOpen(false);
+    if (action) await action();
+  }
+  function commitPendingFret() {
+    const pending = pendingFretRef.current;
+    if (!pending) return true;
+    if (!/^\d+$/.test(pending.value)) {
+      setError('Enter a whole-number fret before saving or leaving.');
+      return false;
+    }
+    if (Number(pending.value) === pending.selection.fret) {
+      flushSync(() => setFretDraft(String(pending.selection.fret)));
+      return true;
+    }
+    const before = documentKey(currentDocumentRef.current);
+    flushSync(() => updateSelectionFret(pending.selection, Number(pending.value)));
+    if (documentKey(currentDocumentRef.current) === before) {
+      document.querySelector<HTMLInputElement>('[aria-label="Fret"]')?.focus({ preventScroll: true });
+      return false;
+    }
+    return true;
+  }
+  async function saveCurrent() {
+    if (!commitPendingFret()) return false;
+    return save();
+  }
+  async function saveAndContinue() {
+    setGuardError('');
+    if (!commitPendingFret()) {
+      leaveAction.current = null; setLeaveOpen(false);
+      requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Fret"]')?.focus({ preventScroll: true }));
+      return;
+    }
+    if (!hasUnsavedWork()) {
+      const action = leaveAction.current;
+      leaveAction.current = null; setLeaveOpen(false);
+      if (action) await action();
+      return;
+    }
+    const saved = await save();
+    if (!saved) { setGuardError('Save failed. Your work is still here; retry or cancel.'); return; }
+    if (hasUnsavedWork()) { setGuardError('More changes were made while saving. Save and continue again.'); return; }
+    const action = leaveAction.current;
+    leaveAction.current = null;
+    setLeaveOpen(false);
+    if (action) await action();
+  }
   async function openSong(id: number) {
     try {
       const song = await apiRequest(`/api/songs/${id}`);
       validateStoredScore(song.score);
-      if (isImportedScoreDocument(song.score)) loadPreview(readImportedDocument(song.score), song.score.warnings, id, song.revision);
-      else load(song.score, song.source_text, song.source_text ? ['Imported from plaintext using equal-note rhythm. Original text is preserved with this score.'] : [], id, song.revision);
+      const candidate = isImportedScoreDocument(song.score) ? readImportedDocument(song.score) : null;
+      requestLeave(() => {
+        if (candidate) loadPreview(candidate, song.score.warnings, id, song.revision);
+        else load(song.score, song.source_text, song.source_text ? ['Imported from plaintext using equal-note rhythm. Original text is preserved with this score.'] : [], id, song.revision);
+      });
     } catch (e) { setError((e as Error).message); }
   }
-  async function save(copyName?: string) {
-    if (saveInFlight.current !== null) return;
+  async function reloadSavedVersion() {
+    if (savedId === null) return;
+    try {
+      const song = await apiRequest(`/api/songs/${savedId}`);
+      validateStoredScore(song.score);
+      if (isImportedScoreDocument(song.score)) restoreSnapshot({ document: song.score, original: null, diagnostics: song.score.warnings, id: savedId, revision: song.revision });
+      else restoreSnapshot({ document: song.score, original: song.source_text, diagnostics: song.source_text ? ['Imported from plaintext using equal-note rhythm. Original text is preserved with this score.'] : [], id: savedId, revision: song.revision });
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  async function save(copyName?: string): Promise<boolean> {
+    if (saveInFlight.current !== null) return false;
     const token = ++saveSequence.current;
     saveInFlight.current = token;
-    setSaving(true); setSaveError(''); setMessage(''); setFailedCopyName(null);
+    setSaving(true); setSaveError(''); setConflicted(false); setMessage(''); setFailedCopyName(null);
     const savingSession = session.current;
     const copy = copyName !== undefined;
     const id = savedId;
     const revision = savedRevision;
     try {
-      const document = { ...(preview ? toImportedScoreDocument(preview, warnings) : score), ...(copy ? { title: copyName } : {}) };
+      const document = { ...currentDocumentRef.current, ...(copy ? { title: copyName } : {}) };
       const updating = id !== null && !copy;
       const item: LibraryItem = await apiRequest(updating ? `/api/songs/${id}` : '/api/songs', {
         method: updating ? 'PATCH' : 'POST',
         body: JSON.stringify({ score: document, source_text: preview ? null : source, ...(updating ? { revision } : {}) }),
       });
-      if (savingSession !== session.current) return;
+      if (savingSession !== session.current) return false;
       if (copy) {
         const latest = { ...currentDocumentRef.current, title: copyName };
         currentDocumentRef.current = latest;
@@ -349,13 +482,22 @@ export function App() {
         else setScore(current => ({ ...current, title: copyName }));
       }
       savedBaseline.current = documentKey(document);
+      setConflicted(false);
+      savedSnapshot.current = { document, original: preview ? null : source, diagnostics: warnings, id: item.id, revision: item.revision ?? null };
       setHistoryRevision(value => value + 1);
       setSavedId(item.id); setSavedRevision(item.revision ?? null);
       setDirty(documentKey(currentDocumentRef.current) !== savedBaseline.current);
       setLibrary(items => updating ? items.map(existing => existing.id === item.id ? item : existing) : [item, ...items]);
       setMessage(copy ? 'Saved a copy to your library.' : updating ? 'Changes saved.' : 'Saved to your library.');
+      return true;
     } catch (e) {
-      if (savingSession === session.current) { setSaveError((e as Error).message); setFailedCopyName(copy ? copyName : null); }
+      if (savingSession === session.current) {
+        setSaveError((e as Error).message); setFailedCopyName(copy ? copyName : null);
+        if (e instanceof ApiError && e.status === 409) {
+          setConflicted(true); setLeaveOpen(false); leaveAction.current = null; setConflictOpen(true);
+        }
+      }
+      return false;
     } finally {
       if (saveInFlight.current === token) { saveInFlight.current = null; setSaving(false); }
     }
@@ -388,27 +530,29 @@ export function App() {
       } else contents = await file.text();
       if (isXml || isTef || isPdf) {
         const filename = isTef || isPdf ? file.name.replace(/\.(tef|pdf)$/i, '.musicxml') : file.name;
-        loadPreview(readMusicXml(contents, filename, isTef ? 'tef' : isPdf ? 'pdf' : 'musicxml'), isTef || isPdf ? conversionWarnings : ['MusicXML preview: tuning and rhythm come from the file. Save this score to preserve the imported document in your library.']);
-        dialog.current?.close();
+        const candidate = readMusicXml(contents, filename, isTef ? 'tef' : isPdf ? 'pdf' : 'musicxml');
+        const diagnostics = isTef || isPdf ? conversionWarnings : ['MusicXML preview: tuning and rhythm come from the file. Save this score to preserve the imported document in your library.'];
+        requestLeave(() => { loadPreview(candidate, diagnostics); dialog.current?.close(); });
       } else if (extension === 'json') {
         const document: unknown = JSON.parse(contents); validateScore(document);
-        load(document, null); dialog.current?.close();
+        requestLeave(() => { load(document, null); dialog.current?.close(); });
       } else { setText(contents); setTitle(file.name.replace(/\.txt$/i, '').slice(0, 160)); }
     } catch (e) { setImportError((e as Error).message); } finally { setReading(false); }
   }
   function importText() {
     try {
       const result = parseAscii(text, title, duration);
-      load(result.score, text, result.warnings); dialog.current?.close();
+      requestLeave(() => { load(result.score, text, result.warnings); dialog.current?.close(); });
     } catch (e) { setImportError((e as Error).message); }
   }
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
-      <a className="brand" href="/" aria-label="Playtab home"><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
+      <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
       <div className="sidebar-section">YOUR WORKSPACE</div>
+      <button type="button" className="nav-item" onClick={event => requestLeave(() => load(demo, null), event.currentTarget)}>＋ <span>New score</span></button>
       <button className="nav-item active" aria-expanded={!libraryCollapsed} onClick={() => { if (editMode) setLibraryCollapsed(current => !current); else document.getElementById('library-list')?.scrollIntoView(); }}>▤ <span>My library</span><span className="count">{library.length}</span></button>
       {!libraryCollapsed && <div className="library-list" id="library-list">
-        {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={() => { load(demo, null); }}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => openSong(item.id)}>{item.title}</button>)}
+        {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={event => requestLeave(() => load(demo, null), event.currentTarget)}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => void openSong(item.id)}>{item.title}</button>)}
       </div>}
       {editMode && <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
@@ -459,12 +603,12 @@ export function App() {
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
     </aside>
     <main>
-      <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={() => { void signOut().catch(e => setError(e.message)); }}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
+      <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={event => requestLeave(() => signOut().catch(e => setError(e.message)), event.currentTarget)}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
       <div className="workspace">
         <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
-        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={editMode} onClick={toggleEditMode}>{editMode ? 'Done editing' : 'Edit score'}</button><button className="save-button" disabled={saving || !dirty} onClick={() => void save()}>{saving ? 'Saving…' : savedId && !dirty ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button></details></div></div>
-        <p className="save-status" role="status">{saving ? 'Saving…' : saveError ? saveError.includes('Changed in another tab') ? 'Changed in another tab' : 'Could not save' : savedId === null ? 'Not saved to library' : dirty ? 'Unsaved changes' : 'Saved'}</p>
-        {saveError && <p className="alert" role="alert">{saveError} <button type="button" disabled={saving} onClick={() => void save(failedCopyName ?? undefined)}>Retry save</button></p>}
+        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={editMode} onClick={toggleEditMode}>{editMode ? 'Done editing' : 'Edit score'}</button><button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details></div></div>
+        <p className="save-status" role="status">{saving ? 'Saving…' : conflicted ? 'Changed in another tab' : saveError ? 'Could not save' : savedId === null ? hasDocumentEdits || pendingFret ? 'Unsaved changes' : 'Not saved to library' : dirty || pendingFret ? 'Unsaved changes' : 'Saved'}</p>
+        {saveError && <p className="alert" role="alert">{saveError} {conflicted ? <button type="button" onClick={() => setConflictOpen(true)}>Resolve conflict…</button> : <button type="button" disabled={saving} onClick={() => void (failedCopyName ? save(failedCopyName) : saveCurrent())}>Retry save</button>}</p>}
         {error && <p className="alert" role="alert">{error}</p>}
         {message && <p className="success" role="status">{message}</p>}
         {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}
@@ -500,7 +644,38 @@ export function App() {
     <dialog ref={copyDialog} className="copy-dialog" aria-label="Save a copy">
       <h2>Save a copy</h2>
       <label>Copy title<input aria-label="Copy title" value={copyTitle} maxLength={160} onChange={event => setCopyTitle(event.target.value)} /></label>
-      <div className="copy-dialog-actions"><button type="button" onClick={() => copyDialog.current?.close()}>Cancel</button><button type="button" disabled={saving || !copyTitle.trim()} onClick={() => { copyDialog.current?.close(); void save(copyTitle.trim()); }}>Save copy</button></div>
+      <div className="copy-dialog-actions"><button type="button" onClick={() => copyDialog.current?.close()}>Cancel</button><button type="button" disabled={saving || !copyTitle.trim()} onClick={() => {
+        if (!commitPendingFret()) {
+          copyDialog.current?.close();
+          requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Fret"]')?.focus({ preventScroll: true }));
+          return;
+        }
+        copyDialog.current?.close(); void save(copyTitle.trim());
+      }}>Save copy</button></div>
+    </dialog>
+    <dialog ref={leaveDialog} className="guard-dialog" aria-label="Unsaved changes" onCancel={event => { event.preventDefault(); cancelLeave(); }}>
+      <h2>Save changes before leaving this score?</h2>
+      <p>Your unsaved edits will be lost if you discard them.</p>
+      {guardError && <p className="alert" role="alert">{guardError}</p>}
+      <div className="guard-dialog-actions">
+        <button type="button" data-leave-cancel onClick={cancelLeave}>Cancel</button>
+        <button type="button" disabled={saving} onClick={() => { const action = leaveAction.current; leaveAction.current = null; setLeaveOpen(false); if (action) void action(); }}>Discard</button>
+        <button type="button" disabled={saving} onClick={() => void saveAndContinue()}>Save and continue</button>
+      </div>
+    </dialog>
+    <dialog ref={discardDialog} className="guard-dialog" aria-label="Discard unsaved changes" onCancel={event => { event.preventDefault(); setDiscardOpen(false); }}>
+      <h2>Discard unsaved changes?</h2>
+      <p>This restores the last saved version, or the score as you first opened it.</p>
+      <div className="guard-dialog-actions"><button type="button" data-discard-cancel onClick={() => setDiscardOpen(false)}>Cancel</button><button type="button" onClick={() => void confirmDiscard()}>Discard changes</button></div>
+    </dialog>
+    <dialog ref={conflictDialog} className="guard-dialog" aria-label="Score changed in another tab" onCancel={event => { event.preventDefault(); setConflictOpen(false); }}>
+      <h2>This score changed in another tab.</h2>
+      <p>Your draft is still here. Choose how to continue; Playtab will not overwrite the newer saved version.</p>
+      <div className="guard-dialog-actions">
+        <button type="button" data-conflict-keep onClick={() => setConflictOpen(false)}>Keep editing</button>
+        <button type="button" onClick={() => { setConflictOpen(false); requestAnimationFrame(openCopyDialog); }}>Save as copy…</button>
+        <button type="button" onClick={() => { setConflictOpen(false); askDiscard(() => reloadSavedVersion()); }}>Reload saved version…</button>
+      </div>
     </dialog>
     <dialog ref={dialog} className="import-dialog">
       <div className="dialog-heading"><div><div className="eyebrow">BRING YOUR OWN MUSIC</div><h2>Import a tab</h2></div><button className="icon-button" aria-label="Close import" onClick={() => dialog.current?.close()}>×</button></div>
