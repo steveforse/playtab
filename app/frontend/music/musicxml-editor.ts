@@ -175,14 +175,18 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
   const tab = score.tracks?.[0]?.staves?.[0];
   const sourceNotes = sourceTabNoteRecords(document);
   const renderedNotes = modelNotes(score);
+  const sourceByLocation = new Map<string, (typeof sourceNotes[number] & { index: number })[]>();
+  sourceNotes.forEach((record, index) => {
+    const key = `${record.measure}:${record.beat}:${record.string}:${record.fret}`;
+    sourceByLocation.set(key, [...(sourceByLocation.get(key) ?? []), { ...record, index }]);
+  });
   const fields = descendants(document.documentElement, 'miscellaneous-field');
   const lyrics = fields.find(field => field.getAttribute('name') === 'playtab-lyrics');
   const tempo = Number(descendants(document.documentElement, 'sound').find(sound => sound.getAttribute('tempo'))?.getAttribute('tempo') || score.tempo || 96);
   const annotations = descendants(document.documentElement, 'words').map(text).filter(Boolean);
   const chords = descendants(document.documentElement, 'harmony').map(chordName);
   const notes = renderedNotes.map(({ note, measure, beat, voice }, renderedIndex) => {
-    const candidates = sourceNotes.map((sourceNote, index) => ({ ...sourceNote, index }))
-      .filter(candidate => candidate.measure === measure && candidate.beat === beat && candidate.string === 6 - note.string && candidate.fret === note.fret);
+    const candidates = sourceByLocation.get(`${measure}:${beat}:${6 - note.string}:${note.fret}`) ?? [];
     const voiceCandidates = candidates.filter(candidate => candidate.voice === String(voice + 1));
     const matched = voiceCandidates.length === 1 ? voiceCandidates[0] : candidates.length === 1 ? candidates[0] : null;
     const sourceNote = matched?.note;
