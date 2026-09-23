@@ -5,6 +5,7 @@ import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
+import type { PlaybackEndpoints } from './editor/audition';
 
 type LibraryItem = { id: number; title: string };
 type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: 'note' | 'rest'; dependencies: string[] };
@@ -39,6 +40,7 @@ export function App() {
   const [editMode, setEditMode] = useState(false);
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [selection, setSelection] = useState<ScoreSelection | null>(null);
+  const [passage, setPassage] = useState<PlaybackEndpoints | null>(null);
   const [fretDraft, setFretDraft] = useState('');
   const [moveString, setMoveString] = useState('');
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
@@ -88,6 +90,7 @@ export function App() {
     setPreview(null);
     setEditMode(false); setLibraryCollapsed(false);
     setSelection(null);
+    setPassage(null);
     setPendingRemoval(null);
     setScore(next); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
@@ -97,6 +100,7 @@ export function App() {
     setHistory(emptyHistory()); setHistoryRevision(value => value + 1);
     setEditMode(false); setLibraryCollapsed(false);
     setSelection(null);
+    setPassage(null);
     setPendingRemoval(null);
     setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
@@ -396,6 +400,15 @@ export function App() {
               </>}
             </div>}
             {selection.kind === 'note' && <div className="editor-event-tools"><button type="button" onClick={() => requestRemoval(selection, 'rest')}>Make rest</button></div>}
+            <details className="editor-passage-tools"><summary>Select passage</summary>
+              <button type="button" onClick={() => setPassage({ start: selection, end: selection })}>Set range start</button>
+              <button type="button" disabled={!passage} onClick={() => {
+                if (!passage) return;
+                const first = passage.start.measure < selection.measure || passage.start.measure === selection.measure && passage.start.event <= selection.event;
+                setPassage(first ? { start: passage.start, end: selection } : { start: selection, end: passage.start });
+              }}>Set range end</button>
+              <button type="button" disabled={!passage} onClick={() => setPassage(null)}>Clear passage</button>
+            </details>
           </>}
         </div>
       </section>}
@@ -419,10 +432,13 @@ export function App() {
           onPreferencesChange={changes => setPlayerPreferences(current => ({ ...current, ...changes }))}
           editing={editMode}
           selection={selection}
+          passage={passage}
           onSelectionChange={setSelection}
+          onPassageChange={setPassage}
           onFretInput={updateSelectionFret}
           onSelectionDelete={requestRemoval}
           historyRevision={historyRevision}
+          sessionKey={session.current}
         />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>

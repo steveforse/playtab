@@ -1,5 +1,5 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..8142180
+index b6203da..a1cfd03 100644
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 @@ -33251,7 +33251,12 @@ class JsonConverter {
@@ -151,7 +151,55 @@ index b6203da..8142180
  	}
  	/**
  	* Stop playing notes on a channel
-@@ -41923,12 +41957,15 @@ class AlphaSynthMidiFileHandler {
+@@ -41571,6 +41605,8 @@ class AlphaSynthWebWorklet {
+ */
+ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 	_worklet = null;
++	_workletGeneration = 0;
++	_sourceStarted = false;
+ 	_bufferTimeInMilliseconds = 0;
+ 	_settings;
+ 	_boundHandleMessage;
+@@ -41588,8 +41624,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 	play() {
+ 		super.play();
+ 		const ctx = this.context;
++		const source = this.source;
++		const generation = ++this._workletGeneration;
++		this._sourceStarted = false;
+ 		if (this._pendingEvents) this._pendingEvents = void 0;
+ 		BrowserUiFacade.createAlphaSynthAudioWorklet(ctx, this._settings).then(() => {
++			if (generation !== this._workletGeneration || source !== this.source) return;
+ 			this._worklet = new AudioWorkletNode(ctx, "alphatab", {
+ 				numberOfOutputs: 1,
+ 				outputChannelCount: [2],
+@@ -41597,8 +41637,9 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 			});
+ 			this._worklet.port.addEventListener("message", this._boundHandleMessage);
+ 			this._worklet.port.start();
+-			this.source.connect(this._worklet);
+-			this.source.start(0);
++			source.connect(this._worklet);
++			source.start(0);
++			this._sourceStarted = true;
+ 			this._worklet.connect(ctx.destination);
+ 			const pending = this._pendingEvents;
+ 			if (pending) {
+@@ -41621,7 +41662,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 		}
+ 	}
+ 	pause() {
+-		super.pause();
++		this._workletGeneration++;
++		if (this.source && !this._sourceStarted) {
++			this.source.disconnect();
++			this.source = null;
++		} else super.pause();
++		this._sourceStarted = false;
+ 		if (this._worklet) {
+ 			this._worklet.port.postMessage({ cmd: "alphaSynth.output.stop" });
+ 			this._worklet.port.removeEventListener("message", this._boundHandleMessage);
+@@ -41923,12 +41969,15 @@ class AlphaSynthMidiFileHandler {
  		else value = Math.floor(value);
  		this._midiFile.addEvent(new PitchBendEvent(track, tick, channel, value));
  	}
@@ -169,7 +217,7 @@ index b6203da..8142180
  		}
  	}
  	finishTrack(track, tick) {
-@@ -43390,7 +43427,7 @@ class MidiFileGenerator {
+@@ -43390,7 +43439,7 @@ class MidiFileGenerator {
  		if (staff.tuning.length > 0) for (const t of staff.tuning) this._handler.addNote(staff.track.index, beatStart, deadSlapDuration, t, MidiUtils.dynamicToVelocity(DynamicValue.F), staff.track.playbackInfo.primaryChannel);
  	}
  	_needsSecondaryChannel(note) {
@@ -178,7 +226,7 @@ index b6203da..8142180
  	}
  	_determineChannel(track, note) {
  		if (this._needsSecondaryChannel(note)) return track.playbackInfo.secondaryChannel;
-@@ -43422,6 +43459,13 @@ class MidiFileGenerator {
+@@ -43422,6 +43471,13 @@ class MidiFileGenerator {
  		noteDuration.letRingEnd -= brushOffset;
  		const velocity = MidiFileGenerator._getNoteVelocity(note);
  		const channel = this._determineChannel(track, note);
@@ -192,7 +240,7 @@ index b6203da..8142180
  		let initialBend = 0;
  		const noteSoundDuration = Math.max(noteDuration.untilTieOrSlideEnd, noteDuration.letRingEnd);
  		if (note.hasBend) initialBend = MidiFileGenerator.getPitchWheel(note.bendPoints[0].value);
-@@ -43446,10 +43490,11 @@ class MidiFileGenerator {
+@@ -43446,10 +43502,11 @@ class MidiFileGenerator {
  			return;
  		}
  		if (note.hasBend) this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
@@ -205,7 +253,7 @@ index b6203da..8142180
  	}
  	/**
  	* For every note within the octave, the number of keys to go up when playing ornaments.
-@@ -43576,6 +43621,14 @@ class MidiFileGenerator {
+@@ -43576,6 +43633,14 @@ class MidiFileGenerator {
  				const tieDestinationDuration = this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart);
  				durationWithEffects.untilTieOrSlideEnd = endNote.beat.absolutePlaybackStart + tieDestinationDuration.untilTieOrSlideEnd - startTick;
  			} else durationWithEffects.untilTieOrSlideEnd = beatPlayDuration + this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart).untilTieOrSlideEnd;
@@ -220,7 +268,7 @@ index b6203da..8142180
  		} else if (note.slideOutType === SlideOutType.Legato) {
  			const endNote = note.slideTarget;
  			if (endNote) {
-@@ -43716,6 +43769,22 @@ class MidiFileGenerator {
+@@ -43716,6 +43781,22 @@ class MidiFileGenerator {
  	static getPitchWheel(bendValue) {
  		return SynthConstants.DefaultPitchWheel + bendValue / 2 * MidiFileGenerator._pitchValuePerSemitone;
  	}
@@ -243,7 +291,7 @@ index b6203da..8142180
  	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
  		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
  		const playedBendPoints = [];
-@@ -50739,7 +50808,7 @@ class CapoEffectInfo extends EffectInfo {
+@@ -50739,7 +50820,7 @@ class CapoEffectInfo extends EffectInfo {
  		return beat.index === 0 && beat.voice.bar.index === 0 && beat.voice.bar.staff.capo !== 0;
  	}
  	createNewGlyph(renderer, beat) {
@@ -252,7 +300,7 @@ index b6203da..8142180
  	}
  	canExpand(_from, _to) {
  		return false;
-@@ -51996,7 +52064,9 @@ class MarkerEffectInfo extends EffectInfo {
+@@ -51996,7 +52077,9 @@ class MarkerEffectInfo extends EffectInfo {
  		return beat.voice.bar.staff.index === 0 && beat.voice.index === 0 && beat.index === 0 && beat.voice.bar.masterBar.isSectionStart;
  	}
  	createNewGlyph(renderer, beat) {
@@ -263,7 +311,7 @@ index b6203da..8142180
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -52641,13 +52711,69 @@ class EffectBand extends Glyph {
+@@ -52641,13 +52724,69 @@ class EffectBand extends Glyph {
  				const g = v[k];
  				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
  				try {
@@ -334,7 +382,7 @@ index b6203da..8142180
  	alignGlyphs() {
  		for (let v = 0; v < this._effectGlyphs.length; v++) for (const beatIndex of this._effectGlyphs[v].keys()) {
  			const g = this.renderer.bar.voices[v].beats[beatIndex];
-@@ -55698,7 +55807,15 @@ class TextEffectInfo extends EffectInfo {
+@@ -55698,7 +55837,15 @@ class TextEffectInfo extends EffectInfo {
  		return !!beat.text;
  	}
  	createNewGlyph(renderer, beat) {
@@ -351,7 +399,7 @@ index b6203da..8142180
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -59240,11 +59352,17 @@ class TieGlyphLabels {
+@@ -59240,11 +59387,17 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {
@@ -370,7 +418,7 @@ index b6203da..8142180
  	}
  	getTieHeight(startX, _startY, endX, _endY) {
  		return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
-@@ -59253,9 +59371,9 @@ class TabSlurGlyph extends TabTieGlyph {
+@@ -59253,9 +59406,9 @@ class TabSlurGlyph extends TabTieGlyph {
  		if (this._labels === null) {
  			this._labels = [];
  			const slur = this.startNote.effectSlur;
@@ -382,7 +430,7 @@ index b6203da..8142180
  					const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
  					if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
  				}
-@@ -63810,6 +63928,7 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63810,6 +63963,7 @@ class TabNoteChordGlyph extends Glyph {
  	_deadSlapped = null;
  	_isGrace;
  	beat;
@@ -390,7 +438,7 @@ index b6203da..8142180
  	maxStringNote = null;
  	minStringNote = null;
  	beatEffects = /* @__PURE__ */ new Map();
-@@ -63907,7 +64027,9 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63907,7 +64061,9 @@ class TabNoteChordGlyph extends Glyph {
  			let maxEffectY = NaN;
  			let effectY = this.getNoteY(this.minStringNote, NoteYPosition.Center) + tabHeight / 2;
  			const effectSpacing = this.renderer.smuflMetrics.onNoteEffectPadding;
@@ -400,7 +448,7 @@ index b6203da..8142180
  				g.y += effectY;
  				g.x += this.width / 2;
  				g.renderer = this.renderer;
-@@ -63916,6 +64038,17 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63916,6 +64072,17 @@ class TabNoteChordGlyph extends Glyph {
  				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
  				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
  			}
@@ -418,7 +466,7 @@ index b6203da..8142180
  			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
  		}
  		this.width = w;
-@@ -63923,6 +64054,12 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63923,6 +64090,12 @@ class TabNoteChordGlyph extends Glyph {
  	addNoteGlyph(noteGlyph, note) {
  		this._notes.push(noteGlyph);
  		this.notesPerString.set(note.string, noteGlyph);
@@ -431,7 +479,7 @@ index b6203da..8142180
  		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
  		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
  	}
-@@ -64060,7 +64197,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
+@@ -64060,7 +64233,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
  				centeredEffectGlyphs.push(glyph);
  			}
  			if (this.container.beat.dots > 0 && tabRenderer.rhythmMode !== TabRhythmMode.Hidden) {
@@ -440,7 +488,7 @@ index b6203da..8142180
  				for (let i = 0; i < this.container.beat.dots; i++) this.addEffect(new AugmentationDotGlyph(0, y));
  			}
  		} else {
-@@ -64379,7 +64516,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+@@ -64379,7 +64552,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
  			const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
  			this.addTie(tapSlur);
  		}
@@ -456,7 +504,7 @@ index b6203da..8142180
  			let expanded = false;
  			for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
  				expanded = true;
-@@ -64391,7 +64535,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+@@ -64391,7 +64571,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
  				this.addTie(effectSlur);
  			}
  		}
@@ -471,7 +519,7 @@ index b6203da..8142180
  			let expanded = false;
  			for (const slur of this._effectSlurs) if (slur.tryExpand(n.effectSlurOrigin, n, false, true)) {
  				expanded = true;
-@@ -64530,8 +64680,10 @@ class TabBarRenderer extends LineBarRenderer {
+@@ -64530,8 +64716,10 @@ class TabBarRenderer extends LineBarRenderer {
  	createLinePreBeatGlyphs() {
  		if (this.isFirstOfStaff) {
  			const center = (this.bar.staff.tuning.length - 1) / 2;
@@ -484,7 +532,7 @@ index b6203da..8142180
  		}
  		if (this.showTimeSignature && (!this.bar.previousBar || this.bar.previousBar && this.bar.masterBar.timeSignatureNumerator !== this.bar.previousBar.masterBar.timeSignatureNumerator || this.bar.previousBar && this.bar.masterBar.timeSignatureDenominator !== this.bar.previousBar.masterBar.timeSignatureDenominator || this.bar.previousBar && this.bar.masterBar.isFreeTime && this.bar.masterBar.isFreeTime !== this.bar.previousBar.masterBar.isFreeTime)) {
  			this.createStartSpacing();
-@@ -64923,7 +65075,7 @@ class Environment {
+@@ -64923,7 +65111,7 @@ class Environment {
  			},
  			{
  				effect: new MarkerEffectInfo(),
@@ -493,7 +541,7 @@ index b6203da..8142180
  			},
  			{
  				effect: new DirectionsEffectInfo(),
-@@ -64935,7 +65087,7 @@ class Environment {
+@@ -64935,7 +65123,7 @@ class Environment {
  			},
  			{
  				effect: new TextEffectInfo(),
@@ -503,7 +551,7 @@ index b6203da..8142180
  			{
  				effect: new BeatTimerEffectInfo(),
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.js b/node_modules/@coderline/alphatab/dist/alphaTab.js
-index 6da399c..2c0a5c3
+index 6da399c..2c0a5c3 100644
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.js
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.js
 @@ -59245,10 +59245,12 @@
