@@ -71,10 +71,15 @@ test('clicking an empty string and entering a two-digit fret stays aligned at 20
   const addedGlyph = notation.locator('svg text').filter({ hasText: /^12$/ }).first();
   await expect(marker).toBeVisible();
   await expect(addedGlyph).toBeVisible();
-  const noteMarker = (await marker.boundingBox())!;
-  const added = (await addedGlyph.boundingBox())!;
-  const alignment = { leftGap: added.x - noteMarker.x, rightGap: noteMarker.x + noteMarker.width - added.x - added.width,
-    yCenterGap: Math.abs((noteMarker.y + noteMarker.height / 2) - (added.y + added.height / 2)) };
+  const measureAlignment = async () => {
+    const noteMarker = (await marker.boundingBox())!;
+    const added = (await addedGlyph.boundingBox())!;
+    return { leftGap: added.x - noteMarker.x, rightGap: noteMarker.x + noteMarker.width - added.x - added.width,
+      yCenterGap: Math.abs((noteMarker.y + noteMarker.height / 2) - (added.y + added.height / 2)) };
+  };
+  // alphaTab can publish the new glyph before its renderFinished overlay pass.
+  await expect.poll(async () => (await measureAlignment()).yCenterGap).toBeLessThan(6);
+  const alignment = await measureAlignment();
   expect(alignment.leftGap).toBeGreaterThan(0);
   expect(alignment.rightGap).toBeGreaterThan(0);
   expect(alignment.yCenterGap).toBeLessThan(6);

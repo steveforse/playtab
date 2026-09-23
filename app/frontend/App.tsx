@@ -3,10 +3,11 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState } from './music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 
 type LibraryItem = { id: number; title: string };
+type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: 'note' | 'rest'; dependencies: string[] };
 const initialText = exportAscii(demo);
 const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
 async function apiRequest(path: string, options?: RequestInit) {
@@ -40,6 +41,9 @@ export function App() {
   const [selection, setSelection] = useState<ScoreSelection | null>(null);
   const [fretDraft, setFretDraft] = useState('');
   const [moveString, setMoveString] = useState('');
+  const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
+  const removalDialog = useRef<HTMLDialogElement>(null);
+  const removalOpener = useRef<HTMLElement | null>(null);
   const [history, setHistory] = useState(emptyHistory);
   const [historyRevision, setHistoryRevision] = useState(0);
   const savedBaseline = useRef<string | null>(null);
@@ -65,6 +69,18 @@ export function App() {
   }
 
   useEffect(() => { apiRequest('/api/songs').then(setLibrary).catch(e => setError(e.message)); }, []);
+  useEffect(() => {
+    const dialog = removalDialog.current;
+    if (!dialog) return;
+    if (pendingRemoval) {
+      if (!dialog.open) dialog.showModal();
+      dialog.querySelector<HTMLElement>('[data-removal-cancel]')?.focus();
+    } else if (dialog.open) {
+      dialog.close();
+      if (removalOpener.current?.isConnected) removalOpener.current.focus({ preventScroll: true });
+      else documentRefocus();
+    }
+  }, [pendingRemoval]);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null) {
     session.current++;
     savedBaseline.current = id === null ? null : documentKey(next);
@@ -72,6 +88,7 @@ export function App() {
     setPreview(null);
     setEditMode(false); setLibraryCollapsed(false);
     setSelection(null);
+    setPendingRemoval(null);
     setScore(next); setSource(original); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function loadPreview(next: MusicXmlPreview, diagnostics: string[] = [], id: number | null = null) {
@@ -80,6 +97,7 @@ export function App() {
     setHistory(emptyHistory()); setHistoryRevision(value => value + 1);
     setEditMode(false); setLibraryCollapsed(false);
     setSelection(null);
+    setPendingRemoval(null);
     setPreview(next); setScore(demo); setSource(null); setWarnings(diagnostics); setShowWarnings(diagnostics.length > 0); setSavedId(id); setDirty(id === null); setMessage(''); setError('');
   }
   function toggleEditMode() {
@@ -109,6 +127,7 @@ export function App() {
       if (!isImportedScoreDocument(document)) setScore(document);
       else setWarnings(document.warnings);
       setSelection(result.snapshot.selection);
+      setPendingRemoval(null);
       setHistory(result.history);
       setHistoryRevision(value => value + 1);
       setDirty(documentKey(document) !== savedBaseline.current);
@@ -222,14 +241,62 @@ export function App() {
     }, note => { note.string = destination; }, after, `Move note to string ${destination}`)) return;
     setSelection(after);
   }
-  function deleteSelection(selectionToDelete: ScoreSelection) {
-    const after: ScoreSelection = { ...selectionToDelete, kind: 'empty', noteId: null, fret: null };
-    if (selectionToDelete.string === null || selectionToDelete.kind !== 'note') return;
+  function commitImportedRemoval(nextSource: string, selectionToDelete: ScoreSelection, mode: 'note' | 'rest') {
+    if (!preview) return;
+    try {
+      const beat = preview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats[selectionToDelete.event - 1];
+      const lastMember = mode === 'rest' || beat?.notes.length === 1;
+      const nextPreview = readMusicXml(nextSource, preview.filename, preview.sourceFormat);
+      const nextBeats = nextPreview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats ?? [];
+      const matchingEvent = beat ? nextBeats.findIndex(candidate => !candidate.graceType && candidate.playbackStart === beat.playbackStart) : -1;
+      const after: ScoreSelection = { ...selectionToDelete, event: matchingEvent < 0 ? selectionToDelete.event : matchingEvent + 1,
+        kind: lastMember ? 'rest' : 'empty', noteId: null, fret: null };
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after }, mode === 'rest' ? 'Make rest' : 'Remove note');
+      setPreview(nextPreview);
+      setSelection(after);
+      setError('');
+      documentRefocus();
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function requestRemoval(selectionToDelete: ScoreSelection, mode: 'note' | 'rest' = 'note') {
+    if (selectionToDelete.kind !== 'note' || selectionToDelete.string === null) return;
+    if (preview) {
+      try {
+        const result = removeMusicXmlNotes(preview.source, preview.score, {
+          measure: selectionToDelete.measure - 1, beat: selectionToDelete.event - 1,
+          voice: selectionToDelete.voice - 1, string: mode === 'note' ? selectionToDelete.string : undefined,
+        });
+        if (!result) return;
+        if (result.dependencies.length) {
+          removalOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          setPendingRemoval({ beforeSource: preview.source, afterSource: result.source, selection: selectionToDelete, mode, dependencies: result.dependencies });
+        } else commitImportedRemoval(result.source, selectionToDelete, mode);
+      } catch (failure) { setError((failure as Error).message); }
+      return;
+    }
+    const beat = score.measures[selectionToDelete.measure - 1]?.beats[selectionToDelete.event - 1];
+    if (!beat?.notes.some(note => note.string === selectionToDelete.string)) return;
+    const lastMember = mode === 'rest' || beat.notes.length === 1;
+    const after: ScoreSelection = { ...selectionToDelete, kind: lastMember ? 'rest' : 'empty', noteId: null, fret: null };
     if (!updateSelectedScore(selectionToDelete, notes => {
-      const index = notes.findIndex(note => note.string === selectionToDelete.string);
-      if (index >= 0) notes.splice(index, 1);
-    }, note => { note.deleted = true; }, after, 'Remove note')) return;
+      if (mode === 'rest') notes.splice(0);
+      else {
+        const index = notes.findIndex(note => note.string === selectionToDelete.string);
+        if (index >= 0) notes.splice(index, 1);
+      }
+    }, note => { note.deleted = true; }, after, mode === 'rest' ? 'Make rest' : 'Remove note')) return;
     setSelection(after);
+    documentRefocus();
+  }
+  function confirmRemoval() {
+    const pending = pendingRemoval;
+    if (!pending) return;
+    setPendingRemoval(null);
+    if (!preview || preview.source !== pending.beforeSource) {
+      setError('The score changed while removal was pending. Select the event again.');
+      return;
+    }
+    commitImportedRemoval(pending.afterSource, pending.selection, pending.mode);
   }
   async function openSong(id: number) {
     try {
@@ -325,8 +392,10 @@ export function App() {
               {selection.kind === 'note' && <>
                 <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
                 <button type="button" onClick={moveSelectedString} disabled={!moveString || Number(moveString) === selection.string}>Move</button>
+                <button type="button" className="editor-remove-note" onClick={() => requestRemoval(selection)}>Remove note</button>
               </>}
             </div>}
+            {selection.kind === 'note' && <div className="editor-event-tools"><button type="button" onClick={() => requestRemoval(selection, 'rest')}>Make rest</button></div>}
           </>}
         </div>
       </section>}
@@ -352,12 +421,21 @@ export function App() {
           selection={selection}
           onSelectionChange={setSelection}
           onFretInput={updateSelectionFret}
-          onSelectionDelete={deleteSelection}
+          onSelectionDelete={requestRemoval}
           historyRevision={historyRevision}
         />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
     </main>
+    <dialog ref={removalDialog} className="removal-dialog" aria-label="Confirm note removal" onCancel={event => { event.preventDefault(); setPendingRemoval(null); }}>
+      <h2>Remove connected music?</h2>
+      <p>This edit also removes or disconnects:</p>
+      <ul>{pendingRemoval?.dependencies.map(dependency => <li key={dependency}>{dependency}</li>)}</ul>
+      <div className="removal-dialog-actions">
+        <button type="button" data-removal-cancel onClick={() => setPendingRemoval(null)}>Cancel</button>
+        <button type="button" onClick={confirmRemoval}>{pendingRemoval?.mode === 'rest' ? 'Make rest' : 'Remove note'}</button>
+      </div>
+    </dialog>
     <dialog ref={dialog} className="import-dialog">
       <div className="dialog-heading"><div><div className="eyebrow">BRING YOUR OWN MUSIC</div><h2>Import a tab</h2></div><button className="icon-button" aria-label="Close import" onClick={() => dialog.current?.close()}>×</button></div>
       <p>Open a TEF or PDF to convert and play it, or preview uncompressed MusicXML. You can also paste simple five-string tablature below.</p>
