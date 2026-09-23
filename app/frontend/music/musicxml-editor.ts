@@ -22,7 +22,15 @@ export type MusicXmlEditorState = {
   annotations: string[];
   chords: string[];
   notes: EditableMusicXmlNote[];
+  origin?: { source: string; values: string };
 };
+
+type EditorValues = Omit<MusicXmlEditorState, 'origin'>;
+const editorValues = (state: MusicXmlEditorState): EditorValues => ({
+  title: state.title, tempo: state.tempo, tuning: state.tuning,
+  measureCount: state.measureCount, lyricsSection: state.lyricsSection,
+  annotations: state.annotations, chords: state.chords, notes: state.notes,
+});
 
 const children = (node: Element) => Array.from(node.childNodes).filter((child): child is Element => child.nodeType === 1);
 const child = (node: Element, name: string) => children(node).find(candidate => candidate.localName === name);
@@ -43,13 +51,26 @@ function sourceTabStaff(document: Document): number {
   return Number(details?.getAttribute('number') || '1');
 }
 
-function sourceTabNotes(document: Document) {
+function sourceTabNoteRecords(document: Document) {
   const staff = sourceTabStaff(document);
   const part = descendants(document.documentElement, 'part')[0];
   if (!part) return [];
-  return directMeasures(part).flatMap(measure => children(measure).filter(note => note.localName === 'note')
-    .filter(note => Number(text(child(note, 'staff')) || '1') === staff && child(child(note, 'notations') ?? note, 'technical') && child(child(child(note, 'notations') ?? note, 'technical')!, 'string')));
+  return directMeasures(part).flatMap((measure, measureIndex) => {
+    const eventByVoice = new Map<string, number>();
+    return children(measure).filter(note => note.localName === 'note')
+      .filter(note => Number(text(child(note, 'staff')) || '1') === staff)
+      .flatMap(note => {
+        const voice = text(child(note, 'voice')) || '1';
+        if (!child(note, 'chord')) eventByVoice.set(voice, (eventByVoice.get(voice) ?? -1) + 1);
+        const technical = child(child(note, 'notations') ?? note, 'technical');
+        if (!technical || !child(technical, 'string')) return [];
+        return [{ note, measure: measureIndex, beat: eventByVoice.get(voice) ?? 0,
+          voice, string: Number(text(child(technical, 'string'))), fret: Number(text(child(technical, 'fret'))) }];
+      });
+  });
 }
+
+function sourceTabNotes(document: Document) { return sourceTabNoteRecords(document).map(record => record.note); }
 
 // Match the original source before either representation is changed. Use
 // musical position and pitch, never parallel note-array indexes: chords may
@@ -117,7 +138,7 @@ function linkedStaffNotes(document: Document) {
 
 function modelNotes(score: model.Score) {
   const tab = score.tracks?.[0]?.staves?.[0];
-  return tab?.bars.flatMap((bar, measure) => bar.voices.flatMap(voice => voice.beats.flatMap((beat, beatIndex) => beat.notes.map(note => ({ note, measure, beat: beatIndex })))) ) ?? [];
+  return tab?.bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats.flatMap((beat, beatIndex) => beat.notes.map(note => ({ note, measure, beat: beatIndex, voice: voiceIndex }))))) ?? [];
 }
 
 function midiToPitch(midi: number) {
@@ -152,25 +173,29 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
   const document = parseDocument(source);
   const part = descendants(document.documentElement, 'part')[0];
   const tab = score.tracks?.[0]?.staves?.[0];
-  const sourceNotes = sourceTabNotes(document);
+  const sourceNotes = sourceTabNoteRecords(document);
   const renderedNotes = modelNotes(score);
   const fields = descendants(document.documentElement, 'miscellaneous-field');
   const lyrics = fields.find(field => field.getAttribute('name') === 'playtab-lyrics');
   const tempo = Number(descendants(document.documentElement, 'sound').find(sound => sound.getAttribute('tempo'))?.getAttribute('tempo') || score.tempo || 96);
   const annotations = descendants(document.documentElement, 'words').map(text).filter(Boolean);
   const chords = descendants(document.documentElement, 'harmony').map(chordName);
-  const notes = renderedNotes.map(({ note, measure, beat }, index) => {
-    const sourceNote = sourceNotes[index];
+  const notes = renderedNotes.map(({ note, measure, beat, voice }, renderedIndex) => {
+    const candidates = sourceNotes.map((sourceNote, index) => ({ ...sourceNote, index }))
+      .filter(candidate => candidate.measure === measure && candidate.beat === beat && candidate.string === 6 - note.string && candidate.fret === note.fret);
+    const voiceCandidates = candidates.filter(candidate => candidate.voice === String(voice + 1));
+    const matched = voiceCandidates.length === 1 ? voiceCandidates[0] : candidates.length === 1 ? candidates[0] : null;
+    const sourceNote = matched?.note;
     return {
-      index,
+      index: matched?.index ?? -1 - renderedIndex,
       measure,
       beat,
-      string: sourceNote ? Number(text(child(child(child(sourceNote, 'notations') ?? sourceNote, 'technical') ?? sourceNote, 'string')) || String(6 - note.string)) : 6 - note.string,
+      string: matched?.string ?? 6 - note.string,
       fret: note.fret,
       technique: sourceNote ? techniqueOf(sourceNote) : 'none',
     };
   });
-  return {
+  const state: MusicXmlEditorState = {
     title: score.title.replaceAll('\u00a0', ' '),
     tempo: Number.isInteger(tempo) ? tempo : 96,
     tuning: [...(tab?.tuning ?? [])],
@@ -180,6 +205,8 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
     chords,
     notes,
   };
+  state.origin = { source, values: JSON.stringify(editorValues(state)) };
+  return state;
 }
 
 function ensure(parent: Element, name: string) {
@@ -368,71 +395,99 @@ function removeIncompatibleDirectionalTechniques(sourceNotes: Element[]) {
   });
 }
 
-function applyScoreSettings(document: Document, state: MusicXmlEditorState) {
+function applyScoreSettings(document: Document, state: MusicXmlEditorState, original: EditorValues | null) {
   const root = document.documentElement;
-  const work = descendants(root, 'work')[0] ?? (() => { const created = document.createElement('work'); root.insertBefore(created, root.firstChild); return created; })();
-  setText(work, 'work-title', state.title.slice(0, 160));
-  descendants(root, 'movement-title').forEach(title => { title.textContent = state.title.slice(0, 160); });
+  if (!original || state.title !== original.title) {
+    const work = descendants(root, 'work')[0] ?? (() => { const created = document.createElement('work'); root.insertBefore(created, root.firstChild); return created; })();
+    setText(work, 'work-title', state.title.slice(0, 160));
+    descendants(root, 'movement-title').forEach(title => { title.textContent = state.title.slice(0, 160); });
+  }
 
-  const sounds = descendants(root, 'sound');
-  sounds.forEach(sound => sound.setAttribute('tempo', String(state.tempo)));
-  if (!sounds.length) {
-    const part = descendants(root, 'part')[0];
-    const measure = part ? directMeasures(part)[0] : undefined;
-    if (measure) {
-      const sound = document.createElement('sound');
-      sound.setAttribute('tempo', String(state.tempo));
-      measure.appendChild(sound);
+  if (!original || state.tempo !== original.tempo) {
+    const sounds = descendants(root, 'sound');
+    sounds.forEach(sound => sound.setAttribute('tempo', String(state.tempo)));
+    if (!sounds.length) {
+      const part = descendants(root, 'part')[0];
+      const measure = part ? directMeasures(part)[0] : undefined;
+      if (measure) {
+        const sound = document.createElement('sound');
+        sound.setAttribute('tempo', String(state.tempo));
+        measure.appendChild(sound);
+      }
     }
   }
-  const tunings = descendants(root, 'staff-tuning').filter(item => (item.parentNode?.parentNode as Element | null)?.localName === 'attributes');
-  tunings.forEach(tuning => {
-    const line = Number(tuning.getAttribute('line') || '1');
-    const midi = state.tuning[5 - line];
-    if (Number.isInteger(midi)) {
-      const pitch = midiToPitch(midi);
-      setText(tuning, 'tuning-step', pitch.step);
-      if (pitch.alter) setText(tuning, 'tuning-alter', String(pitch.alter)); else removeChildren(tuning, 'tuning-alter');
-      setText(tuning, 'tuning-octave', String(pitch.octave));
-    }
-  });
+  if (!original || JSON.stringify(state.tuning) !== JSON.stringify(original.tuning)) {
+    const tunings = descendants(root, 'staff-tuning').filter(item => (item.parentNode?.parentNode as Element | null)?.localName === 'attributes');
+    tunings.forEach(tuning => {
+      const line = Number(tuning.getAttribute('line') || '1');
+      const midi = state.tuning[5 - line];
+      if (Number.isInteger(midi)) {
+        const pitch = midiToPitch(midi);
+        setText(tuning, 'tuning-step', pitch.step);
+        if (pitch.alter) setText(tuning, 'tuning-alter', String(pitch.alter)); else removeChildren(tuning, 'tuning-alter');
+        setText(tuning, 'tuning-octave', String(pitch.octave));
+      }
+    });
+  }
 }
 
 export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, noteIndexes?: number[]): string {
+  if (state.origin && state.origin.source !== source) throw new Error('The imported score changed since this edit began. Reopen the editor before applying it.');
+  const original: EditorValues | null = state.origin ? JSON.parse(state.origin.values) as EditorValues : null;
+  if (original && JSON.stringify(editorValues(state)) === state.origin!.values) return source;
   const document = parseDocument(source);
   const linkedNotes = linkedStaffNotes(document);
-  if (!noteIndexes) applyScoreSettings(document, state);
+  if (!noteIndexes && (!original || state.title !== original.title || state.tempo !== original.tempo || JSON.stringify(state.tuning) !== JSON.stringify(original.tuning))) {
+    applyScoreSettings(document, state, original);
+  }
   const sourceNotes = sourceTabNotes(document);
   const tuning = state.tuning.length === 5 ? state.tuning : [62, 59, 55, 50, 67];
   const deletedNoteIndexes = new Set(state.notes.filter(edit => edit.deleted).map(edit => edit.index));
   const pairedDeletions: Element[] = [];
   state.notes.forEach(edit => {
     if (noteIndexes && !noteIndexes.includes(edit.index)) return;
+    const before = original?.notes.find(note => note.index === edit.index);
+    if (before && JSON.stringify(edit) === JSON.stringify(before)) return;
+    if (edit.index < 0) throw new Error('This rendered note cannot be uniquely matched to its MusicXML source. Its source details are preserved, but this note cannot be edited safely.');
     const note = sourceNotes[edit.index];
-    if (!note) return;
+    if (!note) {
+      if (original) throw new Error('This source note is no longer available. Reopen the editor before applying the change.');
+      return;
+    }
+    if (before) {
+      const technical = child(child(note, 'notations') ?? note, 'technical');
+      if (Number(text(child(technical ?? note, 'string'))) !== before.string || Number(text(child(technical ?? note, 'fret'))) !== before.fret) {
+        throw new Error('This source note no longer matches the selected fret. Reopen the editor before applying the change.');
+      }
+    }
     const paired = linkedNotes(note);
     if (edit.deleted) { pairedDeletions.push(...paired); return; }
-    const notations = child(note, 'notations') ?? (() => { const created = document.createElement('notations'); note.appendChild(created); return created; })();
-    const technical = child(notations, 'technical') ?? (() => { const created = document.createElement('technical'); notations.appendChild(created); return created; })();
-    setText(technical, 'string', String(edit.string));
-    setText(technical, 'fret', String(edit.fret));
-    setPitch(note, tuning[edit.string - 1] + edit.fret);
-    paired.forEach(partner => setPitch(partner, tuning[edit.string - 1] + edit.fret));
+    if (!before || edit.string !== before.string || edit.fret !== before.fret) {
+      const notations = child(note, 'notations') ?? (() => { const created = document.createElement('notations'); note.appendChild(created); return created; })();
+      const technical = child(notations, 'technical') ?? (() => { const created = document.createElement('technical'); notations.appendChild(created); return created; })();
+      setText(technical, 'string', String(edit.string));
+      setText(technical, 'fret', String(edit.fret));
+      setPitch(note, tuning[edit.string - 1] + edit.fret);
+      paired.forEach(partner => setPitch(partner, tuning[edit.string - 1] + edit.fret));
+    }
     // The inspector exposes one choice, but a source note can carry several
     // independent markings (including a stop followed by another start).
     // An unchanged choice must preserve all of those source elements.
     if (edit.technique !== techniqueOf(note)) replaceTechnique(note, edit.technique);
   });
-  removeIncompatibleDirectionalTechniques(sourceNotes);
+  if (state.notes.some(edit => {
+    const before = original?.notes.find(note => note.index === edit.index);
+    return !before || edit.string !== before.string || edit.fret !== before.fret || edit.deleted;
+  })) removeIncompatibleDirectionalTechniques(sourceNotes);
   const notesToDelete = sourceNotes.filter((_, index) => deletedNoteIndexes.has(index) && (!noteIndexes || noteIndexes.includes(index)));
   notesToDelete.forEach(note => removePairedTechniqueForDeletedNote(sourceNotes, sourceNotes.indexOf(note)));
   deleteSourceNotes(document, [...notesToDelete, ...pairedDeletions]);
 
   if (!noteIndexes) {
-    setLyrics(document, state.lyricsSection);
-    setWords(document, state.annotations);
-    setChords(document, state.chords);
-    setMeasureCount(document, Math.max(1, Math.min(256, Math.round(state.measureCount))));
+    if (!original || state.lyricsSection !== original.lyricsSection) setLyrics(document, state.lyricsSection);
+    if (!original || JSON.stringify(state.annotations) !== JSON.stringify(original.annotations)) setWords(document, state.annotations);
+    if (!original || JSON.stringify(state.chords) !== JSON.stringify(original.chords)) setChords(document, state.chords);
+    if (!original || state.measureCount !== original.measureCount) setMeasureCount(document, Math.max(1, Math.min(256, Math.round(state.measureCount))));
   }
   return new XMLSerializer().serializeToString(document);
 }
