@@ -18,6 +18,16 @@ const DEFAULT_MAX_PLAYBACK_SPEED = 1.5;
 const PLAYBACK_SPEED_STEP = 0.01;
 export type ScoreView = 'continuous' | 'a4-portrait' | 'a4-landscape' | 'letter-portrait' | 'letter-landscape';
 export type ScrollDirection = 'vertical' | 'horizontal';
+
+function renderDocument(instance: AlphaTabApi, score: Score, preview: MusicXmlPreview | null, showChordDiagrams: boolean, hideTabClef: boolean, reuseViewport = false) {
+  const renderedScore = preview ? preview.score : toAlphaTab(score);
+  if (preview) configureChordDiagrams(renderedScore, showChordDiagrams);
+  const stylesheet = renderedScore.stylesheet ?? (renderedScore.stylesheet = {} as typeof renderedScore.stylesheet);
+  (stylesheet as typeof stylesheet & { playtabHideTabClef?: boolean }).playtabHideTabClef = hideTabClef;
+  if (reuseViewport) instance.renderScore(renderedScore, undefined, { reuseViewport: true });
+  else instance.renderScore(renderedScore);
+}
+
 export type ScoreSelectionKind = 'note' | 'rest' | 'empty';
 export type ScoreSelection = {
   noteId: number | null;
@@ -519,6 +529,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const lyricsSection = useRef<HTMLElement>(null);
   const exportDialog = useRef<HTMLDialogElement>(null);
   const api = useRef<AlphaTabApi | null>(null);
+  const renderedDocument = useRef<{ score: Score; preview: MusicXmlPreview | null } | null>(null);
   const editingRef = useRef(editing);
   const selectionRef = useRef<ScoreSelection | null>(selection);
   const selectionCallbackRef = useRef(onSelectionChange);
@@ -561,17 +572,20 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const [soundFontId, setSoundFontId] = useState(defaults.soundFontId);
   const [playbackHost, setPlaybackHost] = useState<HTMLElement | null>(null);
   const soundFont = availableSoundFonts.find(option => option.id === soundFontId) ?? availableSoundFonts[0] ?? bundledSoundFont;
+  const currentPreview = preview ?? null;
+  const previewMode = currentPreview !== null;
   useLayoutEffect(() => {
     const narrowScreen = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches;
     setPlaybackHost(narrowScreen ? null : document.getElementById('playback-controls'));
   }, []);
+  // Renderer configuration changes need a new instance; score edits do not.
   useEffect(() => {
     setReady(false); setPlaying(false); setRendered(false); setError(''); setExportNotice('');
     setPosition({ currentTime: 0, endTime: 0 });
     const base = '/notation/';
     const layoutMode = scoreView !== 'continuous' || scrollDirection !== 'horizontal' ? 'page' : 'horizontal';
     const instance = new AlphaTabApi(element.current!, {
-      core: { fontDirectory: `${base}font/`, includeNoteBounds: true, useWorkers: !preview && !hideTabClef, enableLazyLoading: !preview && !hideTabClef },
+      core: { fontDirectory: `${base}font/`, includeNoteBounds: true, useWorkers: !previewMode && !hideTabClef, enableLazyLoading: !previewMode && !hideTabClef },
       display: { scale: 1.1, barsPerRow, layoutMode },
       player: {
         enablePlayer: true, soundFont: `${base}soundfont/${soundFont.filename}`,
@@ -634,11 +648,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       else finishLayout();
     });
     instance.error.on(error => setError(error.message || 'Notation or audio could not load.'));
-    const renderedScore = preview ? preview.score : toAlphaTab(score);
-    if (preview) configureChordDiagrams(renderedScore, showChordDiagrams);
-    const stylesheet = renderedScore.stylesheet ?? (renderedScore.stylesheet = {} as typeof renderedScore.stylesheet);
-    (stylesheet as typeof stylesheet & { playtabHideTabClef?: boolean }).playtabHideTabClef = hideTabClef;
-    instance.renderScore(renderedScore);
+    renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef);
+    renderedDocument.current = { score, preview: currentPreview };
     return () => {
       if (typeof detachNoteMouseDown === 'function') detachNoteMouseDown();
       if (typeof detachBeatMouseDown === 'function') detachBeatMouseDown();
@@ -647,8 +658,18 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       detachPaginatedSelection?.();
       instance.destroy();
       api.current = null;
+      renderedDocument.current = null;
     };
-  }, [score, preview, scoreView, barsPerRow, scrollDirection, showChordDiagrams, hideTabClef, soundFont]);
+  }, [previewMode, scoreView, barsPerRow, scrollDirection, showChordDiagrams, hideTabClef, soundFont]);
+
+  // Keep the existing surface mounted so the document height cannot collapse on each edit.
+  useEffect(() => {
+    const instance = api.current;
+    const previous = renderedDocument.current;
+    if (!instance || (previous?.score === score && previous.preview === currentPreview)) return;
+    renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef, true);
+    renderedDocument.current = { score, preview: currentPreview };
+  }, [score, currentPreview, showChordDiagrams, hideTabClef]);
 
   useEffect(() => {
     if (api.current) api.current.settings.player.enableUserInteraction = !editing;
