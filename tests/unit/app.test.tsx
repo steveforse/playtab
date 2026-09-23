@@ -6,9 +6,12 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml } = vi.hoisted(() => ({ readMusicXml: vi.fn() }));
+const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits } = vi.hoisted(() => ({ readMusicXml: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
-  Player: ({ onPreferencesChange }: { onPreferencesChange?: (changes: any) => void }) => <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>,
+  Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
+    <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
+    {editing && <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>}
+  </>,
   defaultPlayerPreferences: () => ({
     speed: 1, volume: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
     scoreView: 'continuous', scrollDirection: 'vertical', showChordDiagrams: false,
@@ -22,6 +25,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -52,7 +56,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('loads the library, opens plaintext and saves the native score', async () => {
@@ -228,5 +232,49 @@ describe('workspace application', () => {
     expect(screen.queryByLabelText('Edit tools')).toBeNull();
     expect(screen.getByRole('button', { name: 'Edit score' }).getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByTestId('player')).toBeTruthy();
+  });
+
+  it('applies, moves, deletes, undoes and redoes a native selected note', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Move to string'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Move', exact: true }));
+    expect(screen.getByText('String 2')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Redo', exact: true }));
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(document, { key: 'Delete' });
+    expect(screen.getByText('String 2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo', exact: true }));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+  });
+
+  it('handles imported note corrections, empty selections, and failed restores', async () => {
+    const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
+    readMusicXml.mockReturnValue(imported);
+    musicXmlEditorState.mockReturnValue({ notes: [{ index: 0, measure: 0, beat: 0, string: 3, fret: 0, technique: 'none' }] });
+    applyMusicXmlEdits.mockReturnValue('<edited/>');
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    openImport();
+    selectFile('import.musicxml', imported.source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '23' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    await waitFor(() => expect(screen.getByText('Fret 23')).toBeTruthy());
+    fireEvent.keyDown(document, { key: 'Delete' });
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true });
+    expect(applyMusicXmlEdits).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
   });
 });
