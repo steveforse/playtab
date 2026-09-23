@@ -36,6 +36,29 @@ function refreshStructuralSelection(selection: ScoreSelection, preview: MusicXml
   selection.sourceMeasureId = preview.sourceIdentity?.measureIds[selection.measure - 1];
   selection.sourceEventId = preview.sourceEventIdByAddress?.get(`${selection.measure - 1}:${selection.voice}:${selection.event - 1}`);
 }
+function selectionAtPosition(current: ScoreSelection, score: Score, preview: MusicXmlPreview | null,
+  changes: Partial<Pick<ScoreSelection, 'measure' | 'event' | 'voice' | 'string'>>): ScoreSelection {
+  const measure = Math.max(1, Math.min(changes.measure ?? current.measure, preview?.score.masterBars.length ?? score.measures.length));
+  const voice = changes.voice ?? current.voice;
+  const importedBeats = preview?.score.tracks?.[0]?.staves?.[0]?.bars?.[measure - 1]?.voices?.[voice - 1]?.beats;
+  const nativeBeats = preview ? undefined : score.measures[measure - 1]?.beats;
+  const event = Math.max(1, Math.min(changes.event ?? current.event, importedBeats?.length ?? nativeBeats?.length ?? 1));
+  const string = changes.string === undefined ? current.string : changes.string;
+  const importedBeat = importedBeats?.[event - 1];
+  const nativeBeat = nativeBeats?.[event - 1];
+  const importedNote = importedBeat?.notes.find(item => string !== null && 6 - item.string === string);
+  const nativeNote = nativeBeat?.notes.find(item => item.string === string);
+  const kind = importedNote || nativeNote ? 'note' : importedBeat?.isRest || nativeBeat?.notes.length === 0 ? 'rest' : 'empty';
+  const noteId = importedNote?.id ?? null;
+  return { ...current, measure, event, voice, string, kind, noteId, fret: importedNote?.fret ?? nativeNote?.fret ?? null,
+    graceIndex: importedBeat?.graceType ? importedBeat.graceIndex : null,
+    graceGroupId: importedBeat?.graceGroup?.id ?? null,
+    mappingReason: undefined,
+    sourceId: noteId === null ? undefined : preview?.sourceIdByModelNoteId?.get(noteId),
+    sourceMeasureId: preview?.sourceIdentity?.measureIds[measure - 1],
+    sourceEventId: preview?.sourceEventIdByAddress?.get(`${measure - 1}:${voice}:${event - 1}`),
+  };
+}
 async function apiRequest(path: string, options?: RequestInit) {
   const response = await fetch(path, { ...options, headers: {
     ...(options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
@@ -478,6 +501,10 @@ export function App() {
     }
     return true;
   }
+  function navigateInspector(changes: Partial<Pick<ScoreSelection, 'measure' | 'event' | 'voice' | 'string'>>) {
+    if (!commitPendingFret()) return;
+    setSelection(current => current ? selectionAtPosition(current, score, preview, changes) : current);
+  }
   async function saveCurrent() {
     if (!commitPendingFret()) return false;
     return save();
@@ -610,6 +637,9 @@ export function App() {
       requestLeave(() => { load(result.score, text, result.warnings); dialog.current?.close(); });
     } catch (e) { setImportError((e as Error).message); }
   }
+  const selectedEventCount = selection ? (preview
+    ? preview.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats.length ?? 1
+    : score.measures[selection.measure - 1]?.beats.length ?? 1) : 1;
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
       <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
@@ -636,10 +666,10 @@ export function App() {
               {selection.fret !== null && <span>Fret {selection.fret}</span>}
             </div>
             <div className="editor-selection-fields">
-              <label>Measure<select aria-label="Selection measure" value={selection.measure} onChange={event => setSelection(current => current ? { ...current, measure: Number(event.target.value), noteId: null } : current)}>{Array.from({ length: Math.max(1, preview?.score.masterBars.length ?? score.measures.length) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
-              <label>Event<select aria-label="Selection event" value={selection.event} onChange={event => setSelection(current => current ? { ...current, event: Number(event.target.value), noteId: null } : current)}>{Array.from({ length: Math.max(1, preview?.score.masterBars.length ? 32 : score.measures[selection.measure - 1]?.beats.length ?? 1) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
-              <label>Voice<select aria-label="Selection voice" value={selection.voice} onChange={event => setSelection(current => current ? { ...current, voice: Number(event.target.value), noteId: null } : current)}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-              <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => setSelection(current => current ? { ...current, string: event.target.value ? Number(event.target.value) : null, noteId: null } : current)}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label>Measure<select aria-label="Selection measure" value={selection.measure} onChange={event => navigateInspector({ measure: Number(event.target.value) })}>{Array.from({ length: Math.max(1, preview?.score.masterBars.length ?? score.measures.length) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
+              <label>Event<select aria-label="Selection event" value={selection.event} onChange={event => navigateInspector({ event: Number(event.target.value) })}>{Array.from({ length: Math.max(1, selectedEventCount) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
+              <label>Voice<select aria-label="Selection voice" value={selection.voice} onChange={event => navigateInspector({ voice: Number(event.target.value) })}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => navigateInspector({ string: event.target.value ? Number(event.target.value) : null })}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             </div>
             {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
             {selection.string !== null && <div className="editor-note-tools">

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { exportAscii } from '../../app/frontend/music/ascii';
 import { demo } from '../../app/frontend/music/score';
+import { DOMParser } from '@xmldom/xmldom';
 
 test('ED-03 applies a fret field edit and moves a note to another string', async ({ page }) => {
   await page.goto('/');
@@ -52,6 +53,43 @@ test('ED-03 moves an imported note without breaking paired notation', async ({ p
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 7');
   await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('inspector navigation edits the newly selected imported note, not the previous source ID', async ({ page }) => {
+  let savedSource = '';
+  await page.route('**/api/songs', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: [] });
+    savedSource = route.request().postDataJSON().score.source;
+    return route.fulfill({ status: 201, json: { id: 41, title: 'Selection test', revision: 0 } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/paired-staff.musicxml');
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const note = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  const box = (await note.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByLabel('Selection inspector')).toContainText('String 1');
+  await page.getByLabel('Fret').fill('37');
+  await page.getByLabel('Selection event').selectOption('2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Event 1');
+  await expect(page.getByRole('alert')).toContainText('0 to 36');
+  await page.getByLabel('Fret').fill('5');
+  await page.getByLabel('Selection event').selectOption('2');
+  await page.getByLabel('Selection string').selectOption('3');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Event 2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
+  await page.getByLabel('Fret').fill('7');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 7');
+  await page.getByRole('button', { name: '＋ Save to library' }).click();
+  await expect(page.getByRole('button', { name: '✓ Saved' })).toBeDisabled();
+  const xml = new DOMParser().parseFromString(savedSource, 'application/xml');
+  const tabNotes = Array.from(xml.getElementsByTagName('note')).filter(item => item.getElementsByTagName('string').length);
+  expect(tabNotes.map(item => [item.getElementsByTagName('string')[0].textContent, item.getElementsByTagName('fret')[0].textContent]))
+    .toEqual([['1', '5'], ['3', '0'], ['3', '7']]);
 });
 
 test('ED-09 promotes a native high-fret edit as one undoable change and saves MusicXML', async ({ page }) => {
