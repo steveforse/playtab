@@ -88,6 +88,7 @@ test('clicking an empty string and entering a two-digit fret stays aligned at 20
 });
 
 test('saves an added note to a TEF imported library score and reopens it', async ({ page }) => {
+  let revision = 0;
   let saved = {
     version: 2, kind: 'musicxml', title: 'Paired staff exercise', sourceFormat: 'tef',
     sourceName: 'paired.tef', source: fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8'), warnings: [],
@@ -99,7 +100,14 @@ test('saves an added note to a TEF imported library score and reopens it', async
       await route.fulfill({ json: { id: 42, title: saved.title } });
     }
   });
-  await page.route('**/api/songs/42', route => route.fulfill({ json: { id: 42, title: saved.title, score: saved, source_text: null } }));
+  await page.route('**/api/songs/42', route => {
+    if (route.request().method() === 'PATCH') {
+      saved = route.request().postDataJSON().score;
+      revision++;
+      return route.fulfill({ json: { id: 42, title: saved.title, revision } });
+    }
+    return route.fulfill({ json: { id: 42, title: saved.title, score: saved, source_text: null, revision } });
+  });
   await page.goto('/');
   await page.getByRole('button', { name: 'Paired staff exercise', exact: true }).click();
   const notation = page.getByTestId('notation');
@@ -113,7 +121,7 @@ test('saves an added note to a TEF imported library score and reopens it', async
   await page.getByLabel('Fret').fill('1');
   await page.getByRole('button', { name: 'Add note' }).click();
   await expect(notation.locator('svg text').filter({ hasText: /^1$/ })).toHaveCount(1);
-  await page.getByRole('button', { name: /Save to library/ }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
   await page.reload();
   await page.getByRole('button', { name: 'Paired staff exercise', exact: true }).click();
   await expect(notation.locator('svg text').filter({ hasText: /^1$/ })).toHaveCount(1);
