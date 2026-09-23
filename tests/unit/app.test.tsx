@@ -6,11 +6,14 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits } = vi.hoisted(() => ({ readMusicXml: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn() }));
+const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote } = vi.hoisted(() => ({ readMusicXml: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
-    {editing && <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>}
+    {editing && <>
+      <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>
+      <button type="button" data-testid="choose-empty" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Choose empty</button>
+    </>}
   </>,
   defaultPlayerPreferences: () => ({
     speed: 1, volume: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
@@ -25,7 +28,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -56,7 +59,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('loads the library, opens plaintext and saves the native score', async () => {
@@ -255,11 +258,27 @@ describe('workspace application', () => {
     expect(screen.getByText('Fret 4')).toBeTruthy();
   });
 
+  it('adds a native note at an empty staff position and replaces it without changing the chord', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect(screen.getByText('String 2')).toBeTruthy();
+    expect(screen.getByText('Fret 1')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByText('Fret 2')).toBeTruthy();
+  });
+
   it('handles imported note corrections, empty selections, and failed restores', async () => {
     const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
     readMusicXml.mockReturnValue(imported);
     musicXmlEditorState.mockReturnValue({ notes: [{ index: 0, measure: 0, beat: 0, string: 3, fret: 0, technique: 'none' }] });
     applyMusicXmlEdits.mockReturnValue('<edited/>');
+    addMusicXmlNote.mockReturnValue('<added/>');
     const fetchMock = vi.fn().mockResolvedValue(response([]));
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
@@ -268,6 +287,10 @@ describe('workspace application', () => {
     selectFile('import.musicxml', imported.source);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect(addMusicXmlNote).toHaveBeenCalledWith(imported.source, imported.score, expect.objectContaining({ measure: 0, beat: 1, string: 2, fret: 1 }));
     fireEvent.click(screen.getByTestId('choose-note'));
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '23' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));

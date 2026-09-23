@@ -94,6 +94,29 @@ function exportScore(format: string) {
 }
 
 describe('notation player', () => {
+  it('updates scores on one alphaTab instance until the renderer mode changes', () => {
+    const { rerender } = render(<Player score={demo} />);
+    const nativeApi = alphaTab.FakeAlphaTabApi.latest;
+    expect(nativeApi.renderScore).toHaveBeenCalledTimes(1);
+
+    rerender(<Player score={{ ...demo, title: 'Edited title' }} />);
+    expect(alphaTab.FakeAlphaTabApi.latest).toBe(nativeApi);
+    expect(nativeApi.destroy).not.toHaveBeenCalled();
+    expect(nativeApi.renderScore).toHaveBeenCalledWith(expect.any(Object), undefined, { reuseViewport: true });
+
+    rerender(<Player score={demo} preview={preview} />);
+    const importedApi = alphaTab.FakeAlphaTabApi.latest;
+    expect(importedApi).not.toBe(nativeApi);
+    expect(nativeApi.destroy).toHaveBeenCalledOnce();
+    expect(importedApi.renderScore).toHaveBeenCalledTimes(1);
+
+    const editedPreview = { ...preview, score: { ...preview.score, title: 'Edited imported tune' } };
+    rerender(<Player score={demo} preview={editedPreview} />);
+    expect(alphaTab.FakeAlphaTabApi.latest).toBe(importedApi);
+    expect(importedApi.destroy).not.toHaveBeenCalled();
+    expect(importedApi.renderScore).toHaveBeenLastCalledWith(editedPreview.score, undefined, { reuseViewport: true });
+  });
+
   it('maps note and rest locations to editor identities', () => {
     const beat = {
       index: 1, graceType: 0, graceGroup: null, isRest: false,

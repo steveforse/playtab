@@ -18,6 +18,16 @@ const DEFAULT_MAX_PLAYBACK_SPEED = 1.5;
 const PLAYBACK_SPEED_STEP = 0.01;
 export type ScoreView = 'continuous' | 'a4-portrait' | 'a4-landscape' | 'letter-portrait' | 'letter-landscape';
 export type ScrollDirection = 'vertical' | 'horizontal';
+
+function renderDocument(instance: AlphaTabApi, score: Score, preview: MusicXmlPreview | null, showChordDiagrams: boolean, hideTabClef: boolean, reuseViewport = false) {
+  const renderedScore = preview ? preview.score : toAlphaTab(score);
+  if (preview) configureChordDiagrams(renderedScore, showChordDiagrams);
+  const stylesheet = renderedScore.stylesheet ?? (renderedScore.stylesheet = {} as typeof renderedScore.stylesheet);
+  (stylesheet as typeof stylesheet & { playtabHideTabClef?: boolean }).playtabHideTabClef = hideTabClef;
+  if (reuseViewport) instance.renderScore(renderedScore, undefined, { reuseViewport: true });
+  else instance.renderScore(renderedScore);
+}
+
 export type ScoreSelectionKind = 'note' | 'rest' | 'empty';
 export type ScoreSelection = {
   noteId: number | null;
@@ -264,20 +274,28 @@ export function paginatedPoint(root: HTMLElement, event: MouseEvent) {
   });
   if (pageIndex < 0 || pageIndex >= pageTops.length) return null;
   const page = pages[pageIndex];
-  const bounds = page.getBoundingClientRect();
+  const point = elementPoint(page, event);
   return {
-    x: event.clientX - bounds.left - page.clientLeft,
-    y: pageTops[pageIndex] + event.clientY - bounds.top - page.clientTop,
+    x: point.x - page.clientLeft,
+    y: pageTops[pageIndex] + point.y - page.clientTop,
     pageIndex,
   };
+}
+
+function elementPoint(element: HTMLElement, event: MouseEvent) {
+  const bounds = element.getBoundingClientRect();
+  // Browser zoom and CSS transforms change screen coordinates, while
+  // alphaTab's bounds lookup stays in the element's layout coordinates.
+  const scaleX = bounds.width / (element.offsetWidth || bounds.width) || 1;
+  const scaleY = bounds.height / (element.offsetHeight || bounds.height) || 1;
+  return { x: (event.clientX - bounds.left) / scaleX, y: (event.clientY - bounds.top) / scaleY };
 }
 
 function scorePoint(root: HTMLElement, event: MouseEvent, view: ScoreView) {
   if (view !== 'continuous') return paginatedPoint(root, event);
   const surface = root.querySelector<HTMLElement>('.at-surface');
   if (!surface) return null;
-  const bounds = surface.getBoundingClientRect();
-  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  return elementPoint(surface, event);
 }
 
 function clampTabString(value: number) {
@@ -511,6 +529,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const lyricsSection = useRef<HTMLElement>(null);
   const exportDialog = useRef<HTMLDialogElement>(null);
   const api = useRef<AlphaTabApi | null>(null);
+  const renderedDocument = useRef<{ score: Score; preview: MusicXmlPreview | null } | null>(null);
   const editingRef = useRef(editing);
   const selectionRef = useRef<ScoreSelection | null>(selection);
   const selectionCallbackRef = useRef(onSelectionChange);
@@ -553,17 +572,20 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const [soundFontId, setSoundFontId] = useState(defaults.soundFontId);
   const [playbackHost, setPlaybackHost] = useState<HTMLElement | null>(null);
   const soundFont = availableSoundFonts.find(option => option.id === soundFontId) ?? availableSoundFonts[0] ?? bundledSoundFont;
+  const currentPreview = preview ?? null;
+  const previewMode = currentPreview !== null;
   useLayoutEffect(() => {
     const narrowScreen = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches;
     setPlaybackHost(narrowScreen ? null : document.getElementById('playback-controls'));
   }, []);
+  // Renderer configuration changes need a new instance; score edits do not.
   useEffect(() => {
     setReady(false); setPlaying(false); setRendered(false); setError(''); setExportNotice('');
     setPosition({ currentTime: 0, endTime: 0 });
     const base = '/notation/';
     const layoutMode = scoreView !== 'continuous' || scrollDirection !== 'horizontal' ? 'page' : 'horizontal';
     const instance = new AlphaTabApi(element.current!, {
-      core: { fontDirectory: `${base}font/`, includeNoteBounds: true, useWorkers: !preview && !hideTabClef, enableLazyLoading: !preview && !hideTabClef },
+      core: { fontDirectory: `${base}font/`, includeNoteBounds: true, useWorkers: !previewMode && !hideTabClef, enableLazyLoading: !previewMode && !hideTabClef },
       display: { scale: 1.1, barsPerRow, layoutMode },
       player: {
         enablePlayer: true, soundFont: `${base}soundfont/${soundFont.filename}`,
@@ -626,11 +648,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       else finishLayout();
     });
     instance.error.on(error => setError(error.message || 'Notation or audio could not load.'));
-    const renderedScore = preview ? preview.score : toAlphaTab(score);
-    if (preview) configureChordDiagrams(renderedScore, showChordDiagrams);
-    const stylesheet = renderedScore.stylesheet ?? (renderedScore.stylesheet = {} as typeof renderedScore.stylesheet);
-    (stylesheet as typeof stylesheet & { playtabHideTabClef?: boolean }).playtabHideTabClef = hideTabClef;
-    instance.renderScore(renderedScore);
+    renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef);
+    renderedDocument.current = { score, preview: currentPreview };
     return () => {
       if (typeof detachNoteMouseDown === 'function') detachNoteMouseDown();
       if (typeof detachBeatMouseDown === 'function') detachBeatMouseDown();
@@ -639,8 +658,18 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       detachPaginatedSelection?.();
       instance.destroy();
       api.current = null;
+      renderedDocument.current = null;
     };
-  }, [score, preview, scoreView, barsPerRow, scrollDirection, showChordDiagrams, hideTabClef, soundFont]);
+  }, [previewMode, scoreView, barsPerRow, scrollDirection, showChordDiagrams, hideTabClef, soundFont]);
+
+  // Keep the existing surface mounted so the document height cannot collapse on each edit.
+  useEffect(() => {
+    const instance = api.current;
+    const previous = renderedDocument.current;
+    if (!instance || (previous?.score === score && previous.preview === currentPreview)) return;
+    renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef, true);
+    renderedDocument.current = { score, preview: currentPreview };
+  }, [score, currentPreview, showChordDiagrams, hideTabClef]);
 
   useEffect(() => {
     if (api.current) api.current.settings.player.enableUserInteraction = !editing;
@@ -662,23 +691,53 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const noteBounds = target.note && beatBounds.notes?.find(item => item.note === target.note || item.note.id === target.note?.id);
     const bounds = noteBounds?.noteHeadBounds ?? { ...beatBounds.visualBounds };
     if (!noteBounds && currentSelection.string !== null && lookup) {
-      // Project a single string cell, rather than outlining the entire beat.
       const rows = editingStringRows(lookup, target.beat);
-      bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - 6;
-      bounds.h = 12;
+      const cellHeight = Math.max(12, rows.spacing - 2);
+      bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - cellHeight / 2;
+      bounds.h = cellHeight;
       bounds.x = beatBounds.onNotesX;
-      bounds.w = 12;
+      bounds.w = 14;
     }
     const surface = root.querySelector<HTMLElement>('.at-surface') ?? root;
     const position = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
+    if (noteBounds && target.note) {
+      // The rendered SVG text, not alphaTab's shared chord bounds, determines
+      // the actual white interruption in the staff line for each fret.
+      const surfaceRect = surface.getBoundingClientRect();
+      const scaleX = surfaceRect.width / (surface.offsetWidth || surfaceRect.width) || 1;
+      const scaleY = surfaceRect.height / (surface.offsetHeight || surfaceRect.height) || 1;
+      const expectedX = surfaceRect.left + (beatBounds.onNotesX + position.x) * scaleX;
+      const expectedY = surfaceRect.top + (position.y + bounds.h / 2) * scaleY;
+      const selectedFret = String(target.note.fret);
+      const glyph = Array.from(surface.querySelectorAll<SVGTextElement>('svg text'))
+        .filter(item => item.textContent?.trim() === selectedFret)
+        .map(item => ({ item, rect: item.getBoundingClientRect() }))
+        .sort((a, b) => Math.abs(a.rect.x + a.rect.width / 2 - expectedX) + Math.abs(a.rect.y + a.rect.height / 2 - expectedY)
+          - Math.abs(b.rect.x + b.rect.width / 2 - expectedX) - Math.abs(b.rect.y + b.rect.height / 2 - expectedY))[0];
+      if (glyph && Math.abs(glyph.rect.x + glyph.rect.width / 2 - expectedX) < 20 * scaleX
+        && Math.abs(glyph.rect.y + glyph.rect.height / 2 - expectedY) < 10 * scaleY) {
+        const textBounds = glyph.item.getBBox();
+        const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        frame.setAttribute('class', 'editor-note-selection editor-note-selection-svg');
+        frame.setAttribute('aria-hidden', 'true');
+        frame.setAttribute('data-note-id', String(target.note.id));
+        frame.setAttribute('x', String(textBounds.x - 2));
+        frame.setAttribute('y', String(textBounds.y - 1));
+        frame.setAttribute('width', String(textBounds.width + 4));
+        frame.setAttribute('height', String(textBounds.height + 2));
+        frame.setAttribute('rx', '2');
+        glyph.item.parentNode?.insertBefore(frame, glyph.item.parentNode.firstChild);
+        return;
+      }
+    }
     const overlay = document.createElement('div');
-    overlay.className = 'editor-note-selection';
+    overlay.className = `editor-note-selection editor-note-selection-html${noteBounds ? ' editor-note-selection-html-note' : ' editor-note-selection-empty'}`;
     overlay.setAttribute('aria-hidden', 'true');
     overlay.dataset.noteId = String(target.note?.id ?? '');
-    overlay.style.left = `${bounds.x + position.x}px`;
-    overlay.style.top = `${position.y}px`;
-    overlay.style.width = `${Math.max(12, bounds.w)}px`;
-    overlay.style.height = `${Math.max(12, bounds.h)}px`;
+    overlay.style.left = `${bounds.x + position.x - (noteBounds ? 2 : bounds.w / 2)}px`;
+    overlay.style.top = `${position.y - (noteBounds ? 1 : 0)}px`;
+    overlay.style.width = `${noteBounds ? bounds.w + 4 : bounds.w}px`;
+    overlay.style.height = `${noteBounds ? bounds.h + 2 : bounds.h}px`;
     surface.append(overlay);
   }
 

@@ -62,6 +62,47 @@ test('ED-02 edits and deletes the selected fret with keyboard input', async ({ p
   await expect(inspector).not.toContainText('Fret 12');
 });
 
+test('editing a fret keeps the rendered score and page position in place', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  const bars = Array.from({ length: 20 }, () => '0-0-0-0-0-0-0-0').join('|');
+  const text = ['D', 'B', 'G', 'D', 'g'].map(label => `${label}|${bars}|`).join('\n');
+  await page.getByLabel('Plaintext tablature').fill(text);
+  await page.getByRole('button', { name: 'Open in player' }).click();
+  const notation = page.getByTestId('notation');
+  const fret = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(fret).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score' }).click();
+  const box = (await fret.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const before = await page.evaluate(() => {
+    window.scrollTo(0, 600);
+    const surface = document.querySelector('.at-surface');
+    const initial = { y: window.scrollY, height: document.documentElement.scrollHeight };
+    const trace = { minY: initial.y, minHeight: initial.height, surface };
+    const sample = () => {
+      trace.minY = Math.min(trace.minY, window.scrollY);
+      trace.minHeight = Math.min(trace.minHeight, document.documentElement.scrollHeight);
+    };
+    window.addEventListener('scroll', sample, { passive: true });
+    new MutationObserver(sample).observe(document.querySelector('[data-testid="notation"]')!, { childList: true, subtree: true });
+    (window as typeof window & { __editScrollTrace?: typeof trace }).__editScrollTrace = trace;
+    return initial;
+  });
+  expect(before.y).toBeGreaterThan(0);
+  await page.keyboard.press('1');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 1');
+  await expect(notation.locator('svg text').filter({ hasText: /^1$/ }).first()).toBeVisible();
+  const after = await page.evaluate(() => {
+    const trace = (window as typeof window & { __editScrollTrace?: { minY: number; minHeight: number; surface: Element | null } }).__editScrollTrace!;
+    return { minY: trace.minY, minHeight: trace.minHeight, sameSurface: trace.surface === document.querySelector('.at-surface') };
+  });
+  expect(after.sameSurface).toBe(true);
+  expect(after.minHeight).toBeGreaterThanOrEqual(before.height - 20);
+  expect(after.minY).toBeGreaterThanOrEqual(before.y - 20);
+});
+
 test('ED-02 selects an unoccupied staff string in the same beat', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
@@ -77,7 +118,9 @@ test('ED-02 selects an unoccupied staff string in the same beat', async ({ page 
   await expect(inspector).toContainText(/String [1245]/);
   await expect(inspector).not.toContainText('String 3');
   const caret = (await page.locator('.editor-note-selection').boundingBox())!;
-  expect(caret.height).toBeLessThanOrEqual(16);
+  expect(caret.width).toBeGreaterThan(8);
+  expect(caret.width).toBeLessThanOrEqual(20);
+  expect(caret.height).toBeLessThanOrEqual(18);
   expect(Math.abs(caret.y + caret.height / 2 - (box!.y + 18))).toBeLessThan(12);
 });
 

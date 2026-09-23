@@ -3,7 +3,7 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { applyMusicXmlEdits, musicXmlEditorState } from './music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 
 type LibraryItem = { id: number; title: string };
@@ -187,6 +187,20 @@ export function App() {
     if (selectionToEdit.string === null) return;
     if (selectionToEdit.kind === 'note' && selectionToEdit.fret === fret) return;
     const after: ScoreSelection = { ...selectionToEdit, kind: 'note', noteId: null, fret };
+    if (preview && selectionToEdit.kind !== 'note') {
+      try {
+        const nextSource = addMusicXmlNote(preview.source, preview.score, {
+          measure: selectionToEdit.measure - 1, beat: selectionToEdit.event - 1,
+          voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
+        });
+        const nextPreview = readMusicXml(nextSource, preview.filename, preview.sourceFormat);
+        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after }, `Add fret ${fret}`, group);
+        setPreview(nextPreview);
+        setSelection(after);
+        setError('');
+      } catch (error) { setError((error as Error).message); }
+      return;
+    }
     if (!updateSelectedScore(selectionToEdit, notes => {
       const existing = notes.find(note => note.string === selectionToEdit.string);
       if (existing) existing.fret = fret;
@@ -305,11 +319,13 @@ export function App() {
               <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => setSelection(current => current ? { ...current, string: event.target.value ? Number(event.target.value) : null, noteId: null } : current)}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             </div>
             {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
-            {selection.kind === 'note' && selection.string !== null && <div className="editor-note-tools">
-              <label>Fret<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => setFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); updateSelectionFret(selection, Number(fretDraft)); } }} /></label>
-              <button type="button" onClick={() => updateSelectionFret(selection, Number(fretDraft))}>Apply</button>
-              <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
-              <button type="button" onClick={moveSelectedString} disabled={!moveString || Number(moveString) === selection.string}>Move</button>
+            {selection.string !== null && <div className="editor-note-tools">
+              <label>{selection.kind === 'note' ? 'Fret' : 'Add fret'}<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => setFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); updateSelectionFret(selection, Number(fretDraft)); } }} /></label>
+              <button type="button" onClick={() => updateSelectionFret(selection, Number(fretDraft))}>{selection.kind === 'note' ? 'Apply' : 'Add note'}</button>
+              {selection.kind === 'note' && <>
+                <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
+                <button type="button" onClick={moveSelectedString} disabled={!moveString || Number(moveString) === selection.string}>Move</button>
+              </>}
             </div>}
           </>}
         </div>
