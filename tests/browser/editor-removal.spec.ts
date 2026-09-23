@@ -105,3 +105,24 @@ test('Make rest confirms a grace group and Undo restores its original event', as
   await expect(inspector).toContainText('Event 2');
   await expect(inspector).toContainText('Fret 0');
 });
+
+test('an overfull imported voice blocks structural removal but permits a fret correction', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<note><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>4</string><fret>0</fret><pull-off type="stop"/>',
+      '<note><pitch><step>C</step><octave>3</octave></pitch><duration>2</duration><type>half</type><notations><technical><string>4</string><fret>0</fret><pull-off type="stop"/>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'overfull.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const notation = page.getByTestId('notation');
+  const zero = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(zero).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const box = (await zero.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByRole('button', { name: 'Remove note', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('extends past the measure boundary');
+  await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
+  await page.getByLabel('Fret').fill('1');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 1');
+});
