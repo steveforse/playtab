@@ -263,13 +263,14 @@ index b6203da..8142180
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -52641,13 +52711,45 @@ class EffectBand extends Glyph {
+@@ -52641,13 +52711,69 @@ class EffectBand extends Glyph {
  				const g = v[k];
  				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
  				try {
 -					g.paint(cx + this.x, cy + this.y, canvas);
 +					const sectionOffset = this._getPlaytabSectionAnnotationOffset(g);
-+					g.paint(cx + this.x, cy + this.y - sectionOffset, canvas);
++					const slideOffset = g.playtabSlideAnnotation === true ? this._getPlaytabSlideAnnotationOffset(g) : 0;
++					g.paint(cx + this.x, cy + this.y - sectionOffset - slideOffset, canvas);
  				} finally {
  					_?.[Symbol.dispose]?.();
  				}
@@ -288,12 +289,25 @@ index b6203da..8142180
 +					const tabBeatGlyph = beatGlyph.onNotes;
 +					const noteNumbers = tabBeatGlyph?.noteNumbers;
 +					const thumbFingering = noteNumbers?._thumbFingering;
-+					if (!thumbFingering) continue;
++					if (thumbFingering) {
++						thumbs.push({
++							left: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x - thumbFingering.width / 2,
++							right: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x + thumbFingering.width / 2,
++							y: barRenderer.y + barRenderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + noteNumbers.y + thumbFingering.y,
++							height: thumbFingering.height,
++						});
++						continue;
++					}
++					const beat = beatGlyph.beat;
++					if (!beat?.text || !/^[IMT](?:[ \n][IMT])*$/.test(beat.text)) continue;
++					const textBand = barRenderer.bottomEffects.getBand(beat.voice, NotationElement.EffectText);
++					const textGlyph = textBand?._effectGlyphs?.[beat.voice.index]?.get(beat.index);
++					if (!textBand || !textGlyph) continue;
 +					thumbs.push({
-+						left: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x - thumbFingering.width / 2,
-+						right: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x + thumbFingering.width / 2,
-+						y: barRenderer.y + barRenderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + noteNumbers.y + thumbFingering.y,
-+						height: thumbFingering.height,
++						left: barRenderer.x + textBand.x + textGlyph.x,
++						right: barRenderer.x + textBand.x + textGlyph.x + textGlyph.width,
++						y: barRenderer.y + barRenderer.height + barRenderer.staff.bottomOverflow - barRenderer.bottomEffects.height + textBand.y + textGlyph.y,
++						height: textGlyph.height,
 +					});
 +				}
 +			}
@@ -307,21 +321,37 @@ index b6203da..8142180
 +		}
 +		return sectionY - targetY;
 +	}
++	_getPlaytabSlideAnnotationOffset(g) {
++		const beatGlyph = this.renderer.getBeatContainer(g.beat);
++		const tabBeatGlyph = beatGlyph?.onNotes;
++		if (!beatGlyph || !tabBeatGlyph?.noteNumbers) return this.renderer.smuflMetrics.tabLineSpacing * 5.2;
++
++		const noteY = this.renderer.y + this.renderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + tabBeatGlyph.getHighestNoteY(NoteYPosition.Top);
++		const labelY = this.renderer.y + this.renderer.height + this.renderer.staff.bottomOverflow - this.renderer.bottomEffects.height + this.y + g.y;
++		const padding = this.renderer.smuflMetrics.tabLineSpacing;
++		return Math.max(0, labelY - (noteY - g.height - padding));
++	}
  	alignGlyphs() {
  		for (let v = 0; v < this._effectGlyphs.length; v++) for (const beatIndex of this._effectGlyphs[v].keys()) {
  			const g = this.renderer.bar.voices[v].beats[beatIndex];
-@@ -55698,7 +55800,9 @@ class TextEffectInfo extends EffectInfo {
+@@ -55698,7 +55807,15 @@ class TextEffectInfo extends EffectInfo {
  		return !!beat.text;
  	}
  	createNewGlyph(renderer, beat) {
 -		return new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
-+		const glyph = new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
-+		glyph.playtabSectionAnnotation = true;
++		const effectFont = renderer.resources.elementFonts.get(NotationElement.EffectText);
++		const isPlaytabFingering = beat.playtabFingerings?.length > 0 || /^[IMT](?:[ \n][IMT])*$/.test(beat.text.trim());
++		const isPlaytabSlide = beat.playtabSlideAnnotation === true || /^(?:sl\.?|slide)$/i.test(beat.text.trim());
++		const font = isPlaytabFingering ? Font.withFamilyList(effectFont.families, effectFont.size, FontStyle.Plain, effectFont.weight) : effectFont;
++		const glyph = new TextGlyph(0, 0, beat.text, font, isPlaytabFingering || isPlaytabSlide ? TextAlign.Center : TextAlign.Left);
++		glyph.playtabSectionAnnotation = !isPlaytabFingering && !isPlaytabSlide;
++		glyph.playtabFingering = isPlaytabFingering;
++		glyph.playtabSlideAnnotation = isPlaytabSlide;
 +		return glyph;
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -59240,11 +59344,17 @@ class TieGlyphLabels {
+@@ -59240,11 +59352,17 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {
@@ -340,7 +370,7 @@ index b6203da..8142180
  	}
  	getTieHeight(startX, _startY, endX, _endY) {
  		return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
-@@ -59253,9 +59363,9 @@ class TabSlurGlyph extends TabTieGlyph {
+@@ -59253,9 +59371,9 @@ class TabSlurGlyph extends TabTieGlyph {
  		if (this._labels === null) {
  			this._labels = [];
  			const slur = this.startNote.effectSlur;
@@ -352,7 +382,7 @@ index b6203da..8142180
  					const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
  					if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
  				}
-@@ -63810,6 +63920,7 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63810,6 +63928,7 @@ class TabNoteChordGlyph extends Glyph {
  	_deadSlapped = null;
  	_isGrace;
  	beat;
@@ -360,7 +390,7 @@ index b6203da..8142180
  	maxStringNote = null;
  	minStringNote = null;
  	beatEffects = /* @__PURE__ */ new Map();
-@@ -63907,7 +64018,9 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63907,7 +64027,9 @@ class TabNoteChordGlyph extends Glyph {
  			let maxEffectY = NaN;
  			let effectY = this.getNoteY(this.minStringNote, NoteYPosition.Center) + tabHeight / 2;
  			const effectSpacing = this.renderer.smuflMetrics.onNoteEffectPadding;
@@ -370,12 +400,13 @@ index b6203da..8142180
  				g.y += effectY;
  				g.x += this.width / 2;
  				g.renderer = this.renderer;
-@@ -63916,6 +64029,16 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63916,6 +64038,17 @@ class TabNoteChordGlyph extends Glyph {
  				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
  				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
  			}
 +			if (thumbFingering) {
-+				thumbFingering.font = this.renderer.resources.elementFonts.get(NotationElement.EffectFingering);
++				const effectFont = this.renderer.resources.elementFonts.get(NotationElement.EffectText);
++				thumbFingering.font = Font.withFamilyList(effectFont.families, effectFont.size, FontStyle.Plain, effectFont.weight);
 +				thumbFingering.y += this.renderer.getLineY(this.renderer.drawnLineCount - 1) + tabHeight + effectSpacing + this.renderer.settings.notation.rhythmHeight;
 +				thumbFingering.x += w / 2;
 +				thumbFingering.renderer = this.renderer;
@@ -387,11 +418,12 @@ index b6203da..8142180
  			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
  		}
  		this.width = w;
-@@ -63923,6 +64046,11 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63923,6 +64054,12 @@ class TabNoteChordGlyph extends Glyph {
  	addNoteGlyph(noteGlyph, note) {
  		this._notes.push(noteGlyph);
  		this.notesPerString.set(note.string, noteGlyph);
-+		if (note.leftHandFinger === Fingers.Thumb && !this._thumbFingering) {
++		const hasPlaytabThumb = this.beat?.text?.split("\n").some((line) => line.trim() === "T") === true;
++		if (note.leftHandFinger === Fingers.Thumb && !hasPlaytabThumb && !this._thumbFingering) {
 +			this._thumbFingering = new TextGlyph(0, 0, "T", null, TextAlign.Center, TextBaseline.Middle);
 +			this._thumbFingering.center = true;
 +			this.beatEffects.set("leftHandThumb", this._thumbFingering);
@@ -399,7 +431,7 @@ index b6203da..8142180
  		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
  		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
  	}
-@@ -64060,7 +64188,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
+@@ -64060,7 +64197,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
  				centeredEffectGlyphs.push(glyph);
  			}
  			if (this.container.beat.dots > 0 && tabRenderer.rhythmMode !== TabRhythmMode.Hidden) {
@@ -408,7 +440,7 @@ index b6203da..8142180
  				for (let i = 0; i < this.container.beat.dots; i++) this.addEffect(new AugmentationDotGlyph(0, y));
  			}
  		} else {
-@@ -64379,7 +64507,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+@@ -64379,7 +64516,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
  			const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
  			this.addTie(tapSlur);
  		}
@@ -424,7 +456,7 @@ index b6203da..8142180
  			let expanded = false;
  			for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
  				expanded = true;
-@@ -64391,7 +64526,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+@@ -64391,7 +64535,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
  				this.addTie(effectSlur);
  			}
  		}
@@ -439,7 +471,7 @@ index b6203da..8142180
  			let expanded = false;
  			for (const slur of this._effectSlurs) if (slur.tryExpand(n.effectSlurOrigin, n, false, true)) {
  				expanded = true;
-@@ -64530,8 +64671,10 @@ class TabBarRenderer extends LineBarRenderer {
+@@ -64530,8 +64680,10 @@ class TabBarRenderer extends LineBarRenderer {
  	createLinePreBeatGlyphs() {
  		if (this.isFirstOfStaff) {
  			const center = (this.bar.staff.tuning.length - 1) / 2;
@@ -452,7 +484,7 @@ index b6203da..8142180
  		}
  		if (this.showTimeSignature && (!this.bar.previousBar || this.bar.previousBar && this.bar.masterBar.timeSignatureNumerator !== this.bar.previousBar.masterBar.timeSignatureNumerator || this.bar.previousBar && this.bar.masterBar.timeSignatureDenominator !== this.bar.previousBar.masterBar.timeSignatureDenominator || this.bar.previousBar && this.bar.masterBar.isFreeTime && this.bar.masterBar.isFreeTime !== this.bar.previousBar.masterBar.isFreeTime)) {
  			this.createStartSpacing();
-@@ -64923,7 +65066,7 @@ class Environment {
+@@ -64923,7 +65075,7 @@ class Environment {
  			},
  			{
  				effect: new MarkerEffectInfo(),
@@ -461,7 +493,7 @@ index b6203da..8142180
  			},
  			{
  				effect: new DirectionsEffectInfo(),
-@@ -64935,7 +65078,7 @@ class Environment {
+@@ -64935,7 +65087,7 @@ class Environment {
  			},
  			{
  				effect: new TextEffectInfo(),

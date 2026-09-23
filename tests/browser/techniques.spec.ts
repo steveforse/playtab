@@ -43,6 +43,26 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   expect(errors).toEqual([]);
 });
 
+test('renders printed slide labels above the technique slur', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF slide Sl</other-technical><hammer-on type="stop"/>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'slide.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readPositions = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const positions = new Map<string, number>();
+    for (const node of nodes) {
+      if (!['H', 'Sl'].includes(node.textContent ?? '')) continue;
+      const y = (node as SVGGraphicsElement).getBBox().y;
+      if (Number.isFinite(y)) positions.set(node.textContent!, y);
+    }
+    return Object.fromEntries(positions);
+  });
+  await expect.poll(async () => Object.keys(await readPositions()).length).toBe(2);
+  const positions = await readPositions();
+  expect(Math.abs(positions.Sl - positions.H)).toBeLessThan(12);
+});
+
 test('renders consecutive hammer-on and pull-off segments as separate slurs', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
@@ -105,6 +125,26 @@ test('renders TEF index and middle finger annotations', async ({ page }) => {
   const notation = page.getByTestId('notation');
   await expect(notation.locator('svg text').filter({ hasText: /^I$/ })).toHaveCount(1);
   await expect(notation.locator('svg text').filter({ hasText: /^M$/ })).toHaveCount(1);
+});
+
+test('stacks thumb above a same-beat index annotation', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><other-technical>TEF fingering I</other-technical><hammer-on type="start">H</hammer-on>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'stacked-fingering.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readPositions = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const positions: Record<string, number> = {};
+    for (const node of nodes) {
+      if (!['T', 'I'].includes(node.textContent ?? '')) continue;
+      const y = (node as SVGGraphicsElement).getBBox().y;
+      if (Number.isFinite(y)) positions[node.textContent!] = y;
+    }
+    return positions;
+  });
+  await expect.poll(async () => Object.keys(await readPositions()).length).toBe(2);
+  const positions = await readPositions();
+  expect(positions.I).toBeGreaterThan(positions.T);
 });
 
 test('renders section words below the tablature staff', async ({ page }) => {

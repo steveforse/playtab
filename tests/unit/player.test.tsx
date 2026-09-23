@@ -16,11 +16,14 @@ const alphaTab = vi.hoisted(() => {
     playerReady = new EventBus<void>();
     playerStateChanged = new EventBus<{ state: number }>();
     playerPositionChanged = new EventBus<{ currentTime: number; endTime: number }>();
+    noteMouseDown = new EventBus<any>();
+    beatMouseDown = new EventBus<any>();
     renderFinished = new EventBus<void>();
     error = new EventBus<{ message?: string }>();
     playbackRangeHighlightChanged = new EventBus<any>();
     boundsLookup = null;
     playbackSpeed = 1;
+    masterVolume = 1;
     isLooping = false;
     metronomeVolume = 0;
     renderScore = vi.fn();
@@ -45,6 +48,7 @@ vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlp
 import {
   availableSoundFonts,
   createHorizontalPageScrollHandler,
+  createEditingStaffInteractionHandler,
   createPaginatedCursorHandler,
   createPaginatedInteractionHandlers,
   cssLengthInPixels,
@@ -56,6 +60,8 @@ import {
   paginatedPageForY,
   paginatedPoint,
   Player,
+  selectionFromBeat,
+  selectionFromNote,
 } from '../../app/frontend/Player';
 
 Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
@@ -88,6 +94,93 @@ function exportScore(format: string) {
 }
 
 describe('notation player', () => {
+  it('maps note and rest locations to editor identities', () => {
+    const beat = {
+      index: 1, graceType: 0, graceGroup: null, isRest: false,
+      voice: { index: 0, beats: [], bar: { index: 0, staff: { index: 0, track: { index: 0 } } } },
+    } as any;
+    const note = { id: 42, string: 3, fret: 2, beat } as any;
+    expect(selectionFromNote(note)).toMatchObject({ noteId: 42, measure: 1, event: 2, voice: 1, string: 3, fret: 2, kind: 'note' });
+    expect(selectionFromBeat({ ...beat, isRest: true } as any)).toMatchObject({ measure: 1, event: 2, voice: 1, string: null, kind: 'rest' });
+  });
+
+  it('emits note and empty-beat selections only in edit mode', () => {
+    const onSelectionChange = vi.fn();
+    render(<Player score={demo} editing onSelectionChange={onSelectionChange} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    const beat = {
+      index: 0, graceType: 0, graceGroup: null, isRest: true, notes: [],
+      voice: { index: 0, beats: [], bar: { index: 0, staff: { index: 0, track: { index: 0 } } } },
+    } as any;
+    const note = { id: 7, string: 5, fret: 0, beat: { ...beat, isRest: false, notes: [{}] } } as any;
+    act(() => api.noteMouseDown.emit(note));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ noteId: 7, string: 1, measure: 1, event: 1 }));
+    act(() => api.beatMouseDown.emit(beat));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ kind: 'rest', string: null }));
+  });
+
+  it('navigates to the next event while retaining the selected string', () => {
+    const onSelectionChange = vi.fn();
+    const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
+    const voice = { index: 0, beats: [], bar } as any;
+    const beatOne = { index: 0, graceType: 0, graceGroup: null, isRest: false, notes: [], voice } as any;
+    const beatTwo = { index: 1, graceType: 0, graceGroup: null, isRest: false, notes: [], voice } as any;
+    const noteOne = { id: 1, string: 3, fret: 0, beat: beatOne } as any;
+    const noteTwo = { id: 2, string: 3, fret: 2, beat: beatTwo } as any;
+    beatOne.notes = [noteOne]; beatTwo.notes = [noteTwo]; voice.beats = [beatOne, beatTwo];
+    bar.voices = [voice];
+    const scoreModel = { tracks: [{ staves: [{ bars: [bar] }] }] } as any;
+    const initial = selectionFromNote(noteOne);
+    render(<Player score={demo} editing selection={initial} onSelectionChange={onSelectionChange} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    (api as any).score = scoreModel;
+    fireEvent.keyDown(screen.getByTestId('notation'), { key: 'ArrowRight' });
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 2, string: 3, fret: 2 }));
+  });
+
+  it('selects an empty staff string from a point inside a beat', () => {
+    const root = document.createElement('div');
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 200, bottom: 200 } as DOMRect);
+    root.append(surface);
+    const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
+    const voice = { index: 0, bar } as any;
+    const beat = { index: 0, isRest: false, notes: [], voice } as any;
+    const api = new alphaTab.FakeAlphaTabApi();
+    const systemAt = (rowBeat: any, top: number) => ({ bars: [{ bars: [{ beats: [{
+      beat: rowBeat,
+      notes: [
+        { note: { string: 5 }, noteHeadBounds: { y: top - 5, h: 10 } },
+        { note: { string: 1 }, noteHeadBounds: { y: top + 35, h: 10 } },
+      ],
+    }] }] }] });
+    (api as any).boundsLookup = {
+      staffSystems: [systemAt(beat, 0), systemAt({ ...beat, index: 1 }, 200)],
+      getBeatAtPos: vi.fn(() => beat),
+      findBeat: vi.fn(() => ({ beat, visualBounds: { y: 0, h: 40 } })),
+      getNoteAtPos: vi.fn(() => null),
+    };
+    const onSelection = vi.fn();
+    const detach = createEditingStaffInteractionHandler(root, api as any, 'continuous', onSelection);
+    fireEvent.mouseDown(root, { button: 0, clientX: 20, clientY: 20 });
+    expect(onSelection).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 1, string: 3, kind: 'empty' }));
+    detach();
+  });
+
+  it('commits multi-digit frets and delegates deletion keys', () => {
+    const onFretInput = vi.fn();
+    const onSelectionDelete = vi.fn();
+    const initial = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null } as any;
+    render(<Player score={demo} editing selection={initial} onFretInput={onFretInput} onSelectionDelete={onSelectionDelete} />);
+    const notation = screen.getByTestId('notation');
+    fireEvent.keyDown(notation, { key: '1' });
+    fireEvent.keyDown(notation, { key: '2' });
+    expect(onFretInput).toHaveBeenLastCalledWith(initial, 12);
+    fireEvent.keyDown(notation, { key: 'Backspace' });
+    expect(onSelectionDelete).toHaveBeenCalledWith(initial);
+  });
+
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {
     const api = readyPlayer();
     expect(alphaTab.toAlphaTab).toHaveBeenCalledWith(demo);
@@ -115,9 +208,11 @@ describe('notation player', () => {
     expect(api.playPause).toHaveBeenCalledOnce();
 
     fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '1.25' } });
+    fireEvent.change(screen.getByLabelText('Playback volume'), { target: { value: '0.65' } });
     fireEvent.click(screen.getByRole('button', { name: /Loop/ }));
     fireEvent.click(screen.getByRole('button', { name: /Click/ }));
     expect(api.playbackSpeed).toBe(1.25);
+    expect(api.masterVolume).toBe(0.65);
     expect(api.isLooping).toBe(true);
     expect(api.metronomeVolume).toBe(0.6);
 
@@ -329,7 +424,7 @@ describe('notation player', () => {
 
   it('initializes persistent player preferences supplied by the host app', () => {
     const preferences = {
-      speed: 0.75, loop: true, metronome: true, barsPerRow: 2, lyricsColumns: 3,
+      speed: 0.75, volume: 0.6, loop: true, metronome: true, barsPerRow: 2, lyricsColumns: 3,
       scoreView: 'letter-landscape' as const, scrollDirection: 'horizontal' as const,
       showChordDiagrams: true, hideTabClef: true, soundFontId: availableSoundFonts[0].id,
     };
@@ -340,6 +435,7 @@ describe('notation player', () => {
       api.renderFinished.emit();
     });
     expect((screen.getByLabelText('Playback speed') as HTMLInputElement).value).toBe('0.75');
+    expect((screen.getByLabelText('Playback volume') as HTMLInputElement).value).toBe('0.6');
     expect((screen.getByRole('button', { name: /Loop/ }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
     expect((screen.getByLabelText('Measures per line') as HTMLSelectElement).value).toBe('2');
     expect((screen.getByLabelText('Score view') as HTMLSelectElement).value).toBe('letter-landscape');
@@ -347,6 +443,7 @@ describe('notation player', () => {
     expect((screen.getByLabelText('Hide TAB labels') as HTMLInputElement).checked).toBe(true);
     expect((api.settings as any).display).toMatchObject({ barsPerRow: 2, layoutMode: 'page' });
     expect(api.playbackSpeed).toBe(0.75);
+    expect(api.masterVolume).toBe(0.6);
     expect(api.isLooping).toBe(true);
     expect(api.metronomeVolume).toBe(0.6);
     expect((api as any).customCursorHandler).toBeTruthy();

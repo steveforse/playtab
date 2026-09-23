@@ -10,7 +10,7 @@ const { readMusicXml } = vi.hoisted(() => ({ readMusicXml: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange }: { onPreferencesChange?: (changes: any) => void }) => <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>,
   defaultPlayerPreferences: () => ({
-    speed: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
+    speed: 1, volume: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
     scoreView: 'continuous', scrollDirection: 'vertical', showChordDiagrams: false,
     hideTabClef: false, soundFontId: 'musescore-general-lite',
   }),
@@ -205,5 +205,28 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not sign out.'));
     root.remove();
+  });
+
+  it('enters and leaves explicit score edit mode without changing the score', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/songs', expect.anything()));
+    expect(screen.queryByLabelText('Edit tools')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit score' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('player')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    expect(screen.getByRole('button', { name: 'Done editing' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByLabelText('Edit tools')).toBeTruthy();
+    expect(screen.getByText('Select a note or empty string position to begin editing.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Practice demo/ })).toBeNull();
+    expect(screen.getByTestId('player')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+    expect(screen.queryByLabelText('Edit tools')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit score' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('player')).toBeTruthy();
   });
 });

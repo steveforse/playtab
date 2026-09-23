@@ -103,7 +103,12 @@ module Tef2
             duration = next_target > target ? [ 120, next_target - target ].max : 120
             duration = [ duration, measure_ticks - target ].min
             if events[position]
-              events[position].sort_by { |note| note[:string] }.each_with_index do |note, note_index|
+              event_notes = events[position].sort_by { |note| note[:string] }
+              grace_notes = event_notes.select { |note| note[:grace_note_fret] }
+              grace_notes.each_with_index do |note, grace_index|
+                write_grace_note(xml, note, tuning, chord: grace_index.positive?)
+              end
+              event_notes.each_with_index do |note, note_index|
                 write_note(
                   xml,
                   note,
@@ -293,11 +298,14 @@ module Tef2
             if fingering
               if fingering.match?(/\A[mt]\z/)
                 xml.send("other-technical", "TEF right-hand fingering #{fingering}")
-              elsif fingering.match?(/\A[A-Z]\z/)
-                xml.send("other-technical", "TEF fingering #{fingering}")
+              elsif fingering.match?(/\A[A-Z]+\z/)
+                fingering.each_char { |value| xml.send("other-technical", "TEF fingering #{value}") }
               else
                 xml.fingering(fingering, enclosure: "circle")
               end
+            end
+            if source[:grace_note_technique] == "pull-off"
+              xml.send("pull-off", type: "stop")
             end
             techniques.to_a.each do |technique|
               next if technique[:xml_type] == "slide"
@@ -309,10 +317,38 @@ module Tef2
               xml.send("other-technical", "TEF slide #{technique[:label]}")
             end
             printed_markers.to_a.each do |marker|
+              next if marker[:type] == "slide-in" && source[:grace_note_technique] == "slide-in"
+
               xml.send("other-technical", "TEF slide #{marker[:label]}") if marker[:type] == "slide-in"
             end
             xml.send("other-technical", "TEF rake") if rake
             xml.send("other-technical", "TEF strum #{strum}") if strum
+          end
+        end
+      end
+    end
+
+    def write_grace_note(xml, source, tuning, chord: false)
+      string = source.fetch(:string).to_i
+      fret = source.fetch(:grace_note_fret).to_i
+      open_pitch = tuning.fetch(tuning.length - string - 1)
+      step, alter, octave = midi_pitch(open_pitch + fret)
+      xml.note do
+        xml.chord if chord
+        xml.grace(slash: "yes")
+        xml.pitch do
+          xml.step(step)
+          xml.alter(alter.to_s) unless alter.zero?
+          xml.octave(octave.to_s)
+        end
+        xml.voice("1")
+        xml.type("eighth")
+        xml.notations do
+          xml.technical do
+            xml.string((string + 1).to_s)
+            xml.fret(fret.to_s)
+            xml.send("pull-off", "PO", type: "start") if source[:grace_note_technique] == "pull-off"
+            xml.send("other-technical", "TEF slide /") if source[:grace_note_technique] == "slide-in"
           end
         end
       end
@@ -371,6 +407,7 @@ module Tef2
       (score[:techniques] || []).select { |item| item[:type] == "slide-in" }.each do |item|
         note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
         next unless note
+        next if note[:grace_note_technique] == "slide-in"
 
         add_technique(result, note_key(note), item.slice(:type, :label))
       end
@@ -387,6 +424,13 @@ module Tef2
         result[key] ||= []
         marker = { type: tie.fetch(:type) }
         result[key] << marker unless result[key].include?(marker)
+      end
+      # A recognizer error must not be allowed to emit both ends of a tie on
+      # one MusicXML note. alphaTab treats that as a tie whose destination is
+      # itself and recurses while generating playback MIDI.
+      result.delete_if do |_key, markers|
+        types = markers.map { |marker| marker[:type] }
+        types.include?("start") && types.include?("stop")
       end
       result
     end
@@ -413,16 +457,21 @@ module Tef2
     end
 
     def fingerings_by_note(score, notes)
-      result = {}
+      values = Hash.new { |hash, key| hash[key] = [] }
       (score[:fingerings] || []).each do |item|
         note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
-        result[note_key(note)] = item[:value] if note
+        next unless note
+
+        value = item[:value].to_s
+        values[note_key(note)] << value unless value.empty? || values[note_key(note)].include?(value)
       end
       (score[:techniques] || []).select { |item| item[:type] == "thumb" }.each do |item|
         note = notes.find { |candidate| note_location_key(candidate) == note_location_key(item) }
-        result[note_key(note)] = "T" if note
+        next unless note
+
+        values[note_key(note)] << "T" unless values[note_key(note)].include?("T")
       end
-      result
+      values.transform_values { |items| items.join }
     end
 
     def add_technique(result, key, technique)
