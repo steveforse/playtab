@@ -1,7 +1,8 @@
 import type { ScoreSelection } from '../Player';
 import type { StoredScore } from '../music/score';
+import type { SourceIdentityMap } from '../music/source-identity';
 
-export type Snapshot = { document: StoredScore; selection: ScoreSelection | null };
+export type Snapshot = { document: StoredScore; selection: ScoreSelection | null; sourceIdentity?: SourceIdentityMap };
 type Entry = { before: Snapshot; after: Snapshot; description: string; group?: string };
 export type History = { undo: Entry[]; redo: Entry[] };
 export const emptyHistory = (): History => ({ undo: [], redo: [] });

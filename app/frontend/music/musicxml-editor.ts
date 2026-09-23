@@ -1,4 +1,5 @@
 import type { model } from '@coderline/alphatab';
+import type { SourceIdentityMap } from './source-identity';
 
 export type TechniqueChoice = 'keep' | 'none' | 'thumb' | 'finger-1' | 'finger-2' | 'finger-3' | 'finger-4' |
   'hammer-on-start' | 'hammer-on-stop' | 'pull-off-start' | 'pull-off-stop' | 'slide' | 'bend';
@@ -7,15 +8,18 @@ export type EditableMusicXmlNote = {
   index: number;
   measure: number;
   beat: number;
+  voice?: number;
   string: number;
   fret: number;
   technique: TechniqueChoice;
   deleted?: boolean;
   sourceIdentity?: SourceNoteIdentity;
+  modelNoteId?: number;
 };
 
 export type SourceNoteIdentity = {
   id: string;
+  address?: string;
   voice: string;
   graceGroup: number | null;
   graceIndex: number | null;
@@ -60,7 +64,7 @@ function sourceTabStaff(document: Document): number {
   return Number(details?.getAttribute('number') || '1');
 }
 
-function sourceTabNoteRecords(document: Document) {
+export function sourceTabNoteRecords(document: Document) {
   const staff = sourceTabStaff(document);
   const part = descendants(document.documentElement, 'part')[0];
   if (!part) return [];
@@ -167,7 +171,7 @@ function linkedStaffNotes(document: Document) {
 
 function modelNotes(score: model.Score) {
   const tab = score.tracks?.[0]?.staves?.[0];
-  return tab?.bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats.flatMap((beat, beatIndex) => beat.notes.map(note => ({ note, measure, beat: beatIndex, voice: voiceIndex }))))) ?? [];
+  return tab?.bars?.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats.flatMap((beat, beatIndex) => beat.notes.map(note => ({ note, measure, beat: beatIndex, voice: voiceIndex }))))) ?? [];
 }
 
 function midiToPitch(midi: number) {
@@ -198,11 +202,12 @@ function chordName(harmony: Element) {
   return `${step}${accidental}${kinds[suffix] ?? suffix}`;
 }
 
-export function musicXmlEditorState(source: string, score: model.Score): MusicXmlEditorState {
+export function musicXmlEditorState(source: string, score: model.Score, sourceIdentity?: SourceIdentityMap): MusicXmlEditorState {
   const document = parseDocument(source);
   const part = descendants(document.documentElement, 'part')[0];
   const tab = score.tracks?.[0]?.staves?.[0];
   const sourceNotes = sourceTabNoteRecords(document);
+  if (sourceIdentity && sourceIdentity.noteIds.length !== sourceNotes.length) throw new Error('Source identity map no longer matches this score. Reopen it before editing.');
   const renderedNotes = modelNotes(score);
   const sourceByLocation = new Map<string, (typeof sourceNotes[number] & { index: number })[]>();
   sourceNotes.forEach((record, index) => {
@@ -224,10 +229,12 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
       index: matched?.index ?? -1 - renderedIndex,
       measure,
       beat,
+      voice,
       string: matched?.string ?? 6 - note.string,
       fret: note.fret,
       technique: sourceNote ? techniqueOf(sourceNote) : 'none',
-      sourceIdentity: matched ? { id: matched.id, voice: matched.voice, graceGroup: matched.graceGroup,
+      modelNoteId: note.id,
+      sourceIdentity: matched ? { id: sourceIdentity?.noteIds[matched.index] ?? matched.id, address: matched.id, voice: matched.voice, graceGroup: matched.graceGroup,
         graceIndex: matched.graceIndex, chordMember: matched.chordMember } : undefined,
     };
   });
@@ -490,7 +497,7 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, n
     if (before && JSON.stringify(edit) === JSON.stringify(before)) return;
     if (edit.index < 0) throw new Error('This rendered note cannot be uniquely matched to its MusicXML source. Its source details are preserved, but this note cannot be edited safely.');
     if (before?.sourceIdentity && edit.sourceIdentity?.id !== before.sourceIdentity.id) throw new Error('The source note identity changed during this edit. Reopen the editor before applying it.');
-    const matching = before?.sourceIdentity ? sourceRecords.filter(record => record.id === before.sourceIdentity!.id) : [];
+    const matching = before?.sourceIdentity ? sourceRecords.filter(record => record.id === (before.sourceIdentity!.address ?? before.sourceIdentity!.id)) : [];
     if (before?.sourceIdentity && matching.length !== 1) throw new Error('This source note identity is ambiguous. Its source details are preserved, but it cannot be edited safely.');
     const note = matching[0]?.note ?? sourceNotes[edit.index];
     if (!note) {

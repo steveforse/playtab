@@ -7,6 +7,7 @@ import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXm
 import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import type { PlaybackEndpoints } from './editor/audition';
+import type { SourceIdentityMap } from './music/source-identity';
 
 type LibraryItem = { id: number; title: string; revision?: number };
 type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: 'note' | 'rest'; dependencies: string[] };
@@ -17,8 +18,9 @@ const userEmail = () => document.getElementById('playtab-root')?.dataset.userEma
 function withPreviewTitle(preview: MusicXmlPreview, title: string): MusicXmlPreview {
   return { ...preview, score: Object.assign(Object.create(Object.getPrototypeOf(preview.score)), preview.score, { title }) };
 }
-function readImportedDocument(document: ImportedScoreDocument) {
-  return withPreviewTitle(readMusicXml(document.source, document.sourceName, document.sourceFormat), document.title);
+function readImportedDocument(document: ImportedScoreDocument, sourceIdentity?: SourceIdentityMap) {
+  return withPreviewTitle(readMusicXml(document.source, document.sourceName, document.sourceFormat,
+    sourceIdentity ? { source: document.source, map: sourceIdentity } : undefined), document.title);
 }
 async function apiRequest(path: string, options?: RequestInit) {
   const response = await fetch(path, { ...options, headers: {
@@ -182,7 +184,7 @@ export function App() {
     setMoveString(selection?.string ? String(selection.string) : '');
   }, [selection?.noteId, selection?.measure, selection?.event, selection?.string, selection?.fret]);
   function remember(after: Snapshot, description: string, group?: string) {
-    setHistory(current => record(current, { before: { document: currentDocument, selection }, after, description, group }));
+    setHistory(current => record(current, { before: { document: currentDocument, selection, sourceIdentity: preview?.sourceIdentity }, after, description, group }));
     setDirty(documentKey(after.document) !== savedBaseline.current);
   }
   function moveHistory(direction: 'undo' | 'redo') {
@@ -191,7 +193,7 @@ export function App() {
     try {
       const document = result.snapshot.document;
       // Parse before publishing; a failed restoration keeps the current draft.
-      const restored = isImportedScoreDocument(document) ? readImportedDocument(document) : null;
+      const restored = isImportedScoreDocument(document) ? readImportedDocument(document, result.snapshot.sourceIdentity) : null;
       setPreview(restored);
       if (!isImportedScoreDocument(document)) setScore(document);
       else setWarnings(document.warnings);
@@ -221,20 +223,38 @@ export function App() {
     document.addEventListener('keydown', keydown, true);
     return () => document.removeEventListener('keydown', keydown, true);
   }, [editMode]);
-  function updateSelectedScore(selectionToEdit: ScoreSelection, editNative: (notes: { string: number; fret: number }[]) => void, editImported: (note: ReturnType<typeof musicXmlEditorState>['notes'][number]) => void, afterSelection: ScoreSelection, description: string, group?: string) {
+  function updateSelectedScore(selectionToEdit: ScoreSelection, editNative: (notes: { string: number; fret: number }[]) => void, editImported: (note: ReturnType<typeof musicXmlEditorState>['notes'][number]) => void, afterSelection: ScoreSelection, description: string, group?: string, movedToString?: number) {
     if (preview) {
       if (selectionToEdit.string === null) return false;
       try {
-        const state = musicXmlEditorState(preview.source, preview.score);
-        const note = state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.event - 1 && candidate.string === selectionToEdit.string);
+        if (selectionToEdit.kind === 'note' && selectionToEdit.noteId !== null && !selectionToEdit.sourceId) {
+          setError('This rendered note has no unique source identity. Its original MusicXML is preserved; select another note to edit.');
+          return false;
+        }
+        const state = musicXmlEditorState(preview.source, preview.score, preview.sourceIdentity);
+        const note = selectionToEdit.sourceId
+          ? state.notes.find(candidate => candidate.sourceIdentity?.id === selectionToEdit.sourceId)
+          : state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.event - 1
+            && candidate.voice === selectionToEdit.voice - 1 && candidate.string === selectionToEdit.string);
         if (!note) {
-          setError('This imported position has no source note to edit yet.');
+          setError(selectionToEdit.sourceId ? 'The selected source note is no longer available. Select it again before editing.' : 'This imported position has no source note to edit yet.');
           return false;
         }
         editImported(note);
         const nextSource = applyMusicXmlEdits(preview.source, state, [note.index]);
-        const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat), preview.score.title);
-        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: afterSelection }, description, group);
+        const carries = note.sourceIdentity?.address && preview.sourceIdentity
+          ? [{ id: note.sourceIdentity.id, address: movedToString === undefined
+            ? note.sourceIdentity.address
+            : `${note.sourceIdentity.address.slice(0, note.sourceIdentity.address.lastIndexOf(':') + 1)}${movedToString}` }]
+          : [];
+        const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
+          preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity, carries } : undefined), preview.score.title);
+        if (note.sourceIdentity) {
+          afterSelection.sourceId = note.sourceIdentity.id;
+          const location = nextPreview.sourceLocationById?.get(note.sourceIdentity.id);
+          if (location) Object.assign(afterSelection, location);
+        }
+        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: afterSelection, sourceIdentity: nextPreview.sourceIdentity }, description, group);
         setPreview(nextPreview);
         setError('');
         return true;
@@ -278,7 +298,7 @@ export function App() {
         const promoted = withPreviewTitle(readMusicXml(promoteNativeScore(score), filename), score.title);
         let nextSource: string;
         if (selectionToEdit.kind === 'note') {
-          const state = musicXmlEditorState(promoted.source, promoted.score);
+          const state = musicXmlEditorState(promoted.source, promoted.score, promoted.sourceIdentity);
           const note = state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.event - 1 && candidate.string === selectionToEdit.string);
           if (!note) throw new Error('The selected note could not be matched after promotion.');
           note.fret = fret;
@@ -287,8 +307,10 @@ export function App() {
           measure: selectionToEdit.measure - 1, beat: selectionToEdit.event - 1,
           voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
         });
-        const nextPreview = withPreviewTitle(readMusicXml(nextSource, filename), score.title);
-        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after }, `Promote score and change fret to ${fret}`);
+        const nextPreview = withPreviewTitle(readMusicXml(nextSource, filename, 'musicxml',
+          promoted.sourceIdentity ? { source: promoted.source, map: promoted.sourceIdentity } : undefined), score.title);
+        after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.event}:${after.voice}:${after.string}:${fret}`);
+        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Promote score and change fret to ${fret}`);
         setPreview(nextPreview); setSelection(after); setError('');
       } catch (error) { setError((error as Error).message); }
       return;
@@ -299,8 +321,10 @@ export function App() {
           measure: selectionToEdit.measure - 1, beat: selectionToEdit.event - 1,
           voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
         });
-        const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat), preview.score.title);
-        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after }, `Add fret ${fret}`, group);
+        const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
+          preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity } : undefined), preview.score.title);
+        after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.event}:${after.voice}:${after.string}:${fret}`);
+        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Add fret ${fret}`, group);
         setPreview(nextPreview);
         setSelection(after);
         setError('');
@@ -325,7 +349,7 @@ export function App() {
       if (!existing) return;
       existing.string = destination;
       notes.sort((left, right) => left.string - right.string);
-    }, note => { note.string = destination; }, after, `Move note to string ${destination}`)) return;
+    }, note => { note.string = destination; }, after, `Move note to string ${destination}`, undefined, destination)) return;
     setSelection(after);
   }
   function commitImportedRemoval(nextSource: string, selectionToDelete: ScoreSelection, mode: 'note' | 'rest') {
@@ -333,12 +357,13 @@ export function App() {
     try {
       const beat = preview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats[selectionToDelete.event - 1];
       const lastMember = mode === 'rest' || beat?.notes.length === 1;
-      const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat), preview.score.title);
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
+        preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity } : undefined), preview.score.title);
       const nextBeats = nextPreview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats ?? [];
       const matchingEvent = beat ? nextBeats.findIndex(candidate => !candidate.graceType && candidate.playbackStart === beat.playbackStart) : -1;
       const after: ScoreSelection = { ...selectionToDelete, event: matchingEvent < 0 ? selectionToDelete.event : matchingEvent + 1,
-        kind: lastMember ? 'rest' : 'empty', noteId: null, fret: null };
-      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after }, mode === 'rest' ? 'Make rest' : 'Remove note');
+        kind: lastMember ? 'rest' : 'empty', noteId: null, fret: null, sourceId: undefined };
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, mode === 'rest' ? 'Make rest' : 'Remove note');
       setPreview(nextPreview);
       setSelection(after);
       setError('');
@@ -640,7 +665,7 @@ export function App() {
           editing={editMode}
           selection={selection}
           passage={passage}
-          onSelectionChange={setSelection}
+          onSelectionChange={next => setSelection(next ? { ...next, sourceId: next.noteId === null ? undefined : preview?.sourceIdByModelNoteId?.get(next.noteId) } : null)}
           onPassageChange={setPassage}
           onFretInput={updateSelectionFret}
           onSelectionDelete={requestRemoval}

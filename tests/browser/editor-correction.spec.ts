@@ -48,6 +48,9 @@ test('ED-03 moves an imported note without breaking paired notation', async ({ p
   await page.getByLabel('Move to string').selectOption('2');
   await page.getByRole('button', { name: 'Move', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('String 2');
+  await page.getByLabel('Fret').fill('7');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 7');
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
