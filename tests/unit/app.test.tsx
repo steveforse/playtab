@@ -199,6 +199,176 @@ describe('workspace application', () => {
     expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(0);
   });
 
+  it('guards navigation, preserves the draft on Cancel, and discards back to the saved document', async () => {
+    const first = { id: 1, title: score.title, score, source_text: null, revision: 0 };
+    const secondScore = { ...score, title: 'Second score' };
+    const second = { id: 2, title: secondScore.title, score: secondScore, source_text: null, revision: 0 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 1, title: score.title }, { id: 2, title: secondScore.title }]))
+      .mockResolvedValueOnce(response(first))
+      .mockResolvedValueOnce(response(second))
+      .mockResolvedValueOnce(response(second));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    const beforeUnload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /My library/ }));
+    fireEvent.click(screen.getByRole('button', { name: secondScore.title }));
+    await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('heading', { name: score.title })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: secondScore.title }));
+    await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Discard', exact: true }));
+    await screen.findByRole('heading', { name: secondScore.title });
+    expect(screen.getByText('Saved')).toBeTruthy();
+    const afterUnload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(afterUnload);
+    expect(afterUnload.defaultPrevented).toBe(false);
+  });
+
+  it('commits a pending fret before Save and continue and stays put when that save fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 1, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 1, title: score.title, score, source_text: null, revision: 0 }))
+      .mockResolvedValueOnce(response({ error: 'Temporary failure.' }, false, 500))
+      .mockResolvedValueOnce(response({ id: 1, title: score.title, revision: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: '＋ New score' }));
+    await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Save and continue' }));
+    await waitFor(() => expect(screen.getByText('Save failed. Your work is still here; retry or cancel.')).toBeTruthy());
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).score.measures[0].beats[0].notes[0].fret).toBe(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Save and continue' }));
+    await waitFor(() => expect(screen.getByText('Not saved to library')).toBeTruthy());
+    expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).toBeNull();
+  });
+
+  it('does not continue when a second edit lands during the guarded save', async () => {
+    let finish!: (value: ReturnType<typeof response>) => void;
+    const pendingSave = new Promise<ReturnType<typeof response>>(resolve => { finish = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 1, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 1, title: score.title, score, source_text: null, revision: 0 }))
+      .mockReturnValueOnce(pendingSave)
+      .mockResolvedValueOnce(response({ id: 1, title: score.title, revision: 2 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: '＋ New score' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save and continue' }));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    finish(response({ id: 1, title: score.title, revision: 1 }));
+    await waitFor(() => expect(screen.getByText('More changes were made while saving. Save and continue again.')).toBeTruthy());
+    expect(screen.getByText('Fret 5')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save and continue' }));
+    await waitFor(() => expect(screen.getByText('Not saved to library')).toBeTruthy());
+    expect(JSON.parse(fetchMock.mock.lastCall![1].body).score.measures[0].beats[0].notes[0].fret).toBe(5);
+  });
+
+  it('keeps a conflicted draft and offers copy or confirmed reload of the newer revision', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 1, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 1, title: score.title, score, source_text: null, revision: 1 }))
+      .mockResolvedValueOnce(response({ error: 'Changed in another tab. Reopen the score before saving.' }, false, 409))
+      .mockResolvedValueOnce(response({ id: 1, title: score.title, score: { ...score, tempo: 120 }, source_text: null, revision: 2 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await screen.findByRole('dialog', { name: 'Score changed in another tab' });
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+    expect(screen.getByText('Changed in another tab')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve conflict…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reload saved version…' }));
+    await screen.findByRole('dialog', { name: 'Discard unsaved changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve conflict…' }));
+    await screen.findByRole('dialog', { name: 'Score changed in another tab' });
+    fireEvent.click(screen.getByRole('button', { name: 'Reload saved version…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/songs/1', expect.anything());
+  });
+
+  it('discards an unsaved draft back to its opened version and leaves failed imports untouched', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    openImport();
+    selectFile('broken.json', '{}');
+    await waitFor(() => expect(screen.getAllByRole('alert').some(node => node.textContent?.includes('Unsupported score version'))).toBe(true));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close import' }));
+    fireEvent.click(screen.getByText('More'));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved changes…' }));
+    await screen.findByRole('dialog', { name: 'Discard unsaved changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved changes…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(screen.getByText('Not saved to library')).toBeTruthy());
+    expect(screen.queryByText('Fret 4')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit score' })).toBeTruthy();
+  });
+
+  it('guards the home link and sign-out without sending a request after Cancel', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('link', { name: 'Playtab home' }));
+    await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await screen.findByRole('dialog', { name: 'Unsaved changes' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+  });
+
   it('opens stored native and imported scores and reports load failures', async () => {
     const native = { id: 1, title: 'Native', score, source_text: 'D' };
     const imported = { id: 2, title: 'Imported', score: { version: 2, kind: 'musicxml', title: 'Imported', sourceName: 'i.xml', sourceFormat: 'musicxml', source: preview.source, warnings: ['warning'] }, source_text: null };
