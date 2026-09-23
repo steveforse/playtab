@@ -2,12 +2,43 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { applyMusicXmlEdits, musicXmlEditorState, replaceTechnique } from '../../app/frontend/music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, replaceTechnique } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
 
 describe('MusicXML score editing', () => {
+  it.skipIf(!process.env.PLAYTAB_EDITOR_XML)('adds to a private imported chord without publishing the score', () => {
+    const source = fs.readFileSync(process.env.PLAYTAB_EDITOR_XML!, 'utf8');
+    const preview = readMusicXml(source, 'private.musicxml', 'tef');
+    const bars = preview.score.tracks[0].staves[0].bars;
+    const target = bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats.map((beat, event) => ({ beat, measure, voice: voiceIndex, event }))))
+      .find(item => item.beat.notes.length > 1 && item.beat.notes.length < 5 && !item.beat.graceType)!;
+    expect(target).toBeTruthy();
+    const occupied = new Set(target.beat.notes.map(note => 6 - note.string));
+    const string = [1, 2, 3, 4, 5].find(value => !occupied.has(value))!;
+    const edited = addMusicXmlNote(source, preview.score, { measure: target.measure, beat: target.event, voice: target.voice, string, fret: 0 });
+    const next = readMusicXml(edited, 'private.musicxml', 'tef');
+    expect(next.score.tracks[0].staves[0].bars[target.measure].voices[target.voice].beats[target.event].notes).toHaveLength(target.beat.notes.length + 1);
+  });
+  it('adds a chord member and replaces a paired rest without moving later events', () => {
+    const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
+    const preview = readMusicXml(source, 'paired.musicxml', 'tef');
+    const original = preview.score.tracks[0].staves[0].bars[0].voices[1].beats;
+    const chord = addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: 1, string: 2, fret: 1 });
+    const afterChord = readMusicXml(chord, 'paired.musicxml', 'tef');
+    const beats = afterChord.score.tracks[0].staves[0].bars[0].voices[1].beats;
+    expect(beats[0].notes.map(note => [note.string, note.fret]).sort((a, b) => a[0] - b[0])).toEqual([[3, 0], [4, 1], [5, 0]]);
+    expect(beats.map(beat => beat.playbackStart)).toEqual(original.map(beat => beat.playbackStart));
+    expect(() => addMusicXmlNote(chord, afterChord.score, { measure: 0, beat: 0, voice: 1, string: 2, fret: 1 })).toThrow('already has a note');
+
+    const filled = addMusicXmlNote(chord, afterChord.score, { measure: 0, beat: 2, voice: 1, string: 4, fret: 0 });
+    const afterRest = readMusicXml(filled, 'paired.musicxml', 'tef');
+    const filledBeats = afterRest.score.tracks[0].staves[0].bars[0].voices[1].beats;
+    expect(filledBeats[2].notes.map(note => [note.string, note.fret])).toEqual([[2, 0]]);
+    expect(filledBeats.map(beat => beat.playbackStart)).toEqual(original.map(beat => beat.playbackStart));
+    expect(filled).not.toContain('<rest/>');
+  });
   it('updates both representations by musical identity and preserves unrelated source notes', () => {
     const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
     const preview = readMusicXml(source, 'paired.musicxml', 'tef');

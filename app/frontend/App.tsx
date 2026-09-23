@@ -3,7 +3,7 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type Score } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { applyMusicXmlEdits, musicXmlEditorState } from './music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 
 type LibraryItem = { id: number; title: string };
@@ -187,6 +187,20 @@ export function App() {
     if (selectionToEdit.string === null) return;
     if (selectionToEdit.kind === 'note' && selectionToEdit.fret === fret) return;
     const after: ScoreSelection = { ...selectionToEdit, kind: 'note', noteId: null, fret };
+    if (preview && selectionToEdit.kind !== 'note') {
+      try {
+        const nextSource = addMusicXmlNote(preview.source, preview.score, {
+          measure: selectionToEdit.measure - 1, beat: selectionToEdit.event - 1,
+          voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
+        });
+        const nextPreview = readMusicXml(nextSource, preview.filename, preview.sourceFormat);
+        remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after }, `Add fret ${fret}`, group);
+        setPreview(nextPreview);
+        setSelection(after);
+        setError('');
+      } catch (error) { setError((error as Error).message); }
+      return;
+    }
     if (!updateSelectedScore(selectionToEdit, notes => {
       const existing = notes.find(note => note.string === selectionToEdit.string);
       if (existing) existing.fret = fret;

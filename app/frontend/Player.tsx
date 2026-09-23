@@ -666,8 +666,15 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       const rows = editingStringRows(lookup, target.beat);
       bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - 6;
       bounds.h = 12;
-      bounds.x = beatBounds.onNotesX;
-      bounds.w = 12;
+      // onNotesX is an event anchor, not the left edge of a fret glyph. Use
+      // the note-head offset from this event or another event in its system.
+      const system = lookup.staffSystems.find(item => item.bars.some(master => master.bars.some(bar => bar.beats.some(item => item.beat === target.beat))));
+      const reference = beatBounds.notes?.[0] ? { beat: beatBounds, note: beatBounds.notes[0] }
+        : system?.bars.flatMap(master => master.bars.flatMap(bar => bar.beats
+          .filter(item => item.beat.voice.bar.staff === target.beat.voice.bar.staff && item.notes?.length)
+          .map(item => ({ beat: item, note: item.notes![0] }))))[0];
+      bounds.x = beatBounds.onNotesX + (reference ? reference.note.noteHeadBounds.x - reference.beat.onNotesX : -6);
+      bounds.w = reference?.note.noteHeadBounds.w ?? 12;
     }
     const surface = root.querySelector<HTMLElement>('.at-surface') ?? root;
     const position = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
