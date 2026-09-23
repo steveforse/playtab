@@ -6,13 +6,14 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote } = vi.hoisted(() => ({ readMusicXml: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn() }));
+const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes } = vi.hoisted(() => ({ readMusicXml: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
     {editing && <>
       <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>
       <button type="button" data-testid="choose-empty" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Choose empty</button>
+      <button type="button" data-testid="delete-empty" onClick={() => onSelectionDelete?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Delete empty</button>
     </>}
   </>,
   defaultPlayerPreferences: () => ({
@@ -28,7 +29,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -59,7 +60,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('loads the library, opens plaintext and saves the native score', async () => {
@@ -271,6 +272,72 @@ describe('workspace application', () => {
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
     expect(screen.getByText('Fret 2')).toBeTruthy();
+  });
+
+  it('removes native notes, makes rests, and ignores Delete on an empty selection', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('delete-empty'));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
+    expect(screen.queryByText('Fret 0')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    expect(screen.queryByText('Fret 0')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+  });
+
+  it('requires confirmation for imported dependencies and restores the source with one Undo', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    const beforeBeat = { notes: [{ fret: 0 }], playbackStart: 0, graceType: 0, isRest: false };
+    const afterBeat = { notes: [], playbackStart: 0, graceType: 0, isRest: true };
+    const imported = (value: string) => ({ ...preview, source: value, score: {
+      ...preview.score, tracks: [{ staves: [{ bars: [{ voices: [{ beats: [value.includes('removed') ? afterBeat : beforeBeat] }] }] }] }],
+    } });
+    readMusicXml.mockImplementation((value: string) => imported(value));
+    removeMusicXmlNotes.mockReturnValue({ source: '<score-partwise removed="true"/>', dependencies: ['hammer-on'] });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    expect(screen.getByRole('dialog', { name: 'Confirm note removal' }).textContent).toContain('hammer-on');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    fireEvent.click(screen.getByRole('dialog', { name: 'Confirm note removal' }).querySelector('button:last-child')!);
+    expect(screen.queryByText('Fret 0')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+  });
+
+  it('blocks an imported deletion with a protected attachment', async () => {
+    const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
+    readMusicXml.mockReturnValue(imported);
+    removeMusicXmlNotes.mockImplementation(() => { throw new Error('This note has a protected tap attachment.'); });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', imported.source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    expect(screen.getByRole('alert').textContent).toContain('protected tap attachment');
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('handles imported note corrections, empty selections, and failed restores', async () => {

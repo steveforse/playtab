@@ -3,12 +3,103 @@ import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, replaceTechnique } from '../../app/frontend/music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes, replaceTechnique } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
 
 describe('MusicXML score editing', () => {
+  it.skipIf(!process.env.PLAYTAB_STORED_WELLERMAN)('prepares a saved Wellerman chord removal without changing the stored source', () => {
+    const saved = JSON.parse(execFileSync('docker', ['compose', '-f', 'compose.yml', 'exec', '-T', 'web', 'bin/rails', 'runner',
+      'print Song.where("title ILIKE ?", "%Wellerman%").first.score.to_json'], { encoding: 'utf8' }));
+    const source = saved.source as string;
+    const preview = readMusicXml(source, 'wellerman.musicxml', 'tef');
+    const candidate = preview.score.tracks[0].staves[0].bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats
+      .map((beat, event) => ({ beat, measure, voice: voiceIndex, event }))))
+      .find(item => item.beat.notes.length >= 2 && !item.beat.graceType)!;
+    expect(candidate).toBeTruthy();
+    const string = 6 - candidate.beat.notes[0].string;
+    const planned = removeMusicXmlNotes(source, preview.score, { measure: candidate.measure, beat: candidate.event, voice: candidate.voice, string })!;
+    expect(planned).toBeTruthy();
+    expect(source).toBe(saved.source);
+    const after = readMusicXml(planned.source, 'wellerman.musicxml', 'tef');
+    const next = after.score.tracks[0].staves[0].bars[candidate.measure].voices[candidate.voice].beats[candidate.event];
+    expect(next.notes.length).toBe(candidate.beat.notes.length - 1);
+    expect(next.playbackStart).toBe(candidate.beat.playbackStart);
+  }, 60000);
+
+  it('removes one paired chord member or makes the whole event a rest without shifting later music', () => {
+    const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
+    const preview = readMusicXml(source, 'paired.musicxml', 'tef');
+    const before = preview.score.tracks[0].staves[0].bars[0].voices[1].beats.map(beat => beat.playbackStart);
+    const one = removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: 1, string: 3 })!;
+    expect(one.dependencies).toEqual([]);
+    const afterOne = readMusicXml(one.source, 'paired.musicxml', 'tef').score.tracks[0].staves[0].bars[0].voices[1].beats;
+    expect(afterOne[0].notes.map(note => 6 - note.string)).toEqual([1]);
+    expect(afterOne.map(beat => beat.playbackStart)).toEqual(before);
+
+    const whole = removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: 1 })!;
+    expect(whole.dependencies).toEqual([]);
+    const afterWhole = readMusicXml(whole.source, 'paired.musicxml', 'tef').score.tracks[0].staves[0].bars[0].voices[1].beats;
+    expect(afterWhole[0].isRest).toBe(true);
+    expect(afterWhole.map(beat => beat.playbackStart)).toEqual(before);
+    expect(removeMusicXmlNotes(whole.source, readMusicXml(whole.source, 'paired.musicxml', 'tef').score, { measure: 0, beat: 0, voice: 1 })).toBeNull();
+  });
+
+  it('reports linked techniques and removes their surviving endpoint only after the caller confirms', () => {
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
+    const preview = readMusicXml(source, 'techniques.musicxml');
+    const planned = removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 4 })!;
+    expect(planned.dependencies).toContain('hammer-on');
+    expect(planned.source).not.toContain('hammer-on');
+    expect(source).toContain('hammer-on');
+    const after = readMusicXml(planned.source, 'techniques.musicxml');
+    expect(after.score.tracks[0].staves[0].bars[0].voices[0].beats[0].isRest).toBe(true);
+  });
+
+  it('disconnects known tie and slide endpoints when their source note is removed', () => {
+    const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
+    const preview = readMusicXml(source, 'paired.musicxml', 'tef');
+    const tab = '<string>3</string><fret>0</fret></technical></notations>';
+    const tiedStart = '<string>3</string><fret>0</fret></technical><tied type="start"/></notations>';
+    const tiedStop = '<string>3</string><fret>0</fret></technical><tied type="stop"/></notations>';
+    const withTie = source.replace(tab, tiedStart).replace(tab, tiedStop);
+    const plannedTie = removeMusicXmlNotes(withTie, preview.score, { measure: 0, beat: 0, voice: 1, string: 3 })!;
+    expect(plannedTie.dependencies).toContain('tie');
+    expect(plannedTie.source).not.toContain('<tied');
+
+    const slideStart = '<string>3</string><fret>0</fret><slide number="1" type="start"/></technical></notations>';
+    const slideStop = '<string>3</string><fret>0</fret><slide number="1" type="stop"/></technical></notations>';
+    const withSlide = source.replace(tab, slideStart).replace(tab, slideStop);
+    const plannedSlide = removeMusicXmlNotes(withSlide, preview.score, { measure: 0, beat: 0, voice: 1, string: 3 })!;
+    expect(plannedSlide.dependencies).toContain('slide');
+    expect(plannedSlide.source).not.toContain('<slide');
+    expect(readMusicXml(plannedSlide.source, 'paired.musicxml', 'tef').score.tracks[0].staves[0].bars[0].voices[1].beats[0].notes).toHaveLength(1);
+
+    const standard = '<note><pitch><step>G</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>';
+    const withStandardTie = source.replace(standard, standard.replace('<voice>', '<tie type="start"/><voice>'))
+      .replace(standard, standard.replace('<voice>', '<tie type="stop"/><voice>'));
+    const plannedStandardTie = removeMusicXmlNotes(withStandardTie, preview.score, { measure: 0, beat: 0, voice: 1, string: 3 })!;
+    expect(plannedStandardTie.dependencies).toContain('tie');
+    expect(plannedStandardTie.source).not.toContain('<tie');
+  });
+
+  it('removes a preceding grace group with its destination event and blocks unknown attachments', () => {
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
+    const grace = '<note><grace slash="yes"/><pitch><step>C</step><octave>3</octave></pitch><type>16th</type><notations><technical><string>4</string><fret>0</fret></technical></notations></note>';
+    const withGrace = source.replace('    <note><pitch><step>C</step><octave>3</octave></pitch>', `    ${grace}\n    <note><pitch><step>C</step><octave>3</octave></pitch>`);
+    const preview = readMusicXml(withGrace, 'grace.musicxml');
+    const planned = removeMusicXmlNotes(withGrace, preview.score, { measure: 0, beat: 1, voice: 0 })!;
+    expect(planned.dependencies).toContain('1 grace note');
+    expect(planned.source).not.toContain('<grace');
+    expect(readMusicXml(planned.source, 'grace.musicxml').score.tracks[0].staves[0].bars[0].voices[0].beats[0].isRest).toBe(true);
+
+    const protectedSource = source.replace('<hammer-on type="start">H</hammer-on>', '<tap/>').replace('<hammer-on type="stop"/>', '');
+    const protectedPreview = readMusicXml(protectedSource, 'unknown.musicxml');
+    expect(() => removeMusicXmlNotes(protectedSource, protectedPreview.score, { measure: 0, beat: 0, voice: 0 }))
+      .toThrow('protected tap attachment');
+  });
+
   it.skipIf(!process.env.PLAYTAB_STORED_WELLERMAN)('preserves every local Wellerman three-note chord through two-digit entry', () => {
     const saved = JSON.parse(execFileSync('docker', ['compose', '-f', 'compose.yml', 'exec', '-T', 'web', 'bin/rails', 'runner',
       'print Song.where("title ILIKE ?", "%Wellerman%").first.score.to_json'], { encoding: 'utf8' }));
