@@ -176,7 +176,7 @@ class Tef2PdfVectorRecognizerTest < ActiveSupport::TestCase
     assert_equal [ { measure: 0, position: 0, string: 1, type: "slide-in", label: "/" } ], techniques
   end
 
-  test "normalizes the recognized Whisky header metadata" do
+  test "extracts generic vector header metadata" do
     recognizer = Tef2::PdfVectorRecognizer.new
     lines = [
       { top: 120, text: "WHISKY Berore BREAKFAST" },
@@ -185,7 +185,7 @@ class Tef2PdfVectorRecognizerTest < ActiveSupport::TestCase
     ]
 
     assert_equal(
-      { title: "Whisky Before Breakfast", subtitle: "www.PlayBetterBanjo.com", arranger: "Arranged by Ryan Spearman" },
+      { title: "WHISKY Berore BREAKFAST", subtitle: "(id. PLaYBETTERBANIO.COM", arranger: "ARRANGED BY RYAN SPEARMAN" },
       recognizer.send(:metadata_from_header_lines, lines)
     )
   end
@@ -221,6 +221,21 @@ class Tef2PdfVectorRecognizerTest < ActiveSupport::TestCase
     recognizer.stub(:cluster_glyphs, [ [ digit ], [ { x: 70, y: 115, shape: 0 } ] ]) do
       assert_equal 2, recognizer.send(:capo_for_system, receiver, system, [ 10, 100 ])
     end
+  end
+
+  test "does not attach a tie to two notes at the same onset" do
+    recognizer = Tef2::PdfVectorRecognizer.new
+    system = { top: 100, bottom: 140, x0: 10, x1: 200, lines: [ 100, 110, 120, 130, 140 ] }
+    receiver = Receiver.new([], [ { x: 50, y: 115, width: 10, height: 5 } ], [])
+    notes = [
+      { x: 48, measure: 0, position: 0, string: 1 },
+      { x: 48, measure: 0, position: 0, string: 1 }
+    ]
+    ties = []
+
+    recognizer.send(:ties_for_system, receiver, system, notes, ties)
+
+    assert_empty ties
   end
 
   test "recovers the five vector tuning labels in low-to-high order" do

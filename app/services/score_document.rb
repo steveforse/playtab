@@ -36,7 +36,7 @@ class ScoreDocument
     fail_with("unsupported imported score document") unless document["kind"] == "musicxml"
     fail_with("invalid title") unless document["title"].is_a?(String) && document["title"].strip.length.between?(1, 160)
     fail_with("invalid imported filename") unless document["sourceName"].is_a?(String) && document["sourceName"].strip.length.between?(1, 160)
-    fail_with("unsupported imported score format") unless %w[musicxml tef].include?(document["sourceFormat"])
+    fail_with("unsupported imported score format") unless %w[musicxml tef pdf].include?(document["sourceFormat"])
     source = document["source"]
     fail_with("invalid MusicXML source") unless source.is_a?(String) && source.bytesize <= 2_000_000 && source.match?(%r{<score-partwise(?:\s|>)}) && !source.match?(/<!ENTITY/i)
     begin
