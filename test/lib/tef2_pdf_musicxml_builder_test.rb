@@ -66,6 +66,22 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_equal [ 67, 50, 55, 59, 62 ], Tef2::PdfMusicxmlBuilder::DEFAULT_TUNING
   end
 
+  test "writes stacked fingerings as separate technical annotations" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Stacked fingering",
+      measures: 1,
+      notes: [ { measure: 0, position: 0, string: 0, fret: 0 } ],
+      fingerings: [
+        { measure: 0, position: 0, string: 0, value: "M" },
+        { measure: 0, position: 0, string: 0, value: "I" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_equal [ "TEF fingering M", "TEF fingering I" ],
+      document.xpath("//measure[1]/note//other-technical").map(&:text)
+  end
+
   test "writes tuplet timing metadata on inferred silent triplet slots" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Silent triplet",
@@ -223,6 +239,59 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
     assert_empty document.xpath("//measure[1]/note[1]/notations/slide")
   end
 
+  test "writes a scanned slide-in grace note before its destination" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Grace slide",
+      measures: 1,
+      notes: [ { measure: 0, position: 448, string: 0, fret: 4, grace_note_fret: 3 } ],
+      techniques: [ { measure: 0, position: 448, string: 0, type: "slide-in", label: "/" } ]
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+
+    assert_equal 2, notes.length
+    assert_equal "yes", notes.first.at_xpath("./grace")["slash"]
+    assert_equal "1", notes.first.at_xpath("./notations/technical/string").text
+    assert_equal "3", notes.first.at_xpath("./notations/technical/fret").text
+    assert_equal "4", notes[1].at_xpath("./notations/technical/fret").text
+    assert_equal "TEF slide /", notes[1].at_xpath("./notations/technical/other-technical").text
+  end
+
+  test "groups multiple scanned grace notes before a destination chord" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Grace chord",
+      measures: 1,
+      notes: [
+        { measure: 0, position: 448, string: 0, fret: 2, grace_note_fret: 3 },
+        { measure: 0, position: 448, string: 1, fret: 1, grace_note_fret: 2 }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+
+    assert_equal [ "3", "2", "2", "1" ], notes.map { |note| note.at_xpath("./notations/technical/fret").text }
+    assert_equal [ true, true, false, false ], notes.map { |note| !note.at_xpath("./grace").nil? }
+    assert_empty notes[2].xpath("./chord")
+    assert_equal 1, notes[3].xpath("./chord").length
+  end
+
+  test "writes a scanned grace pull-off on both ends of its slur" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Grace pull-off",
+      measures: 1,
+      notes: [ { measure: 0, position: 256, string: 2, fret: 2, grace_note_fret: 4, grace_note_technique: "pull-off" } ],
+      techniques: []
+    )
+    document = Nokogiri::XML(xml)
+    notes = document.xpath("//measure[1]/note[not(rest)]")
+
+    assert_equal 2, notes.length
+    assert_equal "4", notes.first.at_xpath("./notations/technical/fret").text
+    assert_equal "start", notes.first.at_xpath("./notations/technical/pull-off")["type"]
+    assert_equal "2", notes.last.at_xpath("./notations/technical/fret").text
+    assert_equal "stop", notes.last.at_xpath("./notations/technical/pull-off")["type"]
+  end
+
   test "writes PDF ties on both ends of each tied note" do
     xml = Tef2::PdfMusicxmlBuilder.build(
       title: "Tie",
@@ -240,6 +309,21 @@ class Tef2PdfMusicxmlBuilderTest < ActiveSupport::TestCase
 
     assert_equal 1, document.xpath("//measure[1]/note[1]/notations/tied[@type='start']").length
     assert_equal 1, document.xpath("//measure[1]/note[2]/notations/tied[@type='stop']").length
+  end
+
+  test "drops a self tie before writing MusicXML" do
+    xml = Tef2::PdfMusicxmlBuilder.build(
+      title: "Self tie",
+      measures: 1,
+      notes: [ { measure: 0, position: 0, string: 1, fret: 0 } ],
+      ties: [
+        { measure: 0, position: 0, string: 1, type: "start" },
+        { measure: 0, position: 0, string: 1, type: "stop" }
+      ]
+    )
+    document = Nokogiri::XML(xml)
+
+    assert_empty document.xpath("//measure[1]/note/notations/tied")
   end
 
   test "writes a native PDF capo effect when the recognizer supplies one" do

@@ -1,6 +1,7 @@
 import { Settings, model } from '@coderline/alphatab';
 
-type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; ghost?: boolean; kind: string; type: string; number: string };
+type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; ghost?: boolean; grace?: boolean; kind: string; type: string; number: string };
+type PlaytabBeat = model.Beat & { playtabFingerings?: string[] };
 const children = (node: Element) => Array.from(node.childNodes).filter((n): n is Element => n.nodeType === 1);
 const child = (node: Element, name: string) => children(node).find(n => n.localName === name);
 const value = (node: Element, name: string) => child(node, name)?.textContent ?? '';
@@ -58,10 +59,10 @@ export function extractTechniques(source: string) {
           }
         }
         if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'tef-right-hand' && kind !== 'rake' && kind !== 'tef-strum' && kind !== 'tef-slide' && kind !== 'tef-bend') continue;
-        if (child(item, 'grace')) throw new Error('Grace-note techniques are not supported by this preview yet.');
         markers.push({ bar, tick: onset, staff: Number(value(item, 'staff') || 1) - 1, voice: value(item, 'voice') || '1',
           string: Number(value(technical, 'string')), fret: Number(value(technical, 'fret')),
-          ghost: child(item, 'notehead')?.getAttribute('parentheses') === 'yes', kind, type: tag.getAttribute('type') || '', number });
+          ghost: child(item, 'notehead')?.getAttribute('parentheses') === 'yes', grace: Boolean(child(item, 'grace')),
+          kind, type: tag.getAttribute('type') || '', number });
         technical.removeChild(tag);
       }
     }
@@ -77,10 +78,27 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
   }
   const pending = new Map<string, model.Note>();
   const spans: { from: model.Note; to: model.Note; label: string }[] = [];
+  const appendFingering = (note: model.Note, label: string) => {
+    const beat = note.beat as PlaytabBeat;
+    const existingText = beat.playtabFingerings ? '' : beat.text;
+    const fingerings = beat.playtabFingerings ?? [];
+    if (!fingerings.includes(label)) fingerings.push(label);
+    beat.playtabFingerings = fingerings;
+    beat.text = [existingText, fingerings.join('\n')].filter(Boolean).join('\n');
+    if (label === 'T') note.leftHandFinger = 0;
+  };
+  const beatsInBar = (bar: number) => tab.bars[bar]?.voices.flatMap(v => v.beats) ?? [];
   for (const marker of markers.filter(m => m.staff === staffIndex)) {
-    const notes = tab.bars[marker.bar].voices.flatMap(v => v.beats.filter(b => Math.abs(b.playbackStart - marker.tick) < 0.01).flatMap(b => b.notes))
+    const beats = beatsInBar(marker.bar);
+    const normalBeats = beats.filter(b => Math.abs(b.playbackStart - marker.tick) < 0.01);
+    const targetBeats = marker.grace
+      ? normalBeats.flatMap(beat => beat.graceGroup?.beats ?? [])
+      : normalBeats;
+    const notes = targetBeats.flatMap(b => b.notes)
       .filter(n => n.string === 6 - marker.string && n.fret === marker.fret && (marker.ghost === undefined || n.isGhost === marker.ghost));
-    if (notes.length !== 1) throw new Error('Cannot uniquely locate a MusicXML technique note.');
+    if (notes.length !== 1) {
+      throw new Error(`Cannot uniquely locate a MusicXML technique note (bar ${marker.bar + 1}, tick ${marker.tick}, string ${marker.string}, fret ${marker.fret}, matches ${notes.length}).`);
+    }
     const note = notes[0];
     if (marker.kind === 'fingering') {
       // MusicXML's numeric fretting-hand fingers are not piano finger numbers.
@@ -92,13 +110,16 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       continue;
     }
     if (marker.kind === 'tef-fingering') {
-      if (marker.number === '6' || marker.number === 'T') note.leftHandFinger = 0;
-      else if (/^[IMP]$/.test(marker.number)) note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
+      if (marker.number === '6' || /^[IMT]$/.test(marker.number)) {
+        const label = marker.number === '6' ? 'T' : marker.number;
+        appendFingering(note, label);
+      }
       else note.beat.text = [note.beat.text, `TEF ${marker.number}`].filter(Boolean).join(' ');
       continue;
     }
     if (marker.kind === 'tef-right-hand') {
-      note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
+      const label = marker.number === 'm' ? 'M' : 'T';
+      appendFingering(note, label);
       continue;
     }
     if (marker.kind === 'rake') {
@@ -118,6 +139,7 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
         continue;
       }
       note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
+      (note.beat as model.Beat & { playtabSlideAnnotation?: boolean }).playtabSlideAnnotation = true;
       continue;
     }
     const key = `${marker.voice}:${marker.string}:${marker.kind}:${marker.number}`;

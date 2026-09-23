@@ -16,17 +16,26 @@ const alphaTab = vi.hoisted(() => {
     playerReady = new EventBus<void>();
     playerStateChanged = new EventBus<{ state: number }>();
     playerPositionChanged = new EventBus<{ currentTime: number; endTime: number }>();
+    noteMouseDown = new EventBus<any>();
+    beatMouseDown = new EventBus<any>();
     renderFinished = new EventBus<void>();
     error = new EventBus<{ message?: string }>();
     playbackRangeHighlightChanged = new EventBus<any>();
     boundsLookup = null;
     playbackSpeed = 1;
+    masterVolume = 1;
     isLooping = false;
     metronomeVolume = 0;
     renderScore = vi.fn();
     destroy = vi.fn();
     stop = vi.fn();
+    pause = vi.fn();
+    play = vi.fn();
     playPause = vi.fn();
+    loadMidiForScore = vi.fn();
+    player = { loadMidiFile: vi.fn() };
+    playbackRange: unknown = null;
+    tickPosition = 0;
     downloadMidi = vi.fn();
     print = vi.fn();
     highlightPlaybackRange = vi.fn();
@@ -41,10 +50,17 @@ vi.mock('@coderline/alphatab', () => ({
   PlayerOutputMode: { WebAudioAudioWorklets: 0, WebAudioScriptProcessor: 1 },
 }));
 vi.mock('../../app/frontend/music/alphatab', () => ({ toAlphaTab: alphaTab.toAlphaTab }));
+const audition = vi.hoisted(() => ({
+  writtenPlaybackRange: vi.fn(() => ({ startTick: 0, endTick: 480 })),
+  scoreHasRepeats: vi.fn(() => false),
+  linearAuditionMidi: vi.fn(() => ({ events: [] })),
+}));
+vi.mock('../../app/frontend/editor/audition', () => audition);
 
 import {
   availableSoundFonts,
   createHorizontalPageScrollHandler,
+  createEditingStaffInteractionHandler,
   createPaginatedCursorHandler,
   createPaginatedInteractionHandlers,
   cssLengthInPixels,
@@ -56,6 +72,8 @@ import {
   paginatedPageForY,
   paginatedPoint,
   Player,
+  selectionFromBeat,
+  selectionFromNote,
 } from '../../app/frontend/Player';
 
 Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, value: vi.fn() });
@@ -88,6 +106,204 @@ function exportScore(format: string) {
 }
 
 describe('notation player', () => {
+  it('updates scores on one alphaTab instance until the renderer mode changes', () => {
+    const { rerender } = render(<Player score={demo} />);
+    const nativeApi = alphaTab.FakeAlphaTabApi.latest;
+    expect(nativeApi.renderScore).toHaveBeenCalledTimes(1);
+
+    rerender(<Player score={{ ...demo, title: 'Edited title' }} />);
+    expect(alphaTab.FakeAlphaTabApi.latest).toBe(nativeApi);
+    expect(nativeApi.destroy).not.toHaveBeenCalled();
+    expect(nativeApi.renderScore).toHaveBeenCalledWith(expect.any(Object), undefined, { reuseViewport: true });
+
+    rerender(<Player score={demo} preview={preview} />);
+    const importedApi = alphaTab.FakeAlphaTabApi.latest;
+    expect(importedApi).not.toBe(nativeApi);
+    expect(nativeApi.destroy).toHaveBeenCalledOnce();
+    expect(importedApi.renderScore).toHaveBeenCalledTimes(1);
+
+    const editedPreview = { ...preview, score: { ...preview.score, title: 'Edited imported tune' } };
+    rerender(<Player score={demo} preview={editedPreview} />);
+    expect(alphaTab.FakeAlphaTabApi.latest).toBe(importedApi);
+    expect(importedApi.destroy).not.toHaveBeenCalled();
+    expect(importedApi.renderScore).toHaveBeenLastCalledWith(editedPreview.score, undefined, { reuseViewport: true });
+  });
+
+  it('disables new audition while updating but keeps Pause and Restart operable', () => {
+    const selection = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+      string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
+    const { rerender } = render(<Player score={demo} editing selection={selection} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    act(() => { api.playerReady.emit(); api.renderFinished.emit(); });
+    expect((screen.getByRole('button', { name: 'Play selection' }) as HTMLButtonElement).disabled).toBe(false);
+    rerender(<Player score={{ ...demo, title: 'Changed' }} editing selection={selection} />);
+    expect((screen.getByRole('button', { name: 'Play selection' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Pause' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Restart' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    expect(api.pause).toHaveBeenCalled();
+    expect(api.stop).toHaveBeenCalled();
+    act(() => api.renderFinished.emit());
+    expect((screen.getByRole('button', { name: 'Play selection' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('auditions and clears a written range without replacing normal MIDI when there are no repeats', () => {
+    const selection = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+      string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
+    render(<Player score={demo} editing selection={selection} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    (api as any).score = { tracks: [], masterBars: [] };
+    act(() => api.playerReady.emit());
+    fireEvent.click(screen.getByRole('button', { name: 'Play selection' }));
+    expect(api.playbackRange).toEqual({ startTick: 0, endTick: 480 });
+    expect(api.tickPosition).toBe(0);
+    expect(api.play).toHaveBeenCalledOnce();
+    expect(api.player.loadMidiFile).not.toHaveBeenCalled();
+    expect(screen.getByText('Playing range: M1 E1–M1 E1')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear playback range' }));
+    expect(api.playbackRange).toBeNull();
+    expect(api.loadMidiForScore).not.toHaveBeenCalled();
+  });
+
+  it('loads linear MIDI for repeats, restores full-score MIDI on clear, and retains the range after an edit', () => {
+    audition.scoreHasRepeats.mockReturnValueOnce(true).mockReturnValueOnce(true);
+    const selection = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+      string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
+    const { rerender } = render(<Player score={demo} editing selection={selection} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    (api as any).score = { tracks: [], masterBars: [] };
+    act(() => api.playerReady.emit());
+    fireEvent.click(screen.getByRole('button', { name: 'Play selection' }));
+    expect(api.player.loadMidiFile).toHaveBeenCalledOnce();
+    rerender(<Player score={{ ...demo, title: 'Edited' }} editing selection={selection} />);
+    expect(api.stop).toHaveBeenCalled();
+    act(() => api.renderFinished.emit());
+    expect(api.player.loadMidiFile).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Score updated. Press Play to listen.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear playback range' }));
+    expect(api.loadMidiForScore).toHaveBeenCalledOnce();
+    expect(api.playbackRange).toBeNull();
+  });
+
+  it('projects and removes a blue written-passage overlay independently of note selection', () => {
+    const endpoint = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+      string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
+    const { rerender } = render(<Player score={demo} editing passage={{ start: endpoint, end: endpoint }} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    const beat = { id: 1, playbackStart: 0, playbackDuration: 480 };
+    (api as any).score = { masterBars: [{ start: 0 }], tracks: [{ staves: [{ bars: [{ index: 0, voices: [{ beats: [beat] }] }] }] }] };
+    (api as any).boundsLookup = { findBeat: () => ({ visualBounds: { x: 10, y: 20, w: 25, h: 40 } }) };
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    screen.getByTestId('notation').append(surface);
+    const original = Object.getOwnPropertyDescriptor(window, 'requestAnimationFrame');
+    Object.defineProperty(window, 'requestAnimationFrame', { configurable: true, value: (callback: FrameRequestCallback) => { callback(0); return 0; } });
+    try {
+      act(() => api.renderFinished.emit());
+      expect(surface.querySelector('.editor-passage-selection')).toBeTruthy();
+      rerender(<Player score={demo} editing passage={null} />);
+      expect(surface.querySelector('.editor-passage-selection')).toBeNull();
+    } finally {
+      if (original) Object.defineProperty(window, 'requestAnimationFrame', original);
+    }
+  });
+
+  it('maps note and rest locations to editor identities', () => {
+    const beat = {
+      index: 1, graceType: 0, graceGroup: null, isRest: false,
+      voice: { index: 0, beats: [], bar: { index: 0, staff: { index: 0, track: { index: 0 } } } },
+    } as any;
+    const note = { id: 42, string: 3, fret: 2, beat } as any;
+    expect(selectionFromNote(note)).toMatchObject({ noteId: 42, measure: 1, event: 2, voice: 1, string: 3, fret: 2, kind: 'note' });
+    expect(selectionFromBeat({ ...beat, isRest: true } as any)).toMatchObject({ measure: 1, event: 2, voice: 1, string: null, kind: 'rest' });
+  });
+
+  it('emits note and empty-beat selections only in edit mode', () => {
+    const onSelectionChange = vi.fn();
+    render(<Player score={demo} editing onSelectionChange={onSelectionChange} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    const beat = {
+      index: 0, graceType: 0, graceGroup: null, isRest: true, notes: [],
+      voice: { index: 0, beats: [], bar: { index: 0, staff: { index: 0, track: { index: 0 } } } },
+    } as any;
+    const note = { id: 7, string: 5, fret: 0, beat: { ...beat, isRest: false, notes: [{}] } } as any;
+    act(() => api.noteMouseDown.emit(note));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ noteId: 7, string: 1, measure: 1, event: 1 }));
+    act(() => api.beatMouseDown.emit(beat));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ kind: 'rest', string: null }));
+  });
+
+  it('navigates to the next event while retaining the selected string', () => {
+    const onSelectionChange = vi.fn();
+    const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
+    const voice = { index: 0, beats: [], bar } as any;
+    const beatOne = { index: 0, graceType: 0, graceGroup: null, isRest: false, notes: [], voice } as any;
+    const beatTwo = { index: 1, graceType: 0, graceGroup: null, isRest: false, notes: [], voice } as any;
+    const noteOne = { id: 1, string: 3, fret: 0, beat: beatOne } as any;
+    const noteTwo = { id: 2, string: 3, fret: 2, beat: beatTwo } as any;
+    beatOne.notes = [noteOne]; beatTwo.notes = [noteTwo]; voice.beats = [beatOne, beatTwo];
+    bar.voices = [voice];
+    const scoreModel = { tracks: [{ staves: [{ bars: [bar] }] }] } as any;
+    const initial = selectionFromNote(noteOne);
+    render(<Player score={demo} editing selection={initial} onSelectionChange={onSelectionChange} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    (api as any).score = scoreModel;
+    fireEvent.keyDown(screen.getByTestId('notation'), { key: 'ArrowRight' });
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 2, string: 3, fret: 2 }));
+  });
+
+  it('selects an empty staff string from a point inside a beat', () => {
+    const root = document.createElement('div');
+    const surface = document.createElement('div');
+    surface.className = 'at-surface';
+    vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 200, bottom: 200 } as DOMRect);
+    root.append(surface);
+    const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
+    const voice = { index: 0, bar } as any;
+    const beat = { index: 0, isRest: false, notes: [], voice } as any;
+    const api = new alphaTab.FakeAlphaTabApi();
+    const systemAt = (rowBeat: any, top: number) => ({ bars: [{ bars: [{ beats: [{
+      beat: rowBeat,
+      notes: [
+        { note: { string: 5 }, noteHeadBounds: { y: top - 5, h: 10 } },
+        { note: { string: 1 }, noteHeadBounds: { y: top + 35, h: 10 } },
+      ],
+    }] }] }] });
+    (api as any).boundsLookup = {
+      staffSystems: [systemAt(beat, 0), systemAt({ ...beat, index: 1 }, 200)],
+      getBeatAtPos: vi.fn(() => beat),
+      findBeat: vi.fn(() => ({ beat, visualBounds: { y: 0, h: 40 } })),
+      getNoteAtPos: vi.fn(() => null),
+    };
+    const onSelection = vi.fn();
+    const detach = createEditingStaffInteractionHandler(root, api as any, 'continuous', onSelection);
+    fireEvent.mouseDown(root, { button: 0, clientX: 20, clientY: 20 });
+    expect(onSelection).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 1, string: 3, kind: 'empty' }), false);
+    fireEvent.mouseMove(window, { clientX: 24, clientY: 20, buttons: 1 });
+    expect(onSelection).toHaveBeenCalledTimes(1);
+    fireEvent.mouseMove(window, { clientX: 35, clientY: 20, buttons: 1 });
+    expect(onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, event: 1, string: 3, kind: 'empty' }), true);
+    fireEvent.mouseUp(window);
+    const count = onSelection.mock.calls.length;
+    detach();
+    fireEvent.mouseMove(window, { clientX: 50, clientY: 20, buttons: 1 });
+    expect(onSelection).toHaveBeenCalledTimes(count);
+  });
+
+  it('commits multi-digit frets and delegates deletion keys', () => {
+    const onFretInput = vi.fn();
+    const onSelectionDelete = vi.fn();
+    const initial = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null } as any;
+    render(<Player score={demo} editing selection={initial} onFretInput={onFretInput} onSelectionDelete={onSelectionDelete} />);
+    const notation = screen.getByTestId('notation');
+    fireEvent.keyDown(notation, { key: '1' });
+    fireEvent.keyDown(notation, { key: '2' });
+    expect(onFretInput).toHaveBeenLastCalledWith(initial, 12, expect.any(String));
+    fireEvent.keyDown(notation, { key: 'Backspace' });
+    expect(onSelectionDelete).toHaveBeenCalledWith(initial);
+  });
+
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {
     const api = readyPlayer();
     expect(alphaTab.toAlphaTab).toHaveBeenCalledWith(demo);
@@ -115,14 +331,20 @@ describe('notation player', () => {
     expect(api.playPause).toHaveBeenCalledOnce();
 
     fireEvent.change(screen.getByLabelText('Playback speed'), { target: { value: '1.25' } });
+    fireEvent.change(screen.getByLabelText('Playback volume'), { target: { value: '0.65' } });
     fireEvent.click(screen.getByRole('button', { name: /Loop/ }));
     fireEvent.click(screen.getByRole('button', { name: /Click/ }));
     expect(api.playbackSpeed).toBe(1.25);
+    expect(api.masterVolume).toBe(0.65);
     expect(api.isLooping).toBe(true);
     expect(api.metronomeVolume).toBe(0.6);
 
     act(() => api.error.emit({ message: '' }));
     expect(screen.getByRole('alert').textContent).toContain('Notation or audio could not load.');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry audio' }));
+    expect(api.destroy).toHaveBeenCalledOnce();
+    expect(alphaTab.FakeAlphaTabApi.latest).not.toBe(api);
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('offers paper-size views and horizontal score scrolling', () => {
@@ -329,7 +551,7 @@ describe('notation player', () => {
 
   it('initializes persistent player preferences supplied by the host app', () => {
     const preferences = {
-      speed: 0.75, loop: true, metronome: true, barsPerRow: 2, lyricsColumns: 3,
+      speed: 0.75, volume: 0.6, loop: true, metronome: true, barsPerRow: 2, lyricsColumns: 3,
       scoreView: 'letter-landscape' as const, scrollDirection: 'horizontal' as const,
       showChordDiagrams: true, hideTabClef: true, soundFontId: availableSoundFonts[0].id,
     };
@@ -340,6 +562,7 @@ describe('notation player', () => {
       api.renderFinished.emit();
     });
     expect((screen.getByLabelText('Playback speed') as HTMLInputElement).value).toBe('0.75');
+    expect((screen.getByLabelText('Playback volume') as HTMLInputElement).value).toBe('0.6');
     expect((screen.getByRole('button', { name: /Loop/ }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true');
     expect((screen.getByLabelText('Measures per line') as HTMLSelectElement).value).toBe('2');
     expect((screen.getByLabelText('Score view') as HTMLSelectElement).value).toBe('letter-landscape');
@@ -347,6 +570,7 @@ describe('notation player', () => {
     expect((screen.getByLabelText('Hide TAB labels') as HTMLInputElement).checked).toBe(true);
     expect((api.settings as any).display).toMatchObject({ barsPerRow: 2, layoutMode: 'page' });
     expect(api.playbackSpeed).toBe(0.75);
+    expect(api.masterVolume).toBe(0.6);
     expect(api.isLooping).toBe(true);
     expect(api.metronomeVolume).toBe(0.6);
     expect((api as any).customCursorHandler).toBeTruthy();

@@ -35,6 +35,7 @@ module Tef2
       "h" => "hammer-on",
       "ho" => "hammer-on",
       "hammeron" => "hammer-on",
+      "p" => "pull-off",
       "po" => "pull-off",
       "pulloff" => "pull-off",
       "p/o" => "pull-off",
@@ -213,11 +214,24 @@ module Tef2
           # itself is drawn as paths. Fall back whenever vector geometry is
           # present, not only when the whole page has no text layer.
           require "tef2/pdf_vector_recognizer"
-          return PdfVectorRecognizer.recognize(data, filename: filename)
+          begin
+            return PdfVectorRecognizer.recognize(data, filename: filename)
+          rescue Error
+            # Image-only PDFs can expose incidental path data (for example
+            # image masks) without exposing vector staff geometry. Let the
+            # raster recognizer handle those pages after this probe fails.
+          end
         end
-        raise Error, "No five-line tablature systems were found. This PDF may be a scan or an unsupported layout."
+        require "tef2/pdf_raster_recognizer"
+        return PdfRasterRecognizer.recognize(data, filename: filename)
       end
 
+      build_score(pages, systems, filename, time_signature: time_signature)
+    end
+
+    private
+
+    def build_score(pages, systems, filename, time_signature:, raster: false)
       notes = []
       rests = []
       ties = []
@@ -278,6 +292,9 @@ module Tef2
           events.each_with_index do |event, event_index|
             position = event_positions.fetch(event_index)
             event[:notes].each do |note|
+              next if note[:grace]
+
+              grace_note = grace_note_for(events, event_index, note)
               notes << {
                 measure: measure_index + measure_offset,
                 position: position,
@@ -285,8 +302,19 @@ module Tef2
                 fret: note[:fret],
                 dead: note[:dead],
                 ghost: note[:ghost],
-                tuplet: triplet_event_indexes.include?(event_index)
+                tuplet: triplet_event_indexes.include?(event_index),
+                grace_note_fret: grace_note&.fetch(:fret, nil),
+                grace_note_technique: grace_note&.fetch(:grace_technique, nil),
+                raster_slide: note[:raster_slide],
+                raster_pull_off: note[:raster_pull_off]
               }
+              if grace_note
+                notes.last[:grace_note_fret] = grace_note[:fret]
+                notes.last[:grace_note_technique] = grace_note[:grace_technique]
+              else
+                notes.last.delete(:grace_note_fret)
+                notes.last.delete(:grace_note_technique)
+              end
             end
           end
           ties.concat(ties_for_measure(system, measure_index + measure_offset, events, event_positions, left, right))
@@ -317,10 +345,17 @@ module Tef2
       end
       metadata = metadata(pages, systems)
       timing_name = timing_steps.any? { |step| step <= 64 } ? "sixteenth-note" : "eighth-note"
-      warnings = [
-        "PDF note timing is inferred from horizontal layout and rounded to the nearest #{timing_name} position.",
-        "PDF recognition cannot guarantee hidden TEF duration, voice, repeat, or source metadata fidelity."
-      ]
+      warnings = if raster
+        [
+          "Raster PDF digits and staff geometry were recovered from a page image; verify the frets before publishing.",
+          "Raster PDF note timing is inferred from horizontal layout and rounded to the nearest #{timing_name} position."
+        ]
+      else
+        [
+          "PDF note timing is inferred from horizontal layout and rounded to the nearest #{timing_name} position.",
+          "PDF recognition cannot guarantee hidden TEF duration, voice, repeat, or source metadata fidelity."
+        ]
+      end
       warnings << "The PDF tuning label was not recognized; review the imported tuning." if header_data[:tuning].empty?
       warnings << "No section labels were confidently associated with tablature measures." if metadata[:sections].empty?
       warnings << "No chord names were confidently associated with tablature measures." if metadata[:chords].empty?
@@ -361,7 +396,33 @@ module Tef2
       }
     end
 
-    private
+    def grace_note_for(events, event_index, note)
+      current_event = events[event_index]
+      (event_index - 1).downto(0) do |candidate_index|
+        candidate_event = events[candidate_index]
+        next unless (current_event[:x] - candidate_event[:x]).abs <= 24
+
+        grace = candidate_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
+        return grace if grace
+      end
+
+      # Some scans place a compact slide-in after the final ordinary note.
+      # Only use the forward form when there is no nearby ordinary event that
+      # the grace glyph can belong to; otherwise the normal backward lookup
+      # above should attach it to that following destination.
+      ((event_index + 1)...events.length).each do |candidate_index|
+        candidate_event = events[candidate_index]
+        next unless candidate_event[:x] >= current_event[:x]
+        next if candidate_event[:x] - current_event[:x] > 24
+
+        grace = candidate_event[:notes].find { |candidate| candidate[:grace] && candidate[:string] == note[:string] }
+        next unless grace
+        next if events[(candidate_index + 1)..].to_a.any? { |following_event| following_event[:notes].any? { |candidate| !candidate[:grace] } }
+
+        return grace
+      end
+      nil
+    end
 
     def validate_upload!(data)
       raise Error, "PDF upload is not binary data." unless data.is_a?(String)
@@ -1159,25 +1220,58 @@ module Tef2
       fingerings = []
       systems.each do |system|
         page_texts = pages[system[:page]][:texts]
-        technique_texts = system[:texts] || page_texts
+        technique_texts = system[:texts].to_a
+        technique_texts = page_texts if technique_texts.empty?
         sections.concat(sections_for_system(system, page_texts))
         chords.concat(chords_for_system(system, page_texts))
         endings.concat(endings_for_system(system, page_texts))
-        techniques.concat(techniques_for_system(system, page_texts))
+        endings.concat(raster_endings_for_system(system))
+        techniques.concat(techniques_for_system(system, technique_texts))
         techniques.concat(vector_slide_techniques_for_system(system))
-        fingerings.concat(fingerings_for_system(system, technique_texts))
+        fingerings.concat(fingerings_for_system(system, fingering_texts_for_system(system, technique_texts)))
       end
       {
         sections: deduplicate_metadata(sections),
         chords: deduplicate_metadata(chords),
         chord_diagrams: chord_diagrams_for_pages(pages),
         endings: deduplicate_metadata(endings),
-        repeats: repeat_metadata(systems),
+        repeats: deduplicate_metadata(repeat_metadata(systems) + raster_repeat_start_metadata(systems)),
         lyrics: lyrics(pages),
         techniques: deduplicate_metadata(techniques),
         fingerings: deduplicate_metadata(fingerings),
         tempo: tempo(pages)
       }
+    end
+
+    def raster_endings_for_system(system)
+      system.fetch(:raster_endings, []).each_with_index.map do |ending, index|
+        number = ending.fetch(:number, index + 1).to_s
+        measure = system.fetch(:measure_start, 0) + ending.fetch(:first_measure, 0)
+        { measure: measure, location: "left", number: number, type: "start", confidence: "high" }
+      end
+    end
+
+    def fingering_texts_for_system(system, fallback)
+      return fallback unless system[:raster]
+
+      page_texts = system.fetch(:page_texts, []).filter_map do |item|
+        value = normalize_raster_fingering_label(item[:text])
+        value ? item.merge(text: value) : nil
+      end
+      raster_texts = system.fetch(:raster_fingering_texts, [])
+      return raster_texts if page_texts.empty?
+
+      uncovered = raster_texts.reject do |raster_item|
+        page_texts.any? do |page_item|
+          (page_item[:x] - raster_item[:x]).abs <= 10 && (page_item[:y] - raster_item[:y]).abs <= 5
+        end
+      end
+      first_event = system[:events].to_a.first
+      if first_event && page_texts.any? { |item| item[:text].to_s.strip == "M" && (item[:x] - first_event[:x]).abs <= 8 }
+        stacked_i = raster_texts.find { |item| item[:text] == "I" && (item[:x] - first_event[:x]).abs <= 16 }
+        uncovered << stacked_i if stacked_i && !uncovered.include?(stacked_i)
+      end
+      page_texts + uncovered
     end
 
     def chord_diagrams_for_pages(pages)
@@ -1299,6 +1393,27 @@ module Tef2
             { measure: system.fetch(:measure_start, 0) + boundary - 1, location: "right", direction: "backward", confidence: "high" }
           end
         end
+      end
+    end
+
+    def raster_repeat_start_metadata(systems)
+      systems.flat_map do |system|
+        endings = system.fetch(:raster_endings, [])
+        next [] if endings.empty?
+
+        ending = endings.first
+        boundary = system[:bars].index do |bar|
+          repeat = system.fetch(:repeat_barlines, []).find { |item| (item[:boundary] - bar).abs <= 4.5 }
+          repeat && repeat[:direction] == "backward"
+        end
+        next [] unless boundary == ending[:last_measure] + 1
+
+        [ {
+          measure: system.fetch(:measure_start, 0) + ending[:first_measure],
+          location: "left",
+          direction: "forward",
+          confidence: "high"
+        } ]
       end
     end
 
@@ -1510,7 +1625,8 @@ module Tef2
     def fingerings_for_system(system, texts)
       texts.filter_map do |item|
         # TablEdit prints fingerings as letters (T/I/M/P) as well as digits.
-        next unless item[:text].match?(/\A[1-4TIMP]\z/)
+        value = normalize_fingering_label(item[:text])
+        next unless value
         next if triplet_marker_label?(system, item, system[:events].to_a, system[:bars].first, system[:bars].last)
         next if item[:y].between?(system[:top] - 8, system[:bottom] + 8)
         next unless item[:y].between?(system[:top] - 34, system[:bottom] + 34)
@@ -1520,8 +1636,22 @@ module Tef2
         next unless note
 
         measure, position = measure_position(system, note[:x])
-        { measure: measure, position: position, string: note[:string], value: item[:text].strip, confidence: "medium" }
+        { measure: measure, position: position, string: note[:string], value: value, confidence: "medium" }
       end
+    end
+
+    def normalize_fingering_label(value, raster: false)
+      label = value.to_s.strip
+      return "I" if raster && %w[1 | l].include?(label)
+      return "T" if raster && label == "Hi"
+      return label if label.match?(/\A[1-4TIMP]\z/)
+
+      nil
+    end
+
+    def normalize_raster_fingering_label(value)
+      label = normalize_fingering_label(value, raster: true)
+      label if label&.match?(/\A[ITMP]\z/)
     end
 
     def technique_pair_valid?(technique, notes)

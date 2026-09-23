@@ -7,7 +7,8 @@ module Api
     end
 
     def show
-      render json: current_user.songs.find(params[:id]).as_json(only: [ :id, :title, :score, :source_text ])
+      song = current_user.songs.find(params[:id])
+      render json: song.as_json(only: [ :id, :title, :score, :source_text ]).merge(revision: song.lock_version)
     end
 
     def create
@@ -20,8 +21,11 @@ module Api
     end
 
     def update
-      return render_size_error if request_too_large?
       song = current_user.songs.find(params[:id])
+      return render_size_error if request_too_large?
+      unless params[:revision].to_s.match?(/\A\d+\z/) && params[:revision].to_i == song.lock_version
+        return render json: { error: "Changed in another tab. Reopen the score before saving." }, status: :conflict
+      end
       unless params[:score].is_a?(ActionController::Parameters)
         return render json: { error: "Score must be an object." }, status: :unprocessable_entity
       end
@@ -47,10 +51,12 @@ module Api
 
     def save_song(song, status)
       if song.save
-        render json: { id: song.id, title: song.title }, status: status
+        render json: { id: song.id, title: song.title, revision: song.lock_version }, status: status
       else
         render json: { error: song.errors.full_messages.join(". ") }, status: :unprocessable_entity
       end
+    rescue ActiveRecord::StaleObjectError
+      render json: { error: "Changed in another tab. Reopen the score before saving." }, status: :conflict
     end
   end
 end

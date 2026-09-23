@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_15_044102) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_23_000100) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -25,6 +25,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_15_044102) do
 
   create_table "songs", force: :cascade do |t|
     t.datetime "created_at", null: false
+    t.integer "lock_version", default: 0, null: false
     t.jsonb "score", null: false
     t.text "source_text"
     t.string "title", null: false
