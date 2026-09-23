@@ -7,7 +7,7 @@ import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXm
 import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import type { PlaybackEndpoints } from './editor/audition';
-import type { SourceIdentityMap } from './music/source-identity';
+import { sourceEventCount, type IdentityCarry, type SourceIdentityMap } from './music/source-identity';
 
 type LibraryItem = { id: number; title: string; revision?: number };
 type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: 'note' | 'rest'; dependencies: string[] };
@@ -21,6 +21,20 @@ function withPreviewTitle(preview: MusicXmlPreview, title: string): MusicXmlPrev
 function readImportedDocument(document: ImportedScoreDocument, sourceIdentity?: SourceIdentityMap) {
   return withPreviewTitle(readMusicXml(document.source, document.sourceName, document.sourceFormat,
     sourceIdentity ? { source: document.source, map: sourceIdentity } : undefined), document.title);
+}
+function structuralCarries(preview: MusicXmlPreview, selection: ScoreSelection, carryEvent = true): IdentityCarry[] {
+  const measure = selection.measure - 1;
+  const address = `${measure}:${selection.voice}:${selection.event - 1}`;
+  const measureId = selection.sourceMeasureId ?? preview.sourceIdentity?.measureIds[measure];
+  const eventId = selection.sourceEventId ?? preview.sourceEventIdByAddress?.get(address);
+  return [
+    ...(measureId ? [{ kind: 'measure' as const, id: measureId, address: String(measure) }] : []),
+    ...(carryEvent && eventId ? [{ kind: 'event' as const, id: eventId, address }] : []),
+  ];
+}
+function refreshStructuralSelection(selection: ScoreSelection, preview: MusicXmlPreview) {
+  selection.sourceMeasureId = preview.sourceIdentity?.measureIds[selection.measure - 1];
+  selection.sourceEventId = preview.sourceEventIdByAddress?.get(`${selection.measure - 1}:${selection.voice}:${selection.event - 1}`);
 }
 async function apiRequest(path: string, options?: RequestInit) {
   const response = await fetch(path, { ...options, headers: {
@@ -242,8 +256,8 @@ export function App() {
         }
         editImported(note);
         const nextSource = applyMusicXmlEdits(preview.source, state, [note.index]);
-        const carries = note.sourceIdentity?.address && preview.sourceIdentity
-          ? [{ id: note.sourceIdentity.id, address: movedToString === undefined
+        const carries: IdentityCarry[] = note.sourceIdentity?.address && preview.sourceIdentity
+          ? [...structuralCarries(preview, selectionToEdit), { id: note.sourceIdentity.id, address: movedToString === undefined
             ? note.sourceIdentity.address
             : `${note.sourceIdentity.address.slice(0, note.sourceIdentity.address.lastIndexOf(':') + 1)}${movedToString}` }]
           : [];
@@ -254,6 +268,7 @@ export function App() {
           const location = nextPreview.sourceLocationById?.get(note.sourceIdentity.id);
           if (location) Object.assign(afterSelection, location);
         }
+        refreshStructuralSelection(afterSelection, nextPreview);
         remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: afterSelection, sourceIdentity: nextPreview.sourceIdentity }, description, group);
         setPreview(nextPreview);
         setError('');
@@ -310,6 +325,7 @@ export function App() {
         const nextPreview = withPreviewTitle(readMusicXml(nextSource, filename, 'musicxml',
           promoted.sourceIdentity ? { source: promoted.source, map: promoted.sourceIdentity } : undefined), score.title);
         after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.event}:${after.voice}:${after.string}:${fret}`);
+        refreshStructuralSelection(after, nextPreview);
         remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Promote score and change fret to ${fret}`);
         setPreview(nextPreview); setSelection(after); setError('');
       } catch (error) { setError((error as Error).message); }
@@ -322,8 +338,10 @@ export function App() {
           voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
         });
         const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
-          preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity } : undefined), preview.score.title);
+          preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity,
+            carries: structuralCarries(preview, selectionToEdit) } : undefined), preview.score.title);
         after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.event}:${after.voice}:${after.string}:${fret}`);
+        refreshStructuralSelection(after, nextPreview);
         remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Add fret ${fret}`, group);
         setPreview(nextPreview);
         setSelection(after);
@@ -357,12 +375,16 @@ export function App() {
     try {
       const beat = preview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats[selectionToDelete.event - 1];
       const lastMember = mode === 'rest' || beat?.notes.length === 1;
+      const carryEvent = sourceEventCount(preview.source, selectionToDelete.measure - 1, selectionToDelete.voice)
+        === sourceEventCount(nextSource, selectionToDelete.measure - 1, selectionToDelete.voice);
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
-        preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity } : undefined), preview.score.title);
+        preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity,
+          carries: structuralCarries(preview, selectionToDelete, carryEvent) } : undefined), preview.score.title);
       const nextBeats = nextPreview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats ?? [];
       const matchingEvent = beat ? nextBeats.findIndex(candidate => !candidate.graceType && candidate.playbackStart === beat.playbackStart) : -1;
       const after: ScoreSelection = { ...selectionToDelete, event: matchingEvent < 0 ? selectionToDelete.event : matchingEvent + 1,
         kind: lastMember ? 'rest' : 'empty', noteId: null, fret: null, sourceId: undefined };
+      refreshStructuralSelection(after, nextPreview);
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, mode === 'rest' ? 'Make rest' : 'Remove note');
       setPreview(nextPreview);
       setSelection(after);
@@ -665,7 +687,11 @@ export function App() {
           editing={editMode}
           selection={selection}
           passage={passage}
-          onSelectionChange={next => setSelection(next ? { ...next, sourceId: next.noteId === null ? undefined : preview?.sourceIdByModelNoteId?.get(next.noteId) } : null)}
+          onSelectionChange={next => setSelection(next ? { ...next,
+            sourceId: next.noteId === null ? undefined : preview?.sourceIdByModelNoteId?.get(next.noteId),
+            sourceMeasureId: preview?.sourceIdentity?.measureIds[next.measure - 1],
+            sourceEventId: preview?.sourceEventIdByAddress?.get(`${next.measure - 1}:${next.voice}:${next.event - 1}`),
+          } : null)}
           onPassageChange={setPassage}
           onFretInput={updateSelectionFret}
           onSelectionDelete={requestRemoval}

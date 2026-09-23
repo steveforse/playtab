@@ -44,6 +44,8 @@ export type ScoreSelection = {
   graceGroupId: string | null;
   mappingReason?: string;
   sourceId?: string;
+  sourceEventId?: string;
+  sourceMeasureId?: string;
 };
 
 type SelectionTarget = { selection: ScoreSelection; beat: model.Beat; note: model.Note | null };

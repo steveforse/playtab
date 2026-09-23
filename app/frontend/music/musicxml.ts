@@ -1,7 +1,7 @@
 import { importer, model } from '@coderline/alphatab';
 import { extractTechniques, applyTechniques } from './musicxml-techniques';
 import type { ImportedScoreDocument, Score } from './score';
-import { createSourceIdentityMap, reconcileSourceIdentityMap, type IdentityCarry, type SourceIdentityMap } from './source-identity';
+import { createSourceIdentityMap, reconcileSourceIdentityMap, sourceEventIdsByAddress, type IdentityCarry, type SourceIdentityMap } from './source-identity';
 import { musicXmlEditorState } from './musicxml-editor';
 
 export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
@@ -21,6 +21,7 @@ export type MusicXmlPreview = {
   sourceIdByModelNoteId?: Map<number, string>;
   sourceLocationById?: Map<string, { measure: number; event: number; voice: number; string: number; fret: number }>;
   sourceIdByLocation?: Map<string, string>;
+  sourceEventIdByAddress?: Map<string, string>;
 };
 
 type ChordMetadata = { measure: number; position: number; name: string; strings: number[]; firstFret: number };
@@ -185,6 +186,7 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   const sourceIdentity = previous
     ? reconcileSourceIdentityMap(previous.source, previous.map, source, previous.carries)
     : createSourceIdentityMap(source);
+  const sourceEventIdByAddress = sourceEventIdsByAddress(source, sourceIdentity);
   const editorNotes = musicXmlEditorState(source, score, sourceIdentity).notes;
   const sourceIdByModelNoteId = new Map<number, string>();
   const sourceLocationById = new Map<string, { measure: number; event: number; voice: number; string: number; fret: number }>();
@@ -201,7 +203,7 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   return {
     id: previewId(), source, filename, sourceFormat, score, tuningLabel,
     lyricsSection: techniques.lyricsSection, timedLyrics: timedLyricEntries, chordDiagrams: diagramEntries,
-    sourceIdentity, sourceIdByModelNoteId, sourceLocationById, sourceIdByLocation,
+    sourceIdentity, sourceIdByModelNoteId, sourceLocationById, sourceIdByLocation, sourceEventIdByAddress,
   };
 }
 
