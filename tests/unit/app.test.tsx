@@ -6,7 +6,7 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn() }));
+const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })) }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
@@ -29,7 +29,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -60,7 +60,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); inspectMusicXmlDuration.mockReset(); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -132,6 +132,28 @@ describe('workspace application', () => {
     await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
     const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(sent.score).toMatchObject({ version: 2, kind: 'musicxml', source: '<score-partwise><edited/></score-partwise>' });
+  });
+
+  it('promotes a native rhythm edit as one undoable MusicXML change', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    promoteNativeScore.mockReturnValue('<score-partwise/>');
+    changeMusicXmlDuration.mockReturnValue('<score-partwise><rhythm/></score-partwise>');
+    readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename,
+      score: { title: score.title, masterBars: [{}] } }));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: '1/16 duration' }));
+    expect(changeMusicXmlDuration).toHaveBeenCalledWith('<score-partwise/>', expect.anything(),
+      { measure: 0, beat: 0, voice: 0 }, 16, false);
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    changeMusicXmlDuration.mockImplementation(() => { throw new Error('Not enough rest space in this measure.'); });
+    fireEvent.click(screen.getByRole('button', { name: '1/2 duration' }));
+    expect(screen.getByRole('alert').textContent).toContain('Not enough rest space');
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('updates the same record with a revision and keeps a newer edit unsaved while the request finishes', async () => {
