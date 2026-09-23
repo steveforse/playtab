@@ -643,9 +643,9 @@ describe('workspace application', () => {
   });
 
   it('handles imported note corrections, empty selections, and failed restores', async () => {
-    const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
+    const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>', sourceIdByModelNoteId: new Map([[1, 'n1']]) };
     readMusicXml.mockReturnValue(imported);
-    musicXmlEditorState.mockReturnValue({ notes: [{ index: 0, measure: 0, beat: 0, string: 3, fret: 0, technique: 'none' }] });
+    musicXmlEditorState.mockReturnValue({ notes: [{ index: 0, measure: 0, beat: 0, voice: 0, string: 3, fret: 0, technique: 'none', sourceIdentity: { id: 'n1', address: '0:1:0:main:main:3' } }] });
     applyMusicXmlEdits.mockReturnValue('<edited/>');
     addMusicXmlNote.mockReturnValue('<added/>');
     const fetchMock = vi.fn().mockResolvedValue(response([]));
@@ -668,5 +668,22 @@ describe('workspace application', () => {
     fireEvent.keyDown(document, { key: 'z', ctrlKey: true });
     expect(applyMusicXmlEdits).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+  });
+
+  it('rejects a rendered imported note without a unique source identity', async () => {
+    const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
+    readMusicXml.mockReturnValue(imported);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', imported.source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByRole('alert').textContent).toContain('no unique source identity');
+    expect(applyMusicXmlEdits).not.toHaveBeenCalled();
   });
 });

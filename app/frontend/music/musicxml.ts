@@ -1,6 +1,8 @@
 import { importer, model } from '@coderline/alphatab';
 import { extractTechniques, applyTechniques } from './musicxml-techniques';
 import type { ImportedScoreDocument, Score } from './score';
+import { createSourceIdentityMap, reconcileSourceIdentityMap, type IdentityCarry, type SourceIdentityMap } from './source-identity';
+import { musicXmlEditorState } from './musicxml-editor';
 
 export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
 export type TimedLyric = { measure: number; beat: number; text: string };
@@ -15,6 +17,10 @@ export type MusicXmlPreview = {
   lyricsSection: string | null;
   timedLyrics: TimedLyric[];
   chordDiagrams: ChordDiagramPreview[];
+  sourceIdentity?: SourceIdentityMap;
+  sourceIdByModelNoteId?: Map<number, string>;
+  sourceLocationById?: Map<string, { measure: number; event: number; voice: number; string: number; fret: number }>;
+  sourceIdByLocation?: Map<string, string>;
 };
 
 type ChordMetadata = { measure: number; position: number; name: string; strings: number[]; firstFret: number };
@@ -143,7 +149,7 @@ function previewId() {
 }
 
 // Preview keeps the imported model separate from the deliberately limited v1 document.
-export function readMusicXml(source: string, filename: string, sourceFormat: MusicXmlSourceFormat = 'musicxml'): MusicXmlPreview {
+export function readMusicXml(source: string, filename: string, sourceFormat: MusicXmlSourceFormat = 'musicxml', previous?: { source: string; map: SourceIdentityMap; carries?: IdentityCarry[] }): MusicXmlPreview {
   if (new TextEncoder().encode(source).length > 2_000_000) throw new Error('MusicXML preview is limited to 2 MB.');
   if (/<!ENTITY/i.test(source)) throw new Error('XML entity declarations are not supported.');
   if (!/<score-partwise[\s>]/.test(source)) throw new Error('Choose an uncompressed partwise MusicXML file.');
@@ -176,11 +182,26 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   const timedLyricEntries = timedLyrics(tab);
   const diagramEntries = chordDiagrams(tab);
   configureChordDiagrams(score, false);
+  const sourceIdentity = previous
+    ? reconcileSourceIdentityMap(previous.source, previous.map, source, previous.carries)
+    : createSourceIdentityMap(source);
+  const editorNotes = musicXmlEditorState(source, score, sourceIdentity).notes;
+  const sourceIdByModelNoteId = new Map<number, string>();
+  const sourceLocationById = new Map<string, { measure: number; event: number; voice: number; string: number; fret: number }>();
+  const sourceIdByLocation = new Map<string, string>();
+  editorNotes.forEach(note => {
+    if (!note.sourceIdentity || note.modelNoteId === undefined) return;
+    sourceIdByModelNoteId.set(note.modelNoteId, note.sourceIdentity.id);
+    const location = { measure: note.measure + 1, event: note.beat + 1, voice: (note.voice ?? 0) + 1, string: note.string, fret: note.fret };
+    sourceLocationById.set(note.sourceIdentity.id, location);
+    sourceIdByLocation.set(`${location.measure}:${location.event}:${location.voice}:${location.string}:${location.fret}`, note.sourceIdentity.id);
+  });
   const names = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
   const tuningLabel = [...tab.tuning].reverse().map((n, i) => i === 0 ? names[n % 12].toLowerCase() : names[n % 12]).join(' ');
   return {
     id: previewId(), source, filename, sourceFormat, score, tuningLabel,
     lyricsSection: techniques.lyricsSection, timedLyrics: timedLyricEntries, chordDiagrams: diagramEntries,
+    sourceIdentity, sourceIdByModelNoteId, sourceLocationById, sourceIdByLocation,
   };
 }
 

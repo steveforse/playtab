@@ -43,6 +43,7 @@ export type ScoreSelection = {
   graceIndex: number | null;
   graceGroupId: string | null;
   mappingReason?: string;
+  sourceId?: string;
 };
 
 type SelectionTarget = { selection: ScoreSelection; beat: model.Beat; note: model.Note | null };
