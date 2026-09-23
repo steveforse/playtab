@@ -305,11 +305,13 @@ export function App() {
               <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => setSelection(current => current ? { ...current, string: event.target.value ? Number(event.target.value) : null, noteId: null } : current)}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
             </div>
             {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
-            {selection.kind === 'note' && selection.string !== null && <div className="editor-note-tools">
-              <label>Fret<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => setFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); updateSelectionFret(selection, Number(fretDraft)); } }} /></label>
-              <button type="button" onClick={() => updateSelectionFret(selection, Number(fretDraft))}>Apply</button>
-              <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
-              <button type="button" onClick={moveSelectedString} disabled={!moveString || Number(moveString) === selection.string}>Move</button>
+            {selection.string !== null && <div className="editor-note-tools">
+              <label>{selection.kind === 'note' ? 'Fret' : 'Add fret'}<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => setFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); updateSelectionFret(selection, Number(fretDraft)); } }} /></label>
+              <button type="button" onClick={() => updateSelectionFret(selection, Number(fretDraft))}>{selection.kind === 'note' ? 'Apply' : 'Add note'}</button>
+              {selection.kind === 'note' && <>
+                <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
+                <button type="button" onClick={moveSelectedString} disabled={!moveString || Number(moveString) === selection.string}>Move</button>
+              </>}
             </div>}
           </>}
         </div>

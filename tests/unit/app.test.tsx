@@ -10,7 +10,10 @@ const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits } = vi.hoisted(() 
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
-    {editing && <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>}
+    {editing && <>
+      <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>
+      <button type="button" data-testid="choose-empty" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Choose empty</button>
+    </>}
   </>,
   defaultPlayerPreferences: () => ({
     speed: 1, volume: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
@@ -253,6 +256,21 @@ describe('workspace application', () => {
     expect(screen.getByText('String 2')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Undo', exact: true }));
     expect(screen.getByText('Fret 4')).toBeTruthy();
+  });
+
+  it('adds a native note at an empty staff position and replaces it without changing the chord', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect(screen.getByText('String 2')).toBeTruthy();
+    expect(screen.getByText('Fret 1')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByText('Fret 2')).toBeTruthy();
   });
 
   it('handles imported note corrections, empty selections, and failed restores', async () => {
