@@ -31,7 +31,7 @@ gem "image_processing", "~> 2.1"
 gem "ruby-vips", "~> 2.0"
 gem "nokogiri", "~> 1.18"
 gem "pdf-reader", "~> 2.16"
-gem "ttfunk", "~> 1.7"
+gem "ttfunk", "~> 1.8"
 
 group :development, :test do
   # Measures Ruby line coverage and enforces the project-wide threshold in CI.
