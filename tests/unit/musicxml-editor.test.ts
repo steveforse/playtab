@@ -451,4 +451,36 @@ describe('MusicXML score editing', () => {
     expect(edited).toContain('<grace slash="yes"/><pitch><step>D</step><alter>1</alter><octave>3</octave></pitch>');
     expect(readMusicXml(edited, 'grace.xml').score.tracks[0].staves[0].bars[0].voices[0].beats.some(beat => beat.graceType && beat.notes.some(note => note.fret === 3))).toBe(true);
   });
+
+  it('loads the synthetic rich source with paired voices and a grace chord', () => {
+    const source = fs.readFileSync('tests/fixtures/editor-rich.musicxml', 'utf8');
+    const preview = readMusicXml(source, 'rich.musicxml');
+    expect(preview.score.masterBars).toHaveLength(2);
+    expect(preview.score.masterBars.map(bar => [bar.timeSignatureNumerator, bar.timeSignatureDenominator])).toEqual([[4, 4], [3, 4]]);
+    expect(preview.score.masterBars[0].isRepeatStart).toBe(true);
+    expect(preview.score.masterBars[1].repeatCount).toBeGreaterThan(0);
+    expect(preview.timedLyrics.some(lyric => lyric.text === 'Low')).toBe(true);
+    const state = musicXmlEditorState(source, preview.score);
+    expect(state.annotations).toEqual(['Section A', 'Section B']);
+    expect(state.chords).toContain('C');
+    expect(state.notes.filter(note => note.sourceIdentity?.graceGroup === 0)).toHaveLength(2);
+    expect(applyMusicXmlEdits(source, state)).toBe(source);
+    const target = state.notes.find(note => note.measure === 0 && note.string === 4 && note.fret === 2)!;
+    expect(target.sourceIdentity).toMatchObject({ voice: '2', graceGroup: null });
+    target.fret = 3;
+    const edited = applyMusicXmlEdits(source, state, [target.index]);
+    const before = new DOMParser().parseFromString(source, 'application/xml');
+    const after = new DOMParser().parseFromString(edited, 'application/xml');
+    const serialize = (document: typeof before, name: string) => Array.from(document.getElementsByTagName(name)).map(node => new XMLSerializer().serializeToString(node));
+    for (const name of ['harmony', 'direction', 'staff-details', 'barline', 'lyric']) expect(serialize(after, name)).toEqual(serialize(before, name));
+    const beforeNotes = serialize(before, 'note');
+    const afterNotes = serialize(after, 'note');
+    expect(afterNotes).toHaveLength(beforeNotes.length);
+    expect(afterNotes.flatMap((note, index) => note === beforeNotes[index] ? [] : [index])).toHaveLength(2);
+    expect(edited).toContain('<opaque:keep data="unchanged"><opaque:nested>source detail</opaque:nested></opaque:keep>');
+    expect((edited.match(/<pitch><step>F<\/step><octave>3<\/octave><\/pitch>/g) ?? [])).toHaveLength(2);
+    const next = readMusicXml(edited, 'rich.musicxml');
+    expect(next.score.masterBars).toHaveLength(2);
+    expect(musicXmlEditorState(edited, next.score).notes.find(note => note.measure === 0 && note.string === 4 && note.fret === 3)).toBeTruthy();
+  });
 });
