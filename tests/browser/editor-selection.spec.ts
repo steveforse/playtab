@@ -166,6 +166,7 @@ test('edits a private multi-row import through direct pointer and keyboard input
 });
 
 test('edits paired notation in a saved TEF library document and reopens the correction', async ({ page }) => {
+  let revision = 0;
   let saved = {
     version: 2, kind: 'musicxml', title: 'Paired staff exercise', sourceFormat: 'tef',
     sourceName: 'paired.tef', source: fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8'), warnings: [],
@@ -178,7 +179,14 @@ test('edits paired notation in a saved TEF library document and reopens the corr
       await route.fulfill({ json: { id: 42, title: saved.title } });
     }
   });
-  await page.route('**/api/songs/42', route => route.fulfill({ json: { id: 42, title: saved.title, score: saved, source_text: null } }));
+  await page.route('**/api/songs/42', route => {
+    if (route.request().method() === 'PATCH') {
+      saved = route.request().postDataJSON().score;
+      revision++;
+      return route.fulfill({ json: { id: 42, title: saved.title, revision } });
+    }
+    return route.fulfill({ json: { id: 42, title: saved.title, score: saved, source_text: null, revision } });
+  });
   await page.goto('/');
   await page.getByRole('button', { name: 'Paired staff exercise', exact: true }).click();
   await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible();
@@ -189,7 +197,7 @@ test('edits paired notation in a saved TEF library document and reopens the corr
   await page.keyboard.press('7');
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^7$/ })).toHaveCount(1);
-  await page.getByRole('button', { name: /Save to library/ }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
   await page.reload();
   await page.getByRole('button', { name: 'Paired staff exercise', exact: true }).click();
   await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^7$/ })).toHaveCount(1);

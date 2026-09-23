@@ -109,6 +109,96 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close import' }));
   });
 
+  it('updates the same record with a revision and keeps a newer edit unsaved while the request finishes', async () => {
+    let finishSave!: (value: ReturnType<typeof response>) => void;
+    const pendingSave = new Promise<ReturnType<typeof response>>(resolve => { finishSave = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 7, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, score, source_text: null, revision: 2 }))
+      .mockReturnValueOnce(pendingSave)
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, revision: 4 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/songs/7', expect.objectContaining({ method: 'PATCH' }));
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+    const firstSave = JSON.parse(fetchMock.mock.lastCall![1].body);
+    expect(firstSave.revision).toBe(2);
+    expect(firstSave.score.measures[0].beats[0].notes[0].fret).toBe(4);
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getAllByText('Saving…')).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+    finishSave(response({ id: 7, title: score.title, revision: 3 }));
+    await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
+    expect(JSON.parse(fetchMock.mock.lastCall![1].body).revision).toBe(3);
+    expect(fetchMock.mock.calls.filter(call => call[0] === '/api/songs/7' && call[1]?.method === 'PATCH')).toHaveLength(2);
+  });
+
+  it('saves a titled copy under a new id and retries a failed update without losing the draft', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 7, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, score, source_text: null, revision: 1 }))
+      .mockResolvedValueOnce(response({ id: 8, title: 'Second tune', revision: 0 }))
+      .mockResolvedValueOnce(response({ error: 'Cannot save right now.' }, false, 422))
+      .mockResolvedValueOnce(response({ id: 8, title: 'Second tune', revision: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByText('More'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save a copy…' }));
+    expect((screen.getByLabelText('Copy title') as HTMLInputElement).value).toContain('— copy');
+    fireEvent.change(screen.getByLabelText('Copy title'), { target: { value: 'Second tune' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save copy' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Second tune' })).toBeTruthy());
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/songs', expect.objectContaining({ method: 'POST' }));
+    expect(screen.getByRole('button', { name: score.title })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.getByText('Could not save')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/songs/8', expect.objectContaining({ method: 'PATCH' }));
+  });
+
+  it('retries a failed copy as a new record without updating the original', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 7, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, score, source_text: null, revision: 1 }))
+      .mockResolvedValueOnce(response({ error: 'Temporary failure.' }, false, 500))
+      .mockResolvedValueOnce(response({ id: 8, title: 'Copy after retry', revision: 0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByText('More'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save a copy…' }));
+    fireEvent.change(screen.getByLabelText('Copy title'), { target: { value: 'Copy after retry' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save copy' }));
+    await waitFor(() => expect(screen.getByText('Could not save')).toBeTruthy());
+    expect(screen.getByRole('heading', { name: score.title })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Copy after retry' })).toBeTruthy());
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(0);
+  });
+
   it('opens stored native and imported scores and reports load failures', async () => {
     const native = { id: 1, title: 'Native', score, source_text: 'D' };
     const imported = { id: 2, title: 'Imported', score: { version: 2, kind: 'musicxml', title: 'Imported', sourceName: 'i.xml', sourceFormat: 'musicxml', source: preview.source, warnings: ['warning'] }, source_text: null };
@@ -124,7 +214,7 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Native' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: demo.title })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Imported' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported' })).toBeTruthy());
     expect(screen.getByText('warning')).toBeTruthy();
     expect(screen.queryByLabelText('Score editor')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Native' }));
@@ -190,7 +280,7 @@ describe('workspace application', () => {
     await waitFor(() => expect(screen.getAllByRole('alert').map(alert => alert.textContent).some(text => text?.includes('five tablature lines'))).toBe(true));
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => { throw new Error('not json'); } });
     fireEvent.click(screen.getByRole('button', { name: /Save to library/ }));
-    await waitFor(() => expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toContain('Request failed (500).'));
+    await waitFor(() => expect(screen.getAllByRole('alert').some(alert => alert.textContent?.includes('Request failed (500).'))).toBe(true));
   });
 
   it('signs out the current account', async () => {

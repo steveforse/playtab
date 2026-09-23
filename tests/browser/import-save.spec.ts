@@ -28,6 +28,6 @@ test('saves and reopens an imported MusicXML document', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Technique exercise' }).click();
   await expect(page.getByRole('heading', { name: 'Technique exercise' })).toBeVisible();
-  await expect(page.getByText('1 measures')).toBeVisible();
+  await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible();
   await expect(page.getByRole('button', { name: '✓ Saved' })).toBeDisabled();
 });

@@ -43,7 +43,7 @@ for (const imported of [false, true]) {
 }
 
 test('ED-05 keeps history through saves and tracks the saved baseline', async ({ page }) => {
-  await page.route('**/api/songs', route => route.fulfill({ json: route.request().method() === 'GET' ? [] : { id: 42, title: 'Saved demo' } }));
+  await page.route('**/api/songs', route => route.fulfill({ json: route.request().method() === 'GET' ? [] : { id: 42, title: 'Saved demo', revision: 0 } }));
   await page.goto('/');
   const notation = page.getByTestId('notation');
   await expect(notation.locator('svg').first()).toBeVisible();
@@ -55,7 +55,7 @@ test('ED-05 keeps history through saves and tracks the saved baseline', async ({
   await page.getByRole('button', { name: /Save to library/ }).click();
   await expect(page.getByRole('button', { name: '✓ Saved' })).toBeDisabled();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(page.getByRole('button', { name: /Save to library/ })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Save changes' })).toBeEnabled();
   await page.keyboard.press('Control+Shift+z');
   await expect(page.getByRole('button', { name: '✓ Saved' })).toBeDisabled();
 });
