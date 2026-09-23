@@ -4,7 +4,7 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, inspectMusicXmlDuration, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, insertMusicXmlEvent, inspectMusicXmlDuration, musicXmlEditorState, removeMusicXmlNotes, type InsertEventOptions } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -98,6 +98,12 @@ export function App() {
   const [fretDraft, setFretDraft] = useState('');
   const [moveString, setMoveString] = useState('');
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
+  const [insertOpen, setInsertOpen] = useState(false);
+  const [insertDraft, setInsertDraft] = useState<Pick<InsertEventOptions, 'placement' | 'kind' | 'denominator' | 'dotted' | 'string' | 'fret'>>({
+    placement: 'after', kind: 'rest', denominator: 4, dotted: false, string: 1, fret: 0,
+  });
+  const insertDialog = useRef<HTMLDialogElement>(null);
+  const insertOpener = useRef<HTMLElement | null>(null);
   const removalDialog = useRef<HTMLDialogElement>(null);
   const copyDialog = useRef<HTMLDialogElement>(null);
   const leaveDialog = useRef<HTMLDialogElement>(null);
@@ -182,6 +188,15 @@ export function App() {
       else documentRefocus();
     }
   }, [pendingRemoval]);
+  useEffect(() => {
+    const dialog = insertDialog.current;
+    if (!dialog) return;
+    if (insertOpen && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-insert-first]')?.focus(); }
+    else if (!insertOpen && dialog.open) {
+      dialog.close();
+      if (insertOpener.current?.isConnected) insertOpener.current.focus({ preventScroll: true });
+    }
+  }, [insertOpen]);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
     session.current++;
     const snapshot = { document: next, original, diagnostics, id, revision };
@@ -383,6 +398,7 @@ export function App() {
   }
   function changeSelectedDuration(denominator: DurationDenominator, dotted: boolean) {
     if (!selection) return;
+    if (pendingFret) { setError('Apply the pending fret before changing this event.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
       const nextSource = changeMusicXmlDuration(base.source, base.score,
@@ -395,6 +411,37 @@ export function App() {
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
         sourceIdentity: nextPreview.sourceIdentity }, `${dotted ? 'Dotted ' : ''}${denominator === 1 ? 'whole' : `1/${denominator}`} duration`);
       setPreview(nextPreview); setSelection(after); setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function openInsertEvent(opener: HTMLElement) {
+    if (!selection) return;
+    if (pendingFret) { setError('Apply the pending fret before inserting an event.'); return; }
+    insertOpener.current = opener;
+    setError('');
+    setInsertDraft({ placement: 'after', kind: 'rest', denominator: 4, dotted: false,
+      string: selection.string ?? 1, fret: 0 });
+    setInsertOpen(true);
+  }
+  function confirmInsertEvent() {
+    if (!selection) return;
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const position = { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 };
+      const nextSource = insertMusicXmlEvent(base.source, base.score, { ...position, ...insertDraft });
+      const eventId = selection.sourceEventId ?? base.sourceEventIdByAddress?.get(`${position.measure}:${selection.voice}:${position.beat}`);
+      const carries: IdentityCarry[] = [
+        ...structuralCarries(base, selection, false),
+        ...(eventId ? [{ kind: 'event' as const, id: eventId,
+          address: `${position.measure}:${selection.voice}:${position.beat + (insertDraft.placement === 'before' ? 1 : 0)}` }] : []),
+      ];
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries } : undefined), base.score.title);
+      const insertedEvent = selection.event + (insertDraft.placement === 'after' ? 1 : 0);
+      const after = selectionAtPosition(selection, score, nextPreview, { event: insertedEvent,
+        string: insertDraft.kind === 'note' ? insertDraft.string! : selection.string });
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
+        sourceIdentity: nextPreview.sourceIdentity }, `Insert ${insertDraft.kind} ${insertDraft.placement} event`);
+      setPreview(nextPreview); setSelection(after); setInsertOpen(false); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
   function moveSelectedString() {
@@ -715,6 +762,7 @@ export function App() {
                 onClick={() => changeSelectedDuration(selectedRhythm.denominator!, selectedRhythm.dots !== 1)}>Dotted</button>
               <button type="button" className="editor-split-rest" disabled={!selectedRhythm.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0}
                 onClick={() => changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false)}>Split rest</button>
+              <button type="button" className="editor-insert-event" onClick={event => openInsertEvent(event.currentTarget)}>Insert event…</button>
               {selectedRhythm.reason && <p className="editor-rhythm-reason">{selectedRhythm.reason}</p>}
             </div>}
             <details className="editor-passage-tools"><summary>Select passage</summary>
@@ -766,6 +814,22 @@ export function App() {
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
     </main>
+    <dialog ref={insertDialog} className="insert-dialog" aria-label="Insert event" onCancel={event => { event.preventDefault(); setInsertOpen(false); }}>
+      <h2>Insert event</h2>
+      <p>Following events move within this voice and measure. Trailing rests make room.</p>
+      {insertOpen && error && <p className="alert" role="alert">{error}</p>}
+      <div className="insert-dialog-fields">
+        <label>Position<select data-insert-first value={insertDraft.placement} onChange={event => setInsertDraft(current => ({ ...current, placement: event.target.value as 'before' | 'after' }))}><option value="before">Before</option><option value="after">After</option></select></label>
+        <label>Type<select value={insertDraft.kind} onChange={event => setInsertDraft(current => ({ ...current, kind: event.target.value as 'note' | 'rest' }))}><option value="note">Note</option><option value="rest">Rest</option></select></label>
+        <label>Duration<select value={insertDraft.denominator} onChange={event => setInsertDraft(current => ({ ...current, denominator: Number(event.target.value) as DurationDenominator }))}>{DURATION_DENOMINATORS.map(value => <option key={value} value={value}>{value === 1 ? '1' : `1/${value}`}</option>)}</select></label>
+        <label className="insert-dialog-check"><input type="checkbox" checked={insertDraft.dotted} onChange={event => setInsertDraft(current => ({ ...current, dotted: event.target.checked }))} />Dotted</label>
+        {insertDraft.kind === 'note' && <>
+          <label>String<select value={insertDraft.string} onChange={event => setInsertDraft(current => ({ ...current, string: Number(event.target.value) }))}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+          <label>Fret<input type="number" inputMode="numeric" min={0} max={36} step={1} value={insertDraft.fret} onChange={event => setInsertDraft(current => ({ ...current, fret: Number(event.target.value) }))} /></label>
+        </>}
+      </div>
+      <div className="insert-dialog-actions"><button type="button" onClick={() => setInsertOpen(false)}>Cancel</button><button type="button" onClick={confirmInsertEvent}>Insert</button></div>
+    </dialog>
     <dialog ref={removalDialog} className="removal-dialog" aria-label="Confirm note removal" onCancel={event => { event.preventDefault(); setPendingRemoval(null); }}>
       <h2>Remove connected music?</h2>
       <p>This edit also removes or disconnects:</p>
