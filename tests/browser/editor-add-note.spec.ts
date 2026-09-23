@@ -19,6 +19,7 @@ test('adds an imported chord tone and rest note on paired staves with an aligned
   await expect(inspector).toContainText('String 2');
   const caret = (await page.locator('.editor-note-selection').boundingBox())!;
   const currentNoteBox = (await firstFret.boundingBox())!;
+  expect(caret.width).toBeGreaterThan(8);
   expect(Math.abs(caret.x + caret.width / 2 - currentNoteBox.x - currentNoteBox.width / 2)).toBeLessThan(3);
 
   await page.getByLabel('Fret').fill('1');
@@ -57,7 +58,8 @@ test('clicking an empty string and entering a two-digit fret stays aligned at 20
   await expect(inspector.locator('.editor-selection-summary')).toContainText('String 2');
   await expect(page.getByRole('button', { name: 'Add note' })).toBeVisible();
   const emptyCaret = (await page.locator('.editor-note-selection').boundingBox())!;
-  expect(emptyCaret.width).toBeLessThan(5);
+  expect(emptyCaret.width).toBeGreaterThan(16);
+  expect(emptyCaret.width).toBeLessThan(40);
   const currentFirst = (await firstFret.boundingBox())!;
   expect(Math.abs(emptyCaret.x + emptyCaret.width / 2 - currentFirst.x - currentFirst.width / 2)).toBeLessThan(6);
   await page.screenshot({ path: testInfo.outputPath('empty-string-position.png') });
@@ -71,10 +73,10 @@ test('clicking an empty string and entering a two-digit fret stays aligned at 20
   await expect(addedGlyph).toBeVisible();
   const noteMarker = (await marker.boundingBox())!;
   const added = (await addedGlyph.boundingBox())!;
-  const alignment = { xGap: added.x - noteMarker.x - noteMarker.width,
+  const alignment = { leftGap: added.x - noteMarker.x, rightGap: noteMarker.x + noteMarker.width - added.x - added.width,
     yCenterGap: Math.abs((noteMarker.y + noteMarker.height / 2) - (added.y + added.height / 2)) };
-  expect(alignment.xGap).toBeGreaterThan(0);
-  expect(alignment.xGap).toBeLessThan(12);
+  expect(alignment.leftGap).toBeGreaterThan(0);
+  expect(alignment.rightGap).toBeGreaterThan(0);
   expect(alignment.yCenterGap).toBeLessThan(6);
   await page.screenshot({ path: testInfo.outputPath('two-digit-fret.png') });
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -237,10 +239,12 @@ test('captures a two-digit edit inside the saved Wellerman zero chord', async ({
       .filter(rect => Math.abs(rect.x - marker.x) < 30)
       .sort((a, b) => Math.abs((a.y + a.height / 2) - (marker.y + marker.height / 2))
         - Math.abs((b.y + b.height / 2) - (marker.y + marker.height / 2)))[0];
-    return { x: glyph.left - marker.right, y: Math.abs((glyph.y + glyph.height / 2) - (marker.y + marker.height / 2)) };
+    return { left: glyph.left - marker.left, right: marker.right - glyph.right,
+      y: Math.abs((glyph.y + glyph.height / 2) - (marker.y + marker.height / 2)) };
   }, value);
   const zeroGap = await markerGap('0');
-  expect(zeroGap.x).toBeGreaterThan(0);
+  expect(zeroGap.left).toBeGreaterThan(0);
+  expect(zeroGap.right).toBeGreaterThan(0);
   expect(zeroGap.y).toBeLessThan(3);
   const zeroSelection = (await page.locator('.editor-note-selection').boundingBox())!;
   await page.screenshot({ path: testInfo.outputPath('wellerman-zero-selected-detail.png'), clip: {
@@ -249,9 +253,12 @@ test('captures a two-digit edit inside the saved Wellerman zero chord', async ({
   await notation.press('1');
   await notation.press('2');
   await expect(page.getByLabel('Selection inspector').locator('.editor-selection-summary')).toContainText('Fret 12');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(200);
   await page.locator('.editor-note-selection').scrollIntoViewIfNeeded();
   const twelveGap = await markerGap('12');
-  expect(twelveGap.x).toBeGreaterThan(0);
+  expect(twelveGap.left).toBeGreaterThan(0);
+  expect(twelveGap.right).toBeGreaterThan(0);
   expect(twelveGap.y).toBeLessThan(3);
   const selected = (await page.locator('.editor-note-selection').boundingBox())!;
   const clip = { x: Math.max(0, selected.x - 40), y: Math.max(0, selected.y - 55), width: 140, height: 150 };
@@ -259,8 +266,8 @@ test('captures a two-digit edit inside the saved Wellerman zero chord', async ({
   await notation.press('ArrowDown');
   await expect(page.getByLabel('Selection inspector').locator('.editor-selection-summary')).toContainText('String 3');
   const adjacentZeroGap = await markerGap('0');
-  expect(adjacentZeroGap.x).toBeGreaterThan(0);
-  expect(adjacentZeroGap.x).toBeLessThan(12);
+  expect(adjacentZeroGap.left).toBeGreaterThan(0);
+  expect(adjacentZeroGap.right).toBeGreaterThan(0);
   expect(adjacentZeroGap.y).toBeLessThan(3);
   const adjacentZero = (await page.locator('.editor-note-selection').boundingBox())!;
   await page.screenshot({ path: testInfo.outputPath('wellerman-zero-after-12-detail.png'), clip: {

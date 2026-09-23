@@ -670,25 +670,53 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const noteBounds = target.note && beatBounds.notes?.find(item => item.note === target.note || item.note.id === target.note?.id);
     const bounds = noteBounds?.noteHeadBounds ?? { ...beatBounds.visualBounds };
     if (!noteBounds && currentSelection.string !== null && lookup) {
-      // An empty position is an insertion caret, centered in the fret column.
       const rows = editingStringRows(lookup, target.beat);
-      bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - 9;
-      bounds.h = 18;
-      // Chord noteHeadBounds move left for wider frets (e.g. 12), while
-      // onNotesX remains the center of the rendered fret column.
+      const cellHeight = Math.max(12, rows.spacing - 2);
+      bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - cellHeight / 2;
+      bounds.h = cellHeight;
       bounds.x = beatBounds.onNotesX;
-      bounds.w = 2;
+      bounds.w = 14;
     }
     const surface = root.querySelector<HTMLElement>('.at-surface') ?? root;
     const position = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
+    if (noteBounds && target.note) {
+      // The rendered SVG text, not alphaTab's shared chord bounds, determines
+      // the actual white interruption in the staff line for each fret.
+      const surfaceRect = surface.getBoundingClientRect();
+      const scaleX = surfaceRect.width / (surface.offsetWidth || surfaceRect.width) || 1;
+      const scaleY = surfaceRect.height / (surface.offsetHeight || surfaceRect.height) || 1;
+      const expectedX = surfaceRect.left + (beatBounds.onNotesX + position.x) * scaleX;
+      const expectedY = surfaceRect.top + (position.y + bounds.h / 2) * scaleY;
+      const selectedFret = String(target.note.fret);
+      const glyph = Array.from(surface.querySelectorAll<SVGTextElement>('svg text'))
+        .filter(item => item.textContent?.trim() === selectedFret)
+        .map(item => ({ item, rect: item.getBoundingClientRect() }))
+        .sort((a, b) => Math.abs(a.rect.x + a.rect.width / 2 - expectedX) + Math.abs(a.rect.y + a.rect.height / 2 - expectedY)
+          - Math.abs(b.rect.x + b.rect.width / 2 - expectedX) - Math.abs(b.rect.y + b.rect.height / 2 - expectedY))[0];
+      if (glyph && Math.abs(glyph.rect.x + glyph.rect.width / 2 - expectedX) < 20 * scaleX
+        && Math.abs(glyph.rect.y + glyph.rect.height / 2 - expectedY) < 10 * scaleY) {
+        const textBounds = glyph.item.getBBox();
+        const frame = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        frame.setAttribute('class', 'editor-note-selection editor-note-selection-svg');
+        frame.setAttribute('aria-hidden', 'true');
+        frame.setAttribute('data-note-id', String(target.note.id));
+        frame.setAttribute('x', String(textBounds.x - 2));
+        frame.setAttribute('y', String(textBounds.y - 1));
+        frame.setAttribute('width', String(textBounds.width + 4));
+        frame.setAttribute('height', String(textBounds.height + 2));
+        frame.setAttribute('rx', '2');
+        glyph.item.parentNode?.insertBefore(frame, glyph.item.parentNode.firstChild);
+        return;
+      }
+    }
     const overlay = document.createElement('div');
-    overlay.className = `editor-note-selection${noteBounds ? ' editor-note-selection-note' : ' editor-note-selection-empty'}`;
+    overlay.className = `editor-note-selection editor-note-selection-html${noteBounds ? ' editor-note-selection-html-note' : ' editor-note-selection-empty'}`;
     overlay.setAttribute('aria-hidden', 'true');
     overlay.dataset.noteId = String(target.note?.id ?? '');
-    overlay.style.left = `${bounds.x + position.x - (noteBounds ? 5 : 1)}px`;
-    overlay.style.top = `${position.y + (noteBounds ? 1 : 0)}px`;
-    overlay.style.width = '2px';
-    overlay.style.height = `${noteBounds ? Math.max(10, bounds.h - 2) : bounds.h}px`;
+    overlay.style.left = `${bounds.x + position.x - (noteBounds ? 2 : bounds.w / 2)}px`;
+    overlay.style.top = `${position.y - (noteBounds ? 1 : 0)}px`;
+    overlay.style.width = `${noteBounds ? bounds.w + 4 : bounds.w}px`;
+    overlay.style.height = `${noteBounds ? bounds.h + 2 : bounds.h}px`;
     surface.append(overlay);
   }
 
