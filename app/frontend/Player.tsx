@@ -492,7 +492,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, onSelectionChange, onFretInput, onSelectionDelete }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, onSelectionChange, onFretInput, onSelectionDelete, historyRevision = 0 }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -500,8 +500,9 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   editing?: boolean;
   selection?: ScoreSelection | null;
   onSelectionChange?: (selection: ScoreSelection | null) => void;
-  onFretInput?: (selection: ScoreSelection, fret: number) => void;
+  onFretInput?: (selection: ScoreSelection, fret: number, group?: string) => void;
   onSelectionDelete?: (selection: ScoreSelection) => void;
+  historyRevision?: number;
 }) {
   const defaults = preferences ?? defaultPlayerPreferences();
   const element = useRef<HTMLDivElement>(null);
@@ -517,6 +518,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const selectionDeleteCallbackRef = useRef(onSelectionDelete);
   const fretInputRef = useRef('');
   const fretInputSelectionRef = useRef('');
+  const fretGroup = useRef(0);
+  const previousHistoryRevision = useRef(historyRevision);
+  if (previousHistoryRevision.current !== historyRevision) {
+    previousHistoryRevision.current = historyRevision;
+    fretInputRef.current = '';
+    fretInputSelectionRef.current = '';
+    fretGroup.current++;
+  }
   editingRef.current = editing;
   selectionRef.current = selection;
   selectionCallbackRef.current = onSelectionChange;
@@ -568,6 +577,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     api.current = instance;
     const selectNote = (note: model.Note) => {
       if (editingRef.current) {
+        fretInputRef.current = '';
         element.current?.focus({ preventScroll: true });
         const source = note as model.Note & { playtabMappingReason?: string };
         selectionCallbackRef.current?.(selectionFromNote(note, source.playtabMappingReason));
@@ -583,6 +593,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
     const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, selection => {
       if (editingRef.current) {
+        fretInputRef.current = '';
         element.current?.focus({ preventScroll: true });
         selectionCallbackRef.current?.(selection);
       }
@@ -676,6 +687,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   }
 
   function navigateSelection(direction: 'left' | 'right' | 'up' | 'down') {
+    fretInputRef.current = '';
     const current = selectionRef.current;
     if (!editingRef.current || !current) return;
     const targets = selectionTargetsForNavigation();
@@ -725,13 +737,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       if (!current || current.string === null) return;
       event.preventDefault();
       const identity = `${current.track}:${current.staff}:${current.measure}:${current.event}:${current.voice}:${current.graceIndex ?? ''}:${current.string}`;
-      if (fretInputSelectionRef.current !== identity) fretInputRef.current = '';
+      if (fretInputSelectionRef.current !== identity || fretInputRef.current.length === 2) fretInputRef.current = '';
+      if (!fretInputRef.current) fretGroup.current++;
       const nextBuffer = `${fretInputRef.current}${event.key}`.slice(0, 2);
       const fret = Number(nextBuffer);
       if (fret <= 22) {
         fretInputRef.current = nextBuffer;
         fretInputSelectionRef.current = identity;
-        fretInputCallbackRef.current?.(current, fret);
+        fretInputCallbackRef.current?.(current, fret, `fret-${fretGroup.current}`);
       }
     }
   }

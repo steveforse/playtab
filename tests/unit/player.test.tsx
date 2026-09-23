@@ -176,7 +176,7 @@ describe('notation player', () => {
     const notation = screen.getByTestId('notation');
     fireEvent.keyDown(notation, { key: '1' });
     fireEvent.keyDown(notation, { key: '2' });
-    expect(onFretInput).toHaveBeenLastCalledWith(initial, 12);
+    expect(onFretInput).toHaveBeenLastCalledWith(initial, 12, expect.any(String));
     fireEvent.keyDown(notation, { key: 'Backspace' });
     expect(onSelectionDelete).toHaveBeenCalledWith(initial);
   });
