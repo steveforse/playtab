@@ -1,5 +1,7 @@
 import type { model } from '@coderline/alphatab';
 import type { SourceIdentityMap } from './source-identity';
+import { DURATION_DENOMINATORS, durationTime, planDurationChange, rationalTime, compareTime,
+  type DurationDenominator, type RationalTime } from '../editor/rhythm';
 
 export type TechniqueChoice = 'keep' | 'none' | 'thumb' | 'finger-1' | 'finger-2' | 'finger-3' | 'finger-4' |
   'hammer-on-start' | 'hammer-on-stop' | 'pull-off-start' | 'pull-off-stop' | 'slide' | 'bend';
@@ -853,6 +855,218 @@ export function addMusicXmlNote(source: string, score: model.Score, position: No
     };
     insert(group[0], position.string, position.fret);
     paired.forEach(note => insert(note));
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+export type RhythmPosition = { measure: number; beat: number; voice: number };
+export type MusicXmlDurationInfo = { denominator: DurationDenominator | null; dots: number; rest: boolean; reason?: string };
+
+export function inspectMusicXmlDuration(source: string, position: RhythmPosition): MusicXmlDurationInfo {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const group = measure && sourceBeatGroups(measure, sourceTabStaff(document), String(position.voice + 1))[position.beat];
+  if (!group) return { denominator: null, dots: 0, rest: false, reason: 'Select an ordinary event to edit its rhythm.' };
+  const note = group[0];
+  const rest = Boolean(child(note, 'rest'));
+  if (group.some(item => child(item, 'grace'))) return { denominator: null, dots: 0, rest, reason: 'Grace durations are edited with their group.' };
+  if (group.some(item => child(item, 'time-modification'))) return { denominator: null, dots: 0, rest, reason: 'Edit this tuplet as a group.' };
+  const byType: Record<string, DurationDenominator> = { whole: 1, half: 2, quarter: 4, eighth: 8,
+    '16th': 16, '32nd': 32, '64th': 64 };
+  const denominator = byType[text(child(note, 'type'))] ?? null;
+  const dots = children(note).filter(item => item.localName === 'dot').length;
+  return { denominator, dots, rest, reason: denominator === null ? 'This imported duration is preserved but cannot be edited with these buttons.'
+    : dots > 1 ? 'Imported multiple-dot value is preserved until you choose a supported replacement.' : undefined };
+}
+
+function sourceDivisions(part: Element, measureIndex: number): bigint {
+  let divisions = 1n;
+  directMeasures(part).slice(0, measureIndex + 1).forEach((measure, index) => {
+    const found = children(measure).filter(item => item.localName === 'attributes').flatMap(item => children(item).filter(child => child.localName === 'divisions'));
+    if (index === measureIndex && found.length > 1) throw new Error('This measure changes divisions internally; rhythm editing is not available here.');
+    for (const item of found) {
+      if (!/^\d+$/.test(text(item)) || BigInt(text(item)) === 0n) throw new Error('This source has invalid timing divisions.');
+      divisions = BigInt(text(item));
+    }
+  });
+  return divisions;
+}
+
+function setMeasureDivisions(measure: Element, divisions: bigint) {
+  let attributes = children(measure).find(item => item.localName === 'attributes');
+  if (!attributes) {
+    attributes = measure.ownerDocument!.createElement('attributes');
+    measure.insertBefore(attributes, measure.firstChild);
+  }
+  let value = child(attributes, 'divisions');
+  if (!value) {
+    value = measure.ownerDocument!.createElement('divisions');
+    attributes.insertBefore(value, attributes.firstChild);
+  }
+  value.textContent = String(divisions);
+}
+
+function rescaleDivisions(part: Element, measureIndex: number, oldDivisions: bigint, newDivisions: bigint) {
+  if (newDivisions === oldDivisions) return;
+  if (newDivisions > 1_000_000n || newDivisions % oldDivisions !== 0n) throw new Error('This rhythm needs unsupported MusicXML timing precision.');
+  const measures = directMeasures(part);
+  const measure = measures[measureIndex];
+  const multiplier = newDivisions / oldDivisions;
+  const durationNodes = descendants(measure, 'duration');
+  for (const duration of durationNodes) {
+    const parent = duration.parentNode as Element;
+    if (!['note', 'backup', 'forward'].includes(parent.localName)) throw new Error('This measure has an unsupported timed source element.');
+    if (!/^\d+$/.test(text(duration))) throw new Error('This measure has an invalid source duration.');
+  }
+  const offsets = descendants(measure, 'offset');
+  for (const offset of offsets) {
+    if (!/^-?\d+$/.test(text(offset))) throw new Error('This measure has an unsupported direction offset.');
+  }
+  durationNodes.forEach(node => { node.textContent = String(BigInt(text(node)) * multiplier); });
+  offsets.forEach(node => { node.textContent = String(BigInt(text(node)) * multiplier); });
+  setMeasureDivisions(measure, newDivisions);
+  const next = measures[measureIndex + 1];
+  if (next && !children(next).some(item => item.localName === 'attributes' && child(item, 'divisions'))) {
+    setMeasureDivisions(next, oldDivisions);
+  }
+}
+
+function eventTime(group: Element[], divisions: bigint): RationalTime {
+  const values = group.map(note => text(child(note, 'duration')));
+  if (values.some(value => !/^\d+$/.test(value))) throw new Error('This event has an unsupported source duration.');
+  if (new Set(values).size !== 1) throw new Error('This chord has inconsistent member durations.');
+  return rationalTime(BigInt(values[0]), divisions);
+}
+
+function simpleRest(group: Element[]) {
+  return group.length === 1 && Boolean(child(group[0], 'rest'))
+    && children(group[0]).every(item => ['rest', 'duration', 'voice', 'type', 'dot', 'staff'].includes(item.localName))
+    && !child(group[0], 'time-modification');
+}
+
+function writeDuration(group: Element[], denominator: DurationDenominator, dotted: boolean, ticks: bigint) {
+  group.forEach(note => {
+    setText(note, 'duration', String(ticks));
+    let type = child(note, 'type');
+    if (!type) {
+      type = note.ownerDocument!.createElement('type');
+      const next = children(note).find(item => ['dot', 'accidental', 'stem', 'staff', 'notations', 'lyric', 'time-modification'].includes(item.localName));
+      note.insertBefore(type, next ?? null);
+    }
+    type.textContent = ({ 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' } as Record<number, string>)[denominator];
+    removeChildren(note, 'dot');
+    if (dotted) note.insertBefore(note.ownerDocument!.createElement('dot'), type.nextSibling);
+  });
+}
+
+function makeRest(document: Document, voice: string, staff: number, denominator: DurationDenominator, ticks: bigint) {
+  const note = document.createElement('note');
+  const add = (name: string, value?: string) => {
+    const element = document.createElement(name);
+    if (value !== undefined) element.textContent = value;
+    note.appendChild(element);
+  };
+  add('rest'); add('duration', String(ticks)); add('voice', voice);
+  add('type', ({ 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' } as Record<number, string>)[denominator]);
+  add('staff', String(staff));
+  return note;
+}
+
+function rhythmLanes(document: Document, measure: Element, tabStaff: number, voice: string, eventIndex: number) {
+  const tabGroups = sourceBeatGroups(measure, tabStaff, voice);
+  const target = tabGroups[eventIndex];
+  if (!target) throw new Error('The selected source event cannot be identified safely.');
+  const lanes = [{ staff: tabStaff, voice, groups: tabGroups }];
+  const otherStaves = [...new Set(children(measure).filter(item => item.localName === 'note').map(note => Number(text(child(note, 'staff')) || '1')))]
+    .filter(staff => staff !== tabStaff);
+  if (!otherStaves.length) return lanes;
+  const anchor = tabGroups.flat().find(note => !child(note, 'rest') && !child(note, 'grace'));
+  if (!anchor) throw new Error('This all-rest voice has no verified paired-staff identity for rhythm editing.');
+  const linked = linkedStaffNotes(document)(anchor);
+  for (const staff of otherStaves) {
+    const counterpart = linked.find(note => Number(text(child(note, 'staff')) || '1') === staff);
+    if (!counterpart) throw new Error('The paired notation voice cannot be matched safely for rhythm editing.');
+    const pairedVoice = text(child(counterpart, 'voice')) || '1';
+    const groups = sourceBeatGroups(measure, staff, pairedVoice);
+    if (groups.length !== tabGroups.length || !groups[eventIndex]) throw new Error('The paired notation events do not align safely for rhythm editing.');
+    lanes.push({ staff, voice: pairedVoice, groups });
+  }
+  return lanes;
+}
+
+export function changeMusicXmlDuration(source: string, score: model.Score, position: RhythmPosition,
+  denominator: DurationDenominator, dotted = false): string {
+  if (!DURATION_DENOMINATORS.includes(denominator)) throw new Error('Unsupported note duration.');
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!rendered || rendered.graceType) throw new Error('Select an ordinary event to change its duration.');
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
+  const tabStaff = sourceTabStaff(document);
+  const voice = String(position.voice + 1);
+  const lanes = rhythmLanes(document, measure, tabStaff, voice, position.beat);
+  const target = lanes[0].groups[position.beat];
+  const sourceMembers = target.filter(note => !child(note, 'rest')).map(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
+  }).sort();
+  const renderedMembers = rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort();
+  if (sourceMembers.join('|') !== renderedMembers.join('|') || Boolean(child(target[0], 'rest')) !== Boolean(rendered.isRest)) {
+    throw new Error('The selected source event does not match the rendered score. Rhythm editing is blocked here.');
+  }
+  const boundary = timingBoundary(document, position.measure, tabStaff, voice, target);
+  if (boundary) throw new Error(boundary);
+  if (target.some(note => child(note, 'grace') || child(note, 'time-modification'))) {
+    throw new Error('Edit this tuplet or grace group as a group.');
+  }
+  const oldDivisions = sourceDivisions(part, position.measure);
+  const current = eventTime(target, oldDivisions);
+  const desired = durationTime(denominator, dotted);
+  if (compareTime(current, desired) === 0 && target.every(note => text(child(note, 'type')) === ({ 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' } as Record<number, string>)[denominator]
+    && children(note).filter(item => item.localName === 'dot').length === (dotted ? 1 : 0))) return source;
+  const following: { duration: RationalTime; rest: boolean }[] = [];
+  if (compareTime(desired, current) > 0) {
+    for (const group of lanes[0].groups.slice(position.beat + 1)) {
+      if (!simpleRest(group)) { following.push({ duration: rationalTime(0n), rest: false }); break; }
+      following.push({ duration: eventTime(group, oldDivisions), rest: true });
+    }
+  }
+  const plan = planDurationChange(current, desired, following);
+  for (const lane of lanes) {
+    const group = lane.groups[position.beat];
+    if (compareTime(eventTime(group, oldDivisions), current) !== 0 || Boolean(child(group[0], 'rest')) !== Boolean(child(target[0], 'rest'))
+      || group.some(note => child(note, 'grace') || child(note, 'time-modification'))) {
+      throw new Error('The paired notation event does not match the selected rhythm.');
+    }
+    for (let index = 1; index <= plan.consumeRests; index++) {
+      const adjacent = lane.groups[position.beat + index];
+      if (!adjacent || !simpleRest(adjacent) || compareTime(eventTime(adjacent, oldDivisions), following[index - 1].duration) !== 0) {
+        throw new Error('The paired notation rest space does not match this voice.');
+      }
+    }
+  }
+  const required = [desired, ...plan.insertRests.map(value => durationTime(value)), ...plan.leaveRests.map(value => durationTime(value))];
+  const gcd = (a: bigint, b: bigint): bigint => b ? gcd(b, a % b) : a;
+  const lcm = (a: bigint, b: bigint) => a / gcd(a, b) * b;
+  const newDivisions = required.reduce((value, time) => lcm(value, time[1]), oldDivisions);
+  rescaleDivisions(part, position.measure, oldDivisions, newDivisions);
+  const ticks = (time: RationalTime) => {
+    const value = time[0] * newDivisions;
+    if (value % time[1] !== 0n) throw new Error('This rhythm needs unsupported MusicXML timing precision.');
+    return value / time[1];
+  };
+  for (const lane of lanes) {
+    const group = lane.groups[position.beat];
+    const consumed = lane.groups.slice(position.beat + 1, position.beat + 1 + plan.consumeRests);
+    const last = consumed.at(-1)?.at(-1) ?? group.at(-1)!;
+    const reference = last.nextSibling;
+    writeDuration(group, denominator, dotted, ticks(desired));
+    consumed.flat().forEach(note => note.parentNode?.removeChild(note));
+    for (const value of [...plan.insertRests, ...plan.leaveRests]) {
+      measure.insertBefore(makeRest(document, lane.voice, lane.staff, value, ticks(durationTime(value))), reference);
+    }
   }
   return new XMLSerializer().serializeToString(document);
 }

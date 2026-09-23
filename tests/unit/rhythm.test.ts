@@ -36,5 +36,7 @@ describe('ED-10 exact rhythm arithmetic', () => {
       .toThrow(REST_SPACE_ERROR);
     expect(() => planDurationChange(durationTime(4), durationTime(2), [{ duration: durationTime(8), rest: true }]))
       .toThrow(REST_SPACE_ERROR);
+    expect(() => planDurationChange(rationalTime(0n), durationTime(4), []))
+      .toThrow('Event duration must be positive');
   });
 });

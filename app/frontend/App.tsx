@@ -4,8 +4,9 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, inspectMusicXmlDuration, musicXmlEditorState, removeMusicXmlNotes } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
+import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
 import { sourceEventCount, type IdentityCarry, type SourceIdentityMap } from './music/source-identity';
 
@@ -380,6 +381,22 @@ export function App() {
     }, note => { note.fret = fret; }, after, `Change fret to ${fret}`, group)) return;
     setSelection(after);
   }
+  function changeSelectedDuration(denominator: DurationDenominator, dotted: boolean) {
+    if (!selection) return;
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const nextSource = changeMusicXmlDuration(base.source, base.score,
+        { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 }, denominator, dotted);
+      if (nextSource === base.source && preview) return;
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity,
+          carries: structuralCarries(base, selection) } : undefined), base.score.title);
+      const after = selectionAtPosition(selection, score, nextPreview, {});
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
+        sourceIdentity: nextPreview.sourceIdentity }, `${dotted ? 'Dotted ' : ''}${denominator === 1 ? 'whole' : `1/${denominator}`} duration`);
+      setPreview(nextPreview); setSelection(after); setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
   function moveSelectedString() {
     if (!selection || selection.kind !== 'note' || selection.string === null) return;
     const destination = Number(moveString);
@@ -640,6 +657,11 @@ export function App() {
   const selectedEventCount = selection ? (preview
     ? preview.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats.length ?? 1
     : score.measures[selection.measure - 1]?.beats.length ?? 1) : 1;
+  const selectedRhythm = selection ? preview
+    ? inspectMusicXmlDuration(preview.source, { measure: selection.measure - 1, beat: selection.event - 1,
+      voice: selection.voice - 1 })
+    : { denominator: score.measures[selection.measure - 1]?.beats[selection.event - 1]?.duration ?? null,
+      dots: 0, rest: selection.kind === 'rest', reason: undefined } : null;
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
       <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
@@ -682,6 +704,19 @@ export function App() {
               </>}
             </div>}
             {selection.kind === 'note' && <div className="editor-event-tools"><button type="button" onClick={() => requestRemoval(selection, 'rest')}>Make rest</button></div>}
+            {selectedRhythm && <div className="editor-rhythm-tools" aria-label="Duration tools">
+              <p>Duration</p>
+              <div className="editor-duration-buttons">{DURATION_DENOMINATORS.map(value => <button key={value} type="button"
+                aria-label={value === 1 ? 'Whole note duration' : `1/${value} duration`}
+                aria-pressed={selectedRhythm.denominator === value && selectedRhythm.dots === 0}
+                onClick={() => changeSelectedDuration(value, false)}>{value === 1 ? '1' : `1/${value}`}</button>)}</div>
+              <button type="button" className="editor-dotted-button" aria-pressed={selectedRhythm.dots === 1}
+                disabled={selectedRhythm.denominator === null}
+                onClick={() => changeSelectedDuration(selectedRhythm.denominator!, selectedRhythm.dots !== 1)}>Dotted</button>
+              <button type="button" className="editor-split-rest" disabled={!selectedRhythm.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0}
+                onClick={() => changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false)}>Split rest</button>
+              {selectedRhythm.reason && <p className="editor-rhythm-reason">{selectedRhythm.reason}</p>}
+            </div>}
             <details className="editor-passage-tools"><summary>Select passage</summary>
               <button type="button" onClick={() => setPassage({ start: selection, end: selection })}>Set range start</button>
               <button type="button" disabled={!passage} onClick={() => {
