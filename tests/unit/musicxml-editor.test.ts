@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { promoteNativeScore, readMusicXml } from '../../app/frontend/music/musicxml';
 import { OPEN_G, type Score } from '../../app/frontend/music/score';
-import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, removeMusicXmlNotes, replaceTechnique } from '../../app/frontend/music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, musicXmlEditorState, musicXmlTimingBoundary, removeMusicXmlNotes, replaceTechnique } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -384,5 +384,71 @@ describe('MusicXML score editing', () => {
     expect(edited).toContain('<custom:opaque data="retain"><custom:nested>yes</custom:nested></custom:opaque>');
     expect(edited).toContain('<duration>2</duration><type>half</type>');
     expect(edited).not.toContain('<duration>1</duration><type>half</type>');
+    expect(musicXmlTimingBoundary(source, { measure: 0, staff: 1, voice: '1', event: 0 })).toContain('extends past the measure boundary');
+    expect(() => removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 4 })).toThrow('extends past the measure boundary');
+    expect(() => addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 2, fret: 0 })).toThrow('extends past the measure boundary');
+  });
+
+  it('reports an unsupported tuplet boundary without preventing a local fret correction', () => {
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+      .replace('<type>quarter</type><notations>', '<type>quarter</type><time-modification><actual-notes>5</actual-notes><normal-notes>4</normal-notes></time-modification><notations>');
+    expect(musicXmlTimingBoundary(source, { measure: 0, staff: 1, voice: '1', event: 0 })).toContain('unsupported tuplet');
+    const preview = readMusicXml(source, 'tuplet.xml');
+    const state = musicXmlEditorState(source, preview.score);
+    const first = state.notes.find(note => note.string === 4 && note.beat === 0)!;
+    first.fret = 1;
+    const edited = applyMusicXmlEdits(source, state, [first.index]);
+    expect(edited).toContain('<actual-notes>5</actual-notes><normal-notes>4</normal-notes>');
+    expect(() => removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 4 })).toThrow('unsupported tuplet');
+    expect(() => addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 2, fret: 0 })).toThrow('unsupported tuplet');
+  });
+
+  it('edits one voice without mistaking another voice’s event for the target', () => {
+    const standard = '<backup><duration>4</duration></backup><note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>3</voice><type>quarter</type><staff>1</staff></note><note><rest/><duration>3</duration><voice>3</voice><type>half</type><dot/><staff>1</staff></note>';
+    const tab = '<backup><duration>4</duration></backup><note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>4</voice><type>quarter</type><staff>2</staff><notations><technical><string>4</string><fret>0</fret></technical></notations></note><note><rest/><duration>3</duration><voice>4</voice><type>half</type><dot/><staff>2</staff></note>';
+    const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8').replace('</measure></part>', `${standard}${tab}</measure></part>`);
+    const preview = readMusicXml(source, 'voices.xml');
+    const voices = preview.score.tracks[0].staves[0].bars[0].voices;
+    const voiceIndex = voices.findIndex(voice => voice.beats[0]?.notes.some(note => 6 - note.string === 4));
+    expect(voiceIndex).toBeGreaterThanOrEqual(0);
+    const inserted = addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: voiceIndex, string: 2, fret: 1 });
+    const afterInsert = readMusicXml(inserted, 'voices.xml').score.tracks[0].staves[0].bars[0].voices[voiceIndex].beats[0];
+    expect(afterInsert.notes.map(note => [6 - note.string, note.fret]).sort((left, right) => left[0] - right[0])).toEqual([[2, 1], [4, 0]]);
+    const removed = removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: voiceIndex, string: 4 })!;
+    expect(readMusicXml(removed.source, 'voices.xml').score.tracks[0].staves[0].bars[0].voices[voiceIndex].beats[0].isRest).toBe(true);
+  });
+
+  it('keeps a chord member’s source identity after another member is inserted or removed', () => {
+    const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
+    const preview = readMusicXml(source, 'paired.xml');
+    const original = musicXmlEditorState(source, preview.score).notes.find(note => note.beat === 0 && note.string === 3)!;
+    expect(original.sourceIdentity).toMatchObject({ voice: '2', chordMember: 1, graceGroup: null });
+    const added = addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: 1, string: 2, fret: 1 });
+    const afterAdd = musicXmlEditorState(added, readMusicXml(added, 'paired.xml').score).notes.find(note => note.beat === 0 && note.string === 3)!;
+    expect(afterAdd.sourceIdentity?.id).toBe(original.sourceIdentity?.id);
+    const removed = removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: 1, string: 1 })!.source;
+    const removedPreview = readMusicXml(removed, 'paired.xml');
+    const afterRemoval = musicXmlEditorState(removed, removedPreview.score);
+    const survivor = afterRemoval.notes.find(note => note.beat === 0 && note.string === 3)!;
+    expect(survivor.sourceIdentity?.id).toBe(original.sourceIdentity?.id);
+    expect(survivor.sourceIdentity?.chordMember).toBe(0);
+    survivor.fret = 2;
+    const edited = readMusicXml(applyMusicXmlEdits(removed, afterRemoval, [survivor.index]), 'paired.xml');
+    expect(edited.score.tracks[0].staves[0].bars[0].voices[1].beats[0].notes[0].fret).toBe(2);
+  });
+
+  it('maps a grace note separately from its ordinary destination event', () => {
+    const grace = '<note><grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><type>16th</type><notations><technical><string>4</string><fret>2</fret></technical></notations></note>';
+    const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+      .replace('    <note><pitch><step>C</step><octave>3</octave></pitch>', `    ${grace}\n    <note><pitch><step>C</step><octave>3</octave></pitch>`);
+    const preview = readMusicXml(source, 'grace.xml');
+    const state = musicXmlEditorState(source, preview.score);
+    const graceNote = state.notes.find(note => note.string === 4 && note.fret === 2);
+    expect(graceNote?.sourceIdentity).toMatchObject({ voice: '1', graceGroup: 0, graceIndex: 0 });
+    expect(state.notes.find(note => note.string === 4 && note.fret === 0)?.sourceIdentity?.graceGroup).toBeNull();
+    graceNote!.fret = 3;
+    const edited = applyMusicXmlEdits(source, state, [graceNote!.index]);
+    expect(edited).toContain('<grace slash="yes"/><pitch><step>D</step><alter>1</alter><octave>3</octave></pitch>');
+    expect(readMusicXml(edited, 'grace.xml').score.tracks[0].staves[0].bars[0].voices[0].beats.some(beat => beat.graceType && beat.notes.some(note => note.fret === 3))).toBe(true);
   });
 });

@@ -11,6 +11,15 @@ export type EditableMusicXmlNote = {
   fret: number;
   technique: TechniqueChoice;
   deleted?: boolean;
+  sourceIdentity?: SourceNoteIdentity;
+};
+
+export type SourceNoteIdentity = {
+  id: string;
+  voice: string;
+  graceGroup: number | null;
+  graceIndex: number | null;
+  chordMember: number;
 };
 
 export type MusicXmlEditorState = {
@@ -57,15 +66,35 @@ function sourceTabNoteRecords(document: Document) {
   if (!part) return [];
   return directMeasures(part).flatMap((measure, measureIndex) => {
     const eventByVoice = new Map<string, number>();
+    const memberByVoice = new Map<string, number>();
+    const graceGroupByVoice = new Map<string, number>();
+    const graceIndexByVoice = new Map<string, number>();
+    const graceActiveByVoice = new Map<string, boolean>();
     return children(measure).filter(note => note.localName === 'note')
       .filter(note => Number(text(child(note, 'staff')) || '1') === staff)
       .flatMap(note => {
         const voice = text(child(note, 'voice')) || '1';
-        if (!child(note, 'chord')) eventByVoice.set(voice, (eventByVoice.get(voice) ?? -1) + 1);
+        const chord = Boolean(child(note, 'chord'));
+        const grace = Boolean(child(note, 'grace')) || (chord && graceActiveByVoice.get(voice) === true);
+        if (!chord) {
+          eventByVoice.set(voice, (eventByVoice.get(voice) ?? -1) + 1);
+          memberByVoice.set(voice, 0);
+          if (grace) {
+            if (!graceActiveByVoice.get(voice)) graceGroupByVoice.set(voice, (graceGroupByVoice.get(voice) ?? -1) + 1);
+            graceIndexByVoice.set(voice, graceActiveByVoice.get(voice) ? (graceIndexByVoice.get(voice) ?? -1) + 1 : 0);
+          }
+          graceActiveByVoice.set(voice, grace);
+        } else memberByVoice.set(voice, (memberByVoice.get(voice) ?? 0) + 1);
         const technical = child(child(note, 'notations') ?? note, 'technical');
         if (!technical || !child(technical, 'string')) return [];
+        const event = eventByVoice.get(voice) ?? 0;
+        const string = Number(text(child(technical, 'string')));
+        const chordMember = memberByVoice.get(voice) ?? 0;
+        const graceGroup = grace ? graceGroupByVoice.get(voice) ?? 0 : null;
+        const graceIndex = grace ? graceIndexByVoice.get(voice) ?? 0 : null;
         return [{ note, measure: measureIndex, beat: eventByVoice.get(voice) ?? 0,
-          voice, string: Number(text(child(technical, 'string'))), fret: Number(text(child(technical, 'fret'))) }];
+          voice, string, fret: Number(text(child(technical, 'fret'))), grace, graceGroup, graceIndex, chordMember,
+          id: `${measureIndex}:${voice}:${event}:${graceGroup ?? 'main'}:${graceIndex ?? 'main'}:${string}` }];
       });
   });
 }
@@ -186,7 +215,8 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
   const annotations = descendants(document.documentElement, 'words').map(text).filter(Boolean);
   const chords = descendants(document.documentElement, 'harmony').map(chordName);
   const notes = renderedNotes.map(({ note, measure, beat, voice }, renderedIndex) => {
-    const candidates = sourceByLocation.get(`${measure}:${beat}:${6 - note.string}:${note.fret}`) ?? [];
+    const candidates = (sourceByLocation.get(`${measure}:${beat}:${6 - note.string}:${note.fret}`) ?? [])
+      .filter(candidate => candidate.grace === Boolean(note.beat.graceType));
     const voiceCandidates = candidates.filter(candidate => candidate.voice === String(voice + 1));
     const matched = voiceCandidates.length === 1 ? voiceCandidates[0] : candidates.length === 1 ? candidates[0] : null;
     const sourceNote = matched?.note;
@@ -197,6 +227,8 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
       string: matched?.string ?? 6 - note.string,
       fret: note.fret,
       technique: sourceNote ? techniqueOf(sourceNote) : 'none',
+      sourceIdentity: matched ? { id: matched.id, voice: matched.voice, graceGroup: matched.graceGroup,
+        graceIndex: matched.graceIndex, chordMember: matched.chordMember } : undefined,
     };
   });
   const state: MusicXmlEditorState = {
@@ -233,8 +265,11 @@ function setPitch(note: Element, midi: number) {
   const pitch = ensure(note, 'pitch');
   const value = midiToPitch(midi);
   setText(pitch, 'step', value.step);
-  if (value.alter) setText(pitch, 'alter', String(value.alter));
-  else removeChildren(pitch, 'alter');
+  if (value.alter) {
+    const alter = child(pitch, 'alter') ?? pitch.ownerDocument!.createElement('alter');
+    alter.textContent = String(value.alter);
+    pitch.insertBefore(alter, child(pitch, 'octave') ?? null);
+  } else removeChildren(pitch, 'alter');
   setText(pitch, 'octave', String(value.octave));
 }
 
@@ -444,7 +479,8 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, n
   if (!noteIndexes && (!original || state.title !== original.title || state.tempo !== original.tempo || JSON.stringify(state.tuning) !== JSON.stringify(original.tuning))) {
     applyScoreSettings(document, state, original);
   }
-  const sourceNotes = sourceTabNotes(document);
+  const sourceRecords = sourceTabNoteRecords(document);
+  const sourceNotes = sourceRecords.map(record => record.note);
   const tuning = state.tuning.length === 5 ? state.tuning : [62, 59, 55, 50, 67];
   const deletedNoteIndexes = new Set(state.notes.filter(edit => edit.deleted).map(edit => edit.index));
   const pairedDeletions: Element[] = [];
@@ -453,7 +489,10 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, n
     const before = original?.notes.find(note => note.index === edit.index);
     if (before && JSON.stringify(edit) === JSON.stringify(before)) return;
     if (edit.index < 0) throw new Error('This rendered note cannot be uniquely matched to its MusicXML source. Its source details are preserved, but this note cannot be edited safely.');
-    const note = sourceNotes[edit.index];
+    if (before?.sourceIdentity && edit.sourceIdentity?.id !== before.sourceIdentity.id) throw new Error('The source note identity changed during this edit. Reopen the editor before applying it.');
+    const matching = before?.sourceIdentity ? sourceRecords.filter(record => record.id === before.sourceIdentity!.id) : [];
+    if (before?.sourceIdentity && matching.length !== 1) throw new Error('This source note identity is ambiguous. Its source details are preserved, but it cannot be edited safely.');
+    const note = matching[0]?.note ?? sourceNotes[edit.index];
     if (!note) {
       if (original) throw new Error('This source note is no longer available. Reopen the editor before applying the change.');
       return;
@@ -499,13 +538,90 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, n
 type NotePosition = { measure: number; beat: number; voice: number; string: number; fret: number };
 type RemovalPosition = Pick<NotePosition, 'measure' | 'beat' | 'voice'> & { string?: number };
 
-function sourceBeatGroups(measure: Element, staff: number): Element[][] {
+function sourceBeatGroups(measure: Element, staff: number, voice?: string): Element[][] {
   const groups: Element[][] = [];
-  children(measure).filter(item => item.localName === 'note' && Number(text(child(item, 'staff')) || '1') === staff).forEach(note => {
+  children(measure).filter(item => item.localName === 'note' && Number(text(child(item, 'staff')) || '1') === staff
+    && (voice === undefined || (text(child(item, 'voice')) || '1') === voice)).forEach(note => {
     if (child(note, 'chord') && groups.length) groups[groups.length - 1].push(note);
     else groups.push([note]);
   });
   return groups;
+}
+
+type Rational = readonly [bigint, bigint];
+const rational = (numerator: bigint, denominator = 1n): Rational => {
+  if (denominator <= 0n) throw new Error('The source has invalid timing divisions.');
+  const gcd = (left: bigint, right: bigint): bigint => right === 0n ? left : gcd(right, left % right);
+  const divisor = gcd(numerator < 0n ? -numerator : numerator, denominator) || 1n;
+  return [numerator / divisor, denominator / divisor];
+};
+const addTime = (left: Rational, right: Rational): Rational => rational(left[0] * right[1] + right[0] * left[1], left[1] * right[1]);
+const subtractTime = (left: Rational, right: Rational): Rational => rational(left[0] * right[1] - right[0] * left[1], left[1] * right[1]);
+const timeGreater = (left: Rational, right: Rational) => left[0] * right[1] > right[0] * left[1];
+
+function timingBoundary(document: Document, measureIndex: number, staff: number, voice: string, event?: Element[]): string | null {
+  const part = descendants(document.documentElement, 'part')[0];
+  if (!part) return 'This source has no playable part.';
+  const measures = directMeasures(part);
+  if (!measures[measureIndex]) return 'This source measure cannot be found.';
+  let divisions = 1n;
+  let expected: Rational = [4n, 1n];
+  for (let index = 0; index <= measureIndex; index++) {
+    const measure = measures[index];
+    let position: Rational = [0n, 1n];
+    let furthest: Rational = [0n, 1n];
+    const previous = new Map<string, Rational>();
+    for (const item of children(measure)) {
+      if (item.localName === 'attributes') {
+        const divisionText = text(child(item, 'divisions'));
+        if (divisionText) {
+          if (!/^\d+$/.test(divisionText) || BigInt(divisionText) === 0n) return 'This source has invalid timing divisions.';
+          divisions = BigInt(divisionText);
+        }
+        const time = child(item, 'time');
+        if (time) {
+          const beats = text(child(time, 'beats'));
+          const beatType = text(child(time, 'beat-type'));
+          if (!/^\d+$/.test(beats) || !/^\d+$/.test(beatType) || BigInt(beatType) === 0n) return 'This time signature is not supported for structural edits.';
+          expected = rational(BigInt(beats) * 4n, BigInt(beatType));
+        }
+      }
+      const durationText = text(child(item, 'duration'));
+      const duration = /^\d+$/.test(durationText) ? rational(BigInt(durationText), divisions) : rational(0n);
+      if (item.localName === 'backup') { position = subtractTime(position, duration); continue; }
+      if (item.localName === 'forward') { position = addTime(position, duration); continue; }
+      if (item.localName !== 'note') continue;
+      const itemStaff = Number(text(child(item, 'staff')) || '1');
+      const itemVoice = text(child(item, 'voice')) || '1';
+      const lane = `${itemStaff}:${itemVoice}`;
+      const chord = Boolean(child(item, 'chord'));
+      const grace = Boolean(child(item, 'grace'));
+      const onset = chord ? previous.get(lane) ?? position : position;
+      previous.set(lane, onset);
+      if (index === measureIndex && itemStaff === staff && itemVoice === voice && !grace) {
+        const end = addTime(onset, duration);
+        if (timeGreater(end, furthest)) furthest = end;
+      }
+      if (!chord && !grace) position = addTime(position, duration);
+    }
+    if (index === measureIndex && timeGreater(furthest, expected)) {
+      return 'This voice extends past the measure boundary. Correcting a fret is safe, but structural edits here are blocked until the timing is repaired.';
+    }
+  }
+  if (event?.some(note => {
+    const modification = child(note, 'time-modification');
+    if (!modification) return false;
+    return text(child(modification, 'actual-notes')) !== '3' || text(child(modification, 'normal-notes')) !== '2';
+  })) return 'This event uses an unsupported tuplet. Correcting a fret is safe, but structural edits to its timing are blocked.';
+  return null;
+}
+
+export function musicXmlTimingBoundary(source: string, position: { measure: number; staff: number; voice: string; event?: number }): string | null {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part ? directMeasures(part)[position.measure] : undefined;
+  const group = measure && position.event !== undefined ? sourceBeatGroups(measure, position.staff, position.voice)[position.event] : undefined;
+  return timingBoundary(document, position.measure, position.staff, position.voice, group);
 }
 
 // Deletion must be conservative: an unfamiliar attachment may carry source
@@ -594,12 +710,13 @@ export function removeMusicXmlNotes(source: string, score: model.Score, position
   const beat = voice?.beats?.[position.beat];
   if (!measure || !beat || beat.isRest || beat.notes.length === 0 || beat.graceType) return null;
   const tabStaff = sourceTabStaff(document);
-  const groups = sourceBeatGroups(measure, tabStaff);
-  if (new Set(groups.flat().map(note => text(child(note, 'voice')) || '1')).size > 1) throw new Error('This source event has multiple voices and cannot be removed safely.');
+  const groups = sourceBeatGroups(measure, tabStaff, String(position.voice + 1));
   const mainGroups = groups.filter(group => !group.some(note => child(note, 'grace')));
   const mainIndex = voice!.beats.slice(0, position.beat).filter(candidate => !candidate.graceType).length;
   const group = mainGroups[mainIndex];
   if (!group || group.some(note => child(note, 'rest'))) throw new Error('The source event cannot be matched safely for removal.');
+  const boundary = timingBoundary(document, position.measure, tabStaff, text(child(group[0], 'voice')) || '1', group);
+  if (boundary) throw new Error(boundary);
   const sourceMembers = group.map(note => {
     const technical = child(child(note, 'notations') ?? note, 'technical');
     return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
@@ -689,11 +806,11 @@ export function addMusicXmlNote(source: string, score: model.Score, position: No
   if (!measure || !beat || beat.graceType) throw new Error('This source event cannot be mapped safely for note insertion.');
   if (beat.notes.some(note => 6 - note.string === position.string)) throw new Error('This string already has a note at this event.');
   const tabStaff = sourceTabStaff(document);
-  const tabGroups = sourceBeatGroups(measure, tabStaff);
-  const tabNotes = tabGroups.flat();
-  if (new Set(tabNotes.map(note => text(child(note, 'voice')) || '1')).size > 1) throw new Error('This source event has multiple voices and cannot be mapped safely.');
+  const tabGroups = sourceBeatGroups(measure, tabStaff, String(position.voice + 1));
   const group = tabGroups[position.beat];
   if (!group || group.some(note => child(note, 'grace'))) throw new Error('This source event cannot be mapped safely for note insertion.');
+  const boundary = timingBoundary(document, position.measure, tabStaff, text(child(group[0], 'voice')) || '1', group);
+  if (boundary) throw new Error(boundary);
   const midi = score.tracks[0].staves[0].tuning[position.string - 1] + position.fret;
   if (!Number.isInteger(midi)) throw new Error('The selected string has no valid source tuning.');
   const otherStaves = new Set(children(measure).filter(item => item.localName === 'note').map(note => Number(text(child(note, 'staff')) || '1')));
