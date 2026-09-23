@@ -1,6 +1,6 @@
 import type { model } from '@coderline/alphatab';
 import type { SourceIdentityMap } from './source-identity';
-import { DURATION_DENOMINATORS, durationTime, planDurationChange, rationalTime, compareTime,
+import { DURATION_DENOMINATORS, REST_SPACE_ERROR, durationTime, fillRestTime, planDurationChange, rationalTime, compareTime,
   type DurationDenominator, type RationalTime } from '../editor/rhythm';
 
 export type TechniqueChoice = 'keep' | 'none' | 'thumb' | 'finger-1' | 'finger-2' | 'finger-3' | 'finger-4' |
@@ -982,12 +982,18 @@ function rhythmLanes(document: Document, measure: Element, tabStaff: number, voi
     .filter(staff => staff !== tabStaff);
   if (!otherStaves.length) return lanes;
   const anchor = tabGroups.flat().find(note => !child(note, 'rest') && !child(note, 'grace'));
-  if (!anchor) throw new Error('This all-rest voice has no verified paired-staff identity for rhythm editing.');
-  const linked = linkedStaffNotes(document)(anchor);
+  const linked = anchor ? linkedStaffNotes(document)(anchor) : [];
   for (const staff of otherStaves) {
     const counterpart = linked.find(note => Number(text(child(note, 'staff')) || '1') === staff);
-    if (!counterpart) throw new Error('The paired notation voice cannot be matched safely for rhythm editing.');
-    const pairedVoice = text(child(counterpart, 'voice')) || '1';
+    const candidateVoices = [...new Set(children(measure).filter(note => note.localName === 'note'
+      && Number(text(child(note, 'staff')) || '1') === staff).map(note => text(child(note, 'voice')) || '1'))];
+    const matchingRestVoices = anchor ? [] : candidateVoices.filter(candidateVoice => {
+      const groups = sourceBeatGroups(measure, staff, candidateVoice);
+      return groups.length === tabGroups.length && groups.every((group, index) => simpleRest(group)
+        && text(child(group[0], 'duration')) === text(child(tabGroups[index][0], 'duration')));
+    });
+    if (!counterpart && matchingRestVoices.length !== 1) throw new Error('The paired notation voice cannot be matched safely for rhythm editing.');
+    const pairedVoice = counterpart ? text(child(counterpart, 'voice')) || '1' : matchingRestVoices[0];
     const groups = sourceBeatGroups(measure, staff, pairedVoice);
     if (groups.length !== tabGroups.length || !groups[eventIndex]) throw new Error('The paired notation events do not align safely for rhythm editing.');
     lanes.push({ staff, voice: pairedVoice, groups });
@@ -1067,6 +1073,115 @@ export function changeMusicXmlDuration(source: string, score: model.Score, posit
     for (const value of [...plan.insertRests, ...plan.leaveRests]) {
       measure.insertBefore(makeRest(document, lane.voice, lane.staff, value, ticks(durationTime(value))), reference);
     }
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+export type InsertEventOptions = RhythmPosition & { placement: 'before' | 'after'; kind: 'note' | 'rest';
+  denominator: DurationDenominator; dotted: boolean; string?: number; fret?: number };
+
+function shiftedEventProtection(group: Element[]): string | null {
+  for (const note of group) {
+    if (child(note, 'grace') || child(note, 'time-modification')) return 'A grace or tuplet event in the shifted region prevents insertion.';
+    if (child(note, 'tie') || child(note, 'beam') || child(note, 'lyric')
+      || descendants(note, 'tied').length || descendants(note, 'slide').length
+      || descendants(note, 'hammer-on').length || descendants(note, 'pull-off').length) {
+      return 'A protected span or annotation in the shifted region prevents insertion.';
+    }
+    if (protectedNoteAttachment(note)) return 'An unsupported attachment in the shifted region prevents insertion.';
+  }
+  return null;
+}
+
+export function insertMusicXmlEvent(source: string, score: model.Score, options: InsertEventOptions): string {
+  const { measure: measureIndex, beat: eventIndex, voice: voiceIndex, placement, kind, denominator, dotted } = options;
+  if (!DURATION_DENOMINATORS.includes(denominator)) throw new Error('Unsupported note duration.');
+  if (placement !== 'before' && placement !== 'after' || kind !== 'note' && kind !== 'rest') throw new Error('Invalid event insertion choice.');
+  if (kind === 'note' && (!Number.isInteger(options.string) || options.string! < 1 || options.string! > 5
+    || !Number.isInteger(options.fret) || options.fret! < 0 || options.fret! > 36)) throw new Error('Choose a valid string and fret for the new note.');
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[measureIndex]?.voices?.[voiceIndex]?.beats?.[eventIndex];
+  if (!rendered || rendered.graceType) throw new Error('Select an ordinary event before inserting another event.');
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[measureIndex];
+  if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
+  const tabStaff = sourceTabStaff(document);
+  const lanes = rhythmLanes(document, measure, tabStaff, String(voiceIndex + 1), eventIndex);
+  const target = lanes[0].groups[eventIndex];
+  const sourceMembers = target.filter(note => !child(note, 'rest')).map(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
+  }).sort();
+  if (sourceMembers.join('|') !== rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort().join('|')
+    || Boolean(child(target[0], 'rest')) !== Boolean(rendered.isRest)) {
+    throw new Error('The selected source event does not match the rendered score.');
+  }
+  const boundary = timingBoundary(document, measureIndex, tabStaff, String(voiceIndex + 1), target);
+  if (boundary) throw new Error(boundary);
+  const insertIndex = eventIndex + (placement === 'after' ? 1 : 0);
+  const oldDivisions = sourceDivisions(part, measureIndex);
+  const desired = durationTime(denominator, dotted);
+  const tail: number[] = [];
+  let available = rationalTime(0n);
+  for (let index = lanes[0].groups.length - 1; index >= insertIndex; index--) {
+    const group = lanes[0].groups[index];
+    if (!simpleRest(group)) break;
+    tail.unshift(index);
+    available = addTime(available, eventTime(group, oldDivisions));
+    if (compareTime(available, desired) >= 0) break;
+  }
+  if (compareTime(available, desired) < 0) throw new Error(REST_SPACE_ERROR);
+  const remaining = subtractTime(available, desired);
+  const replacementRests = fillRestTime(remaining);
+  for (const lane of lanes) {
+    if (lane.groups.length !== lanes[0].groups.length) throw new Error('The paired notation events do not align safely for insertion.');
+    for (let index = insertIndex; index < lane.groups.length; index++) {
+      const group = lane.groups[index];
+      if (eventTime(group, oldDivisions)[0] !== eventTime(lanes[0].groups[index], oldDivisions)[0]
+        || eventTime(group, oldDivisions)[1] !== eventTime(lanes[0].groups[index], oldDivisions)[1]
+        || Boolean(child(group[0], 'rest')) !== Boolean(child(lanes[0].groups[index][0], 'rest'))) {
+        throw new Error('The paired notation events do not align safely for insertion.');
+      }
+      const protection = shiftedEventProtection(group);
+      if (protection) throw new Error(protection);
+    }
+    for (const index of tail) if (!simpleRest(lane.groups[index])) throw new Error('The paired notation rest space does not match this voice.');
+    const first = lane.groups[insertIndex]?.[0];
+    const last = lane.groups[tail.at(-1)!].at(-1)!;
+    if (first) {
+      let cursor: Node | null = first;
+      while (cursor && cursor !== last) {
+        if (cursor.nodeType === 1) {
+          const element = cursor as Element;
+          if (element.localName !== 'note' || Number(text(child(element, 'staff')) || '1') !== lane.staff
+            || (text(child(element, 'voice')) || '1') !== lane.voice) {
+            throw new Error('Interleaved source timing or metadata prevents shifting this voice safely.');
+          }
+        }
+        cursor = cursor.nextSibling;
+      }
+      if (!cursor) throw new Error('The source voice cannot be shifted safely.');
+    }
+  }
+  const midi = kind === 'note' ? score.tracks[0].staves[0].tuning[options.string! - 1] + options.fret! : null;
+  if (kind === 'note' && !Number.isInteger(midi)) throw new Error('The selected string has no valid source tuning.');
+  const gcd = (a: bigint, b: bigint): bigint => b ? gcd(b, a % b) : a;
+  const lcm = (a: bigint, b: bigint) => a / gcd(a, b) * b;
+  const newDivisions = [desired, ...replacementRests.map(value => durationTime(value))]
+    .reduce((value, time) => lcm(value, time[1]), oldDivisions);
+  rescaleDivisions(part, measureIndex, oldDivisions, newDivisions);
+  const ticks = (time: RationalTime) => time[0] * newDivisions / time[1];
+  for (const lane of lanes) {
+    const before = lane.groups[insertIndex]?.[0] ?? lane.groups.at(-1)!.at(-1)!.nextSibling;
+    const trailing = lane.groups[tail.at(-1)!].at(-1)!.nextSibling;
+    const inserted = makeRest(document, lane.voice, lane.staff, denominator, ticks(desired));
+    writeDuration([inserted], denominator, dotted, ticks(desired));
+    if (kind === 'note') replaceRestWithNote(inserted, midi!, lane.staff === tabStaff ? options.string : undefined,
+      lane.staff === tabStaff ? options.fret : undefined);
+    measure.insertBefore(inserted, before);
+    tail.flatMap(index => lane.groups[index]).forEach(note => note.parentNode?.removeChild(note));
+    for (const value of replacementRests) measure.insertBefore(makeRest(document, lane.voice, lane.staff,
+      value, ticks(durationTime(value))), trailing);
   }
   return new XMLSerializer().serializeToString(document);
 }

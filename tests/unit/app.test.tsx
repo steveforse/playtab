@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })) }));
+const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration, insertMusicXmlEvent } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), insertMusicXmlEvent: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
@@ -29,7 +29,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration, insertMusicXmlEvent }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -60,7 +60,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); inspectMusicXmlDuration.mockReset(); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); inspectMusicXmlDuration.mockReset(); insertMusicXmlEvent.mockReset(); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -154,6 +154,39 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: '1/2 duration' }));
     expect(screen.getByRole('alert').textContent).toContain('Not enough rest space');
     expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('offers a complete Insert event dialog and records a successful insert as one history step', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    promoteNativeScore.mockReturnValue('<score-partwise/>');
+    insertMusicXmlEvent.mockReturnValue('<score-partwise><inserted/></score-partwise>');
+    readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename,
+      score: { title: score.title, masterBars: [{}] } }));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Insert event…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Insert event' });
+    fireEvent.change(screen.getByLabelText('Position'), { target: { value: 'before' } });
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'note' } });
+    fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '8' } });
+    fireEvent.click(screen.getByLabelText('Dotted'));
+    fireEvent.change(within(dialog).getByLabelText('String'), { target: { value: '2' } });
+    fireEvent.change(within(dialog).getByLabelText('Fret'), { target: { value: '3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Insert', exact: true }));
+    expect(insertMusicXmlEvent).toHaveBeenCalledWith('<score-partwise/>', expect.anything(), {
+      measure: 0, beat: 0, voice: 0, placement: 'before', kind: 'note', denominator: 8,
+      dotted: true, string: 2, fret: 3,
+    });
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    insertMusicXmlEvent.mockImplementation(() => { throw new Error('Not enough rest space in this measure.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert event…' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Insert', exact: true }));
+    expect(within(dialog).getByRole('alert').textContent).toContain('Not enough rest space');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
   });
 
   it('updates the same record with a revision and keeps a newer edit unsaved while the request finishes', async () => {

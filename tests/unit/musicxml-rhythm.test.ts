@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { changeMusicXmlDuration, inspectMusicXmlDuration, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
+import { changeMusicXmlDuration, insertMusicXmlEvent, inspectMusicXmlDuration, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -65,5 +65,85 @@ describe('ED-10 imported duration commands', () => {
     expect(after.score.masterBars[1].timeSignatureNumerator).toBe(3);
     expect(after.score.tracks[0].staves[0].bars[0].voices[1].beats.filter(beat => !beat.graceType).map(beat => beat.playbackStart))
       .toEqual(preview.score.tracks[0].staves[0].bars[0].voices[1].beats.filter(beat => !beat.graceType).map(beat => beat.playbackStart));
+  });
+});
+
+describe('ED-10 insert event', () => {
+  it('inserts a paired note after the selection and consumes only trailing rest time', () => {
+    const original = readMusicXml(paired, 'paired.musicxml');
+    const inserted = insertMusicXmlEvent(paired, original.score, {
+      measure: 0, beat: 0, voice: 1, placement: 'after', kind: 'note', denominator: 8,
+      dotted: false, string: 2, fret: 3,
+    });
+    const beats = tab(inserted);
+    expect(beats.map(beat => beat.playbackStart)).toEqual([0, 960, 1440, 2400, 3360]);
+    expect(beats[1].notes.map(note => note.fret)).toEqual([3]);
+    expect(beats[2].notes.map(note => note.fret)).toEqual([0]);
+    expect(beats.slice(3).every(beat => beat.isRest)).toBe(true);
+    expect(inserted).toContain('<backup><duration>8</duration></backup>');
+  });
+
+  it('inserts before the selected event and rejects insertion past the trailing rest', () => {
+    const original = readMusicXml(paired, 'paired.musicxml');
+    const inserted = insertMusicXmlEvent(paired, original.score, {
+      measure: 0, beat: 0, voice: 1, placement: 'before', kind: 'rest', denominator: 4,
+      dotted: false,
+    });
+    expect(tab(inserted)[0].isRest).toBe(true);
+    expect(tab(inserted)[1].notes).toHaveLength(2);
+    expect(tab(inserted)[1].playbackStart).toBe(960);
+    expect(() => insertMusicXmlEvent(paired, original.score, {
+      measure: 0, beat: 2, voice: 1, placement: 'after', kind: 'rest', denominator: 4, dotted: false,
+    })).toThrow('Not enough rest space in this measure');
+  });
+
+  it('rejects a protected shifted lyric without changing the source', () => {
+    const protectedSource = paired.replaceAll('<type>quarter</type><staff>2</staff><notations><technical><string>3</string><fret>0</fret></technical></notations></note>',
+      '<type>quarter</type><staff>2</staff><notations><technical><string>3</string><fret>0</fret></technical></notations><lyric><text>word</text></lyric></note>');
+    const original = readMusicXml(protectedSource, 'paired.musicxml');
+    expect(() => insertMusicXmlEvent(protectedSource, original.score, {
+      measure: 0, beat: 0, voice: 1, placement: 'after', kind: 'rest', denominator: 8, dotted: false,
+    })).toThrow('protected span or annotation');
+    expect(original.source).toBe(protectedSource);
+  });
+
+  it('matches an unambiguous all-rest paired voice for rhythm edits and insertion', () => {
+    const head = paired.slice(0, paired.indexOf('    <note>'));
+    const allRests = `${head}
+    <note><rest/><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+    <note><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/><staff>1</staff></note>
+    <backup><duration>4</duration></backup>
+    <note><rest/><duration>1</duration><voice>2</voice><type>quarter</type><staff>2</staff></note>
+    <note><rest/><duration>3</duration><voice>2</voice><type>half</type><dot/><staff>2</staff></note>
+  </measure></part></score-partwise>`;
+    const original = readMusicXml(allRests, 'all-rest.musicxml');
+    const split = changeMusicXmlDuration(allRests, original.score, { measure: 0, beat: 0, voice: 1 }, 8);
+    expect(readMusicXml(split, 'all-rest.musicxml').score.tracks[0].staves[0].bars[0].voices[1].beats).toHaveLength(3);
+    const inserted = insertMusicXmlEvent(allRests, original.score, {
+      measure: 0, beat: 0, voice: 1, placement: 'after', kind: 'rest', denominator: 8, dotted: false,
+    });
+    expect(readMusicXml(inserted, 'all-rest.musicxml').score.tracks[0].staves[0].bars[0].voices[1].beats).toHaveLength(4);
+  });
+
+  it('keeps a separate voice and the next measure at their original onsets', () => {
+    const source = fs.readFileSync('tests/fixtures/editor-rich.musicxml', 'utf8');
+    const original = readMusicXml(source, 'voices.musicxml');
+    const changed = insertMusicXmlEvent(source, original.score, {
+      measure: 0, beat: 0, voice: 3, placement: 'after', kind: 'rest', denominator: 8, dotted: false,
+    });
+    const after = readMusicXml(changed, 'voices.musicxml');
+    expect(after.score.tracks[0].staves[0].bars[0].voices[1].beats.map(beat => beat.playbackStart))
+      .toEqual(original.score.tracks[0].staves[0].bars[0].voices[1].beats.map(beat => beat.playbackStart));
+    expect(after.score.tracks[0].staves[0].bars[1].voices[3].beats[0].playbackStart)
+      .toBe(original.score.tracks[0].staves[0].bars[1].voices[3].beats[0].playbackStart);
+  });
+
+  it('validates insertion choices before editing the source', () => {
+    const original = readMusicXml(paired, 'paired.musicxml');
+    const base = { measure: 0, beat: 0, voice: 1, placement: 'after' as const,
+      kind: 'note' as const, denominator: 8 as const, dotted: false, string: 2, fret: 3 };
+    expect(() => insertMusicXmlEvent(paired, original.score, { ...base, fret: 37 })).toThrow('valid string and fret');
+    expect(() => insertMusicXmlEvent(paired, original.score, { ...base, denominator: 3 as never })).toThrow('Unsupported note duration');
+    expect(() => insertMusicXmlEvent(paired, original.score, { ...base, placement: 'middle' as never })).toThrow('Invalid event insertion choice');
   });
 });
