@@ -670,30 +670,25 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const noteBounds = target.note && beatBounds.notes?.find(item => item.note === target.note || item.note.id === target.note?.id);
     const bounds = noteBounds?.noteHeadBounds ?? { ...beatBounds.visualBounds };
     if (!noteBounds && currentSelection.string !== null && lookup) {
-      // Project a single string cell, rather than outlining the entire beat.
+      // An empty position is an insertion caret, centered in the fret column.
       const rows = editingStringRows(lookup, target.beat);
-      bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - 6;
-      bounds.h = 12;
-      // onNotesX is an event anchor, not the left edge of a fret glyph. Use
-      // the note-head offset from this event or another event in its system.
-      const system = lookup.staffSystems.find(item => item.bars.some(master => master.bars.some(bar => bar.beats.some(item => item.beat === target.beat))));
-      const reference = beatBounds.notes?.[0] ? { beat: beatBounds, note: beatBounds.notes[0] }
-        : system?.bars.flatMap(master => master.bars.flatMap(bar => bar.beats
-          .filter(item => item.beat.voice.bar.staff === target.beat.voice.bar.staff && item.notes?.length)
-          .map(item => ({ beat: item, note: item.notes![0] }))))[0];
-      bounds.x = beatBounds.onNotesX + (reference ? reference.note.noteHeadBounds.x - reference.beat.onNotesX : -6);
-      bounds.w = reference?.note.noteHeadBounds.w ?? 12;
+      bounds.y = rows.top + (currentSelection.string - 1) * rows.spacing - 9;
+      bounds.h = 18;
+      // Chord noteHeadBounds move left for wider frets (e.g. 12), while
+      // onNotesX remains the center of the rendered fret column.
+      bounds.x = beatBounds.onNotesX;
+      bounds.w = 2;
     }
     const surface = root.querySelector<HTMLElement>('.at-surface') ?? root;
     const position = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
     const overlay = document.createElement('div');
-    overlay.className = 'editor-note-selection';
+    overlay.className = `editor-note-selection${noteBounds ? ' editor-note-selection-note' : ' editor-note-selection-empty'}`;
     overlay.setAttribute('aria-hidden', 'true');
     overlay.dataset.noteId = String(target.note?.id ?? '');
-    overlay.style.left = `${bounds.x + position.x}px`;
-    overlay.style.top = `${position.y}px`;
-    overlay.style.width = `${Math.max(12, bounds.w)}px`;
-    overlay.style.height = `${Math.max(12, bounds.h)}px`;
+    overlay.style.left = `${bounds.x + position.x - (noteBounds ? 5 : 1)}px`;
+    overlay.style.top = `${position.y + (noteBounds ? 1 : 0)}px`;
+    overlay.style.width = '2px';
+    overlay.style.height = `${noteBounds ? Math.max(10, bounds.h - 2) : bounds.h}px`;
     surface.append(overlay);
   }
 

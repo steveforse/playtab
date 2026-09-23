@@ -77,7 +77,8 @@ test('ED-02 selects an unoccupied staff string in the same beat', async ({ page 
   await expect(inspector).toContainText(/String [1245]/);
   await expect(inspector).not.toContainText('String 3');
   const caret = (await page.locator('.editor-note-selection').boundingBox())!;
-  expect(caret.height).toBeLessThanOrEqual(16);
+  expect(caret.width).toBeLessThanOrEqual(2);
+  expect(caret.height).toBeLessThanOrEqual(18);
   expect(Math.abs(caret.y + caret.height / 2 - (box!.y + 18))).toBeLessThan(12);
 });
 
