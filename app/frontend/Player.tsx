@@ -264,20 +264,28 @@ export function paginatedPoint(root: HTMLElement, event: MouseEvent) {
   });
   if (pageIndex < 0 || pageIndex >= pageTops.length) return null;
   const page = pages[pageIndex];
-  const bounds = page.getBoundingClientRect();
+  const point = elementPoint(page, event);
   return {
-    x: event.clientX - bounds.left - page.clientLeft,
-    y: pageTops[pageIndex] + event.clientY - bounds.top - page.clientTop,
+    x: point.x - page.clientLeft,
+    y: pageTops[pageIndex] + point.y - page.clientTop,
     pageIndex,
   };
+}
+
+function elementPoint(element: HTMLElement, event: MouseEvent) {
+  const bounds = element.getBoundingClientRect();
+  // Browser zoom and CSS transforms change screen coordinates, while
+  // alphaTab's bounds lookup stays in the element's layout coordinates.
+  const scaleX = bounds.width / (element.offsetWidth || bounds.width) || 1;
+  const scaleY = bounds.height / (element.offsetHeight || bounds.height) || 1;
+  return { x: (event.clientX - bounds.left) / scaleX, y: (event.clientY - bounds.top) / scaleY };
 }
 
 function scorePoint(root: HTMLElement, event: MouseEvent, view: ScoreView) {
   if (view !== 'continuous') return paginatedPoint(root, event);
   const surface = root.querySelector<HTMLElement>('.at-surface');
   if (!surface) return null;
-  const bounds = surface.getBoundingClientRect();
-  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  return elementPoint(surface, event);
 }
 
 function clampTabString(value: number) {

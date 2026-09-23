@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 test('adds an imported chord tone and rest note on paired staves with an aligned empty caret', async ({ page }) => {
   await page.goto('/');
@@ -35,6 +36,39 @@ test('adds an imported chord tone and rest note on paired staves with an aligned
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
+test('clicking an empty string and entering a two-digit fret stays aligned at 200% zoom', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/paired-staff.musicxml');
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  await page.evaluate(() => { document.documentElement.style.zoom = '200%'; });
+  await page.waitForTimeout(500);
+  const firstFret = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  await firstFret.scrollIntoViewIfNeeded();
+  const first = (await firstFret.boundingBox())!;
+  const second = (await notation.locator('svg text').filter({ hasText: /^0$/ }).nth(1).boundingBox())!;
+  const x = first.x + first.width / 2;
+  const y = (first.y + first.height / 2 + second.y + second.height / 2) / 2;
+  await page.mouse.click(x, y);
+  const inspector = page.getByLabel('Selection inspector');
+  await expect(inspector.locator('.editor-selection-summary')).toContainText('String 2');
+  await expect(page.getByRole('button', { name: 'Add note' })).toBeVisible();
+  await notation.press('1');
+  await notation.press('2');
+  await expect(inspector.locator('.editor-selection-summary')).toContainText('Fret 12');
+  await expect(inspector.locator('.editor-selection-summary')).toContainText('String 2');
+  const alignment = await page.evaluate(() => {
+    const caret = document.querySelector('.editor-note-selection')!.getBoundingClientRect();
+    const added = Array.from(document.querySelectorAll('[data-testid="notation"] svg text'))
+      .find(item => item.textContent === '12')!.getBoundingClientRect();
+    return Math.abs((caret.y + caret.height / 2) - (added.y + added.height / 2));
+  });
+  expect(alignment).toBeLessThan(6);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
 test('saves an added note to a TEF imported library score and reopens it', async ({ page }) => {
   let saved = {
     version: 2, kind: 'musicxml', title: 'Paired staff exercise', sourceFormat: 'tef',
@@ -66,4 +100,90 @@ test('saves an added note to a TEF imported library score and reopens it', async
   await page.getByRole('button', { name: 'Paired staff exercise', exact: true }).click();
   await expect(notation.locator('svg text').filter({ hasText: /^1$/ })).toHaveCount(1);
   expect(saved.sourceFormat).toBe('tef');
+});
+
+test('new fret stays on its selected string in a private imported score', async ({ page }) => {
+  test.skip(!process.env.PLAYTAB_EDITOR_XML, 'Optional private score; never checked in.');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles(process.env.PLAYTAB_EDITOR_XML!);
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const bottomIndex = await page.evaluate(() => {
+    const texts = Array.from(document.querySelectorAll('[data-testid="notation"] svg text'));
+    const zeros = texts.filter(item => item.textContent === '0');
+    const group = zeros.find(item => zeros.filter(other => Math.abs(other.getBoundingClientRect().x - item.getBoundingClientRect().x) < 1
+      && Math.abs(other.getBoundingClientRect().y - item.getBoundingClientRect().y) < 70).length >= 3);
+    if (!group) return -1;
+    const row = zeros.filter(item => Math.abs(item.getBoundingClientRect().x - group.getBoundingClientRect().x) < 1
+      && Math.abs(item.getBoundingClientRect().y - group.getBoundingClientRect().y) < 35)
+      .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y)[2];
+    return texts.indexOf(row);
+  });
+  expect(bottomIndex).toBeGreaterThanOrEqual(0);
+  const bottom = notation.locator('svg text').nth(bottomIndex);
+  await bottom.scrollIntoViewIfNeeded();
+  const bottomBox = (await bottom.boundingBox())!;
+  await page.mouse.click(bottomBox.x + bottomBox.width / 2, bottomBox.y + bottomBox.height / 2 + 14.3);
+  await expect(page.getByLabel('Selection inspector')).toContainText('String 4');
+  await expect(page.getByRole('button', { name: 'Add note' })).toBeVisible();
+  const snapshot = () => page.evaluate(() => {
+    const box = document.querySelector('.editor-note-selection')!.getBoundingClientRect();
+    const notes = Array.from(document.querySelectorAll('[data-testid="notation"] svg text'))
+      .filter(item => /^\d+$/.test(item.textContent || ''));
+    const anchor = notes.find(item => item.textContent === '0' && Math.abs(item.getBoundingClientRect().x - box.x) < 15)!.getBoundingClientRect();
+    const added = notes.find(item => item.textContent === '12' && Math.abs(item.getBoundingClientRect().x - box.x) < 15)?.getBoundingClientRect();
+    return { caretFromAnchor: box.y - anchor.y, addedFromAnchor: added ? added.y - anchor.y : null };
+  });
+  const before = await snapshot();
+  await notation.press('1');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 1');
+  await expect(page.getByLabel('Selection inspector')).toContainText('String 4');
+  await notation.press('2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 12');
+  await expect(page.getByLabel('Selection inspector')).toContainText('String 4');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(notation.locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(1);
+  const after = await snapshot();
+  expect(Math.abs(after.caretFromAnchor - before.caretFromAnchor)).toBeLessThan(5);
+  expect(Math.abs(after.addedFromAnchor! - before.caretFromAnchor)).toBeLessThan(5);
+});
+
+test('two digit insertion keeps the selected string in the saved Wellerman', async ({ page }) => {
+  test.skip(!process.env.PLAYTAB_STORED_WELLERMAN, 'Optional local library score; no private music is checked in.');
+  const saved = JSON.parse(execFileSync('docker', ['compose', '-f', 'compose.yml', 'exec', '-T', 'web', 'bin/rails', 'runner',
+    'print Song.where("title ILIKE ?", "%Wellerman%").first.score.to_json'], { encoding: 'utf8' }));
+  await page.route('**/api/songs', route => route.fulfill({ json: [{ id: 42, title: saved.title }] }));
+  await page.route('**/api/songs/42', route => route.fulfill({ json: { id: 42, title: saved.title, score: saved, source_text: null } }));
+  await page.goto('/');
+  await page.getByRole('button', { name: 'The Wellerman', exact: true }).click();
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  if (process.env.PLAYTAB_ZOOM) await page.evaluate(() => { document.documentElement.style.zoom = '200%'; });
+  const targetPosition = await page.evaluate(() => {
+    const texts = Array.from(document.querySelectorAll('[data-testid="notation"] svg text'));
+    const zeros = texts.filter(item => item.textContent === '0');
+    const group = zeros.find(item => zeros.filter(other => Math.abs(other.getBoundingClientRect().x - item.getBoundingClientRect().x) < 1
+      && Math.abs(other.getBoundingClientRect().y - item.getBoundingClientRect().y) < 70).length >= 3);
+    if (!group) return null;
+    const rows = zeros.filter(item => Math.abs(item.getBoundingClientRect().x - group.getBoundingClientRect().x) < 1
+      && Math.abs(item.getBoundingClientRect().y - group.getBoundingClientRect().y) < 70)
+      .sort((a, b) => a.getBoundingClientRect().y - b.getBoundingClientRect().y);
+    return { index: texts.indexOf(rows[2]), spacing: rows[2].getBoundingClientRect().y - rows[1].getBoundingClientRect().y };
+  });
+  expect(targetPosition).not.toBeNull();
+  const target = notation.locator('svg text').nth(targetPosition!.index);
+  await target.scrollIntoViewIfNeeded();
+  const box = (await target.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + targetPosition!.spacing * 2);
+  await expect(page.getByLabel('Selection inspector')).toContainText('Measure 2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Event 5');
+  await expect(page.getByLabel('Selection inspector')).toContainText('String 5');
+  await notation.press('1');
+  await notation.press('2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('String 5');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 12');
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
