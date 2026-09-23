@@ -6,8 +6,22 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml } = vi.hoisted(() => ({ readMusicXml: vi.fn() }));
-vi.mock('../../app/frontend/Player', () => ({ Player: () => <div data-testid="player" /> }));
+const { readMusicXml, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes } = vi.hoisted(() => ({ readMusicXml: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn() }));
+vi.mock('../../app/frontend/Player', () => ({
+  Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
+    <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
+    {editing && <>
+      <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>
+      <button type="button" data-testid="choose-empty" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Choose empty</button>
+      <button type="button" data-testid="delete-empty" onClick={() => onSelectionDelete?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Delete empty</button>
+    </>}
+  </>,
+  defaultPlayerPreferences: () => ({
+    speed: 1, volume: 1, loop: false, metronome: false, barsPerRow: 4, lyricsColumns: 2,
+    scoreView: 'continuous', scrollDirection: 'vertical', showChordDiagrams: false,
+    hideTabClef: false, soundFontId: 'musescore-general-lite',
+  }),
+}));
 vi.mock('../../app/frontend/music/musicxml', () => ({
   readMusicXml,
   toImportedScoreDocument: (preview: any, warnings: string[]) => ({
@@ -15,6 +29,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -45,8 +60,25 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
+
+  it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Select passage'));
+    fireEvent.click(screen.getByRole('button', { name: 'Set range start' }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.click(screen.getByRole('button', { name: 'Set range end' }));
+    expect((screen.getByRole('button', { name: 'Clear passage' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Clear passage' }));
+    expect((screen.getByRole('button', { name: 'Clear passage' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+  });
 
   it('loads the library, opens plaintext and saves the native score', async () => {
     const fetchMock = vi.fn()
@@ -56,23 +88,115 @@ describe('workspace application', () => {
     render(<App />);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/songs', expect.anything()));
+    fireEvent.click(screen.getByRole('button', { name: /Practice demo/ }));
+    fireEvent.click(screen.getByTestId('player'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss practice tip' }));
+    expect(screen.queryByRole('note', { name: 'Practice tip' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Import a tab/ }));
     fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Morning tune' } });
     fireEvent.change(screen.getByLabelText('Plaintext tablature'), { target: { value: exportAscii(demo) } });
     fireEvent.click(screen.getByRole('button', { name: /Open in player/ }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Morning tune' })).toBeTruthy());
-    fireEvent.change(screen.getByLabelText('Score title'), { target: { value: 'Edited morning' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Edited morning' })).toBeTruthy());
+    expect(screen.queryByLabelText('Score editor')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Save to library/ }));
     await waitFor(() => expect(screen.getByText('Saved to your library.')).toBeTruthy());
     expect(fetchMock).toHaveBeenLastCalledWith('/api/songs', expect.objectContaining({ method: 'POST' }));
     fireEvent.click(screen.getByRole('button', { name: /My library/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Practice demo/ }));
+    expect(screen.queryByRole('button', { name: /Practice demo/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'My banjo tab' }));
     openImport();
     fireEvent.click(screen.getByRole('button', { name: 'Close import' }));
+  });
+
+  it('updates the same record with a revision and keeps a newer edit unsaved while the request finishes', async () => {
+    let finishSave!: (value: ReturnType<typeof response>) => void;
+    const pendingSave = new Promise<ReturnType<typeof response>>(resolve => { finishSave = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 7, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, score, source_text: null, revision: 2 }))
+      .mockReturnValueOnce(pendingSave)
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, revision: 4 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/songs/7', expect.objectContaining({ method: 'PATCH' }));
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+    const firstSave = JSON.parse(fetchMock.mock.lastCall![1].body);
+    expect(firstSave.revision).toBe(2);
+    expect(firstSave.score.measures[0].beats[0].notes[0].fret).toBe(4);
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getAllByText('Saving…')).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(1);
+    finishSave(response({ id: 7, title: score.title, revision: 3 }));
+    await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
+    expect(JSON.parse(fetchMock.mock.lastCall![1].body).revision).toBe(3);
+    expect(fetchMock.mock.calls.filter(call => call[0] === '/api/songs/7' && call[1]?.method === 'PATCH')).toHaveLength(2);
+  });
+
+  it('saves a titled copy under a new id and retries a failed update without losing the draft', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 7, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, score, source_text: null, revision: 1 }))
+      .mockResolvedValueOnce(response({ id: 8, title: 'Second tune', revision: 0 }))
+      .mockResolvedValueOnce(response({ error: 'Cannot save right now.' }, false, 422))
+      .mockResolvedValueOnce(response({ id: 8, title: 'Second tune', revision: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByText('More'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save a copy…' }));
+    expect((screen.getByLabelText('Copy title') as HTMLInputElement).value).toContain('— copy');
+    fireEvent.change(screen.getByLabelText('Copy title'), { target: { value: 'Second tune' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save copy' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Second tune' })).toBeTruthy());
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/songs', expect.objectContaining({ method: 'POST' }));
+    expect(screen.getByRole('button', { name: score.title })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.getByText('Could not save')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(screen.getByText('Saved')).toBeTruthy());
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/songs/8', expect.objectContaining({ method: 'PATCH' }));
+  });
+
+  it('retries a failed copy as a new record without updating the original', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{ id: 7, title: score.title }]))
+      .mockResolvedValueOnce(response({ id: 7, title: score.title, score, source_text: null, revision: 1 }))
+      .mockResolvedValueOnce(response({ error: 'Temporary failure.' }, false, 500))
+      .mockResolvedValueOnce(response({ id: 8, title: 'Copy after retry', revision: 0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: score.title });
+    fireEvent.click(screen.getByRole('button', { name: score.title }));
+    await screen.findByText('Saved');
+    fireEvent.click(screen.getByText('More'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save a copy…' }));
+    fireEvent.change(screen.getByLabelText('Copy title'), { target: { value: 'Copy after retry' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save copy' }));
+    await waitFor(() => expect(screen.getByText('Could not save')).toBeTruthy());
+    expect(screen.getByRole('heading', { name: score.title })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Copy after retry' })).toBeTruthy());
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(call => call[1]?.method === 'PATCH')).toHaveLength(0);
   });
 
   it('opens stored native and imported scores and reports load failures', async () => {
@@ -83,7 +207,6 @@ describe('workspace application', () => {
       .mockResolvedValueOnce(response([{ id: 1, title: 'Native' }, { id: 2, title: 'Imported' }]))
       .mockResolvedValueOnce(response(native))
       .mockResolvedValueOnce(response(imported))
-      .mockResolvedValueOnce(response({ id: 2, title: 'Edited imported' }))
       .mockRejectedValueOnce(new Error('library unavailable'));
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
@@ -91,17 +214,9 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Native' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: demo.title })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Imported' }));
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported' })).toBeTruthy());
     expect(screen.getByText('warning')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Score title'), { target: { value: 'Edited imported' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
-    await waitFor(() => expect(screen.getByText('Edits applied. Save the score to keep them.')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(screen.getByText('Changes saved to your library.')).toBeTruthy());
-    readMusicXml.mockImplementationOnce(() => { throw new Error('edit failed'); });
-    fireEvent.change(screen.getByLabelText('Score title'), { target: { value: 'Broken edit' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply edits' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('edit failed'));
+    expect(screen.queryByLabelText('Score editor')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Native' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('library unavailable'));
   });
@@ -113,8 +228,12 @@ describe('workspace application', () => {
     render(<App />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     openImport();
-    selectFile('notes.pdf');
-    expect((await screen.findByRole('alert')).textContent).toContain('PDF recognition');
+    fetchMock.mockResolvedValueOnce(response({ musicxml: preview.source, warnings: ['PDF warning'] }));
+    selectFile('notes.pdf', 'raw pdf');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/pdf_imports', expect.objectContaining({ method: 'POST' })));
+    await waitFor(() => expect(screen.getByText('PDF warning')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss import warnings' }));
+    openImport();
     selectFile('notes.mid');
     expect((await screen.findByRole('alert')).textContent).toContain('Choose a .tef');
     selectFile('notes.musicxml', 'x', 2_000_001);
@@ -161,6 +280,198 @@ describe('workspace application', () => {
     await waitFor(() => expect(screen.getAllByRole('alert').map(alert => alert.textContent).some(text => text?.includes('five tablature lines'))).toBe(true));
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, json: async () => { throw new Error('not json'); } });
     fireEvent.click(screen.getByRole('button', { name: /Save to library/ }));
-    await waitFor(() => expect(screen.getAllByRole('alert').map(alert => alert.textContent)).toContain('Request failed (500).'));
+    await waitFor(() => expect(screen.getAllByRole('alert').some(alert => alert.textContent?.includes('Request failed (500).'))).toBe(true));
+  });
+
+  it('signs out the current account', async () => {
+    const root = document.createElement('div');
+    root.id = 'playtab-root';
+    root.dataset.userEmail = 'user@example.com';
+    document.body.append(root);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const originalLocation = window.location;
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...originalLocation, assign } });
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText('user@example.com')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/session', expect.objectContaining({ method: 'DELETE' })));
+    expect(assign).toHaveBeenCalledWith('/session/new');
+    Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+    root.remove();
+  });
+
+  it('reports a failed sign out request', async () => {
+    const root = document.createElement('div');
+    root.id = 'playtab-root';
+    root.dataset.userEmail = 'user@example.com';
+    document.body.append(root);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response({ error: 'no' }, false, 500));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText('user@example.com')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not sign out.'));
+    root.remove();
+  });
+
+  it('enters and leaves explicit score edit mode without changing the score', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/songs', expect.anything()));
+    expect(screen.queryByLabelText('Edit tools')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit score' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('player')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    expect(screen.getByRole('button', { name: 'Done editing' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByLabelText('Edit tools')).toBeTruthy();
+    expect(screen.getByText('Select a note or empty string position to begin editing.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Practice demo/ })).toBeNull();
+    expect(screen.getByTestId('player')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
+    expect(screen.queryByLabelText('Edit tools')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Edit score' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('player')).toBeTruthy();
+  });
+
+  it('applies, moves, deletes, undoes and redoes a native selected note', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Move to string'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Move', exact: true }));
+    expect(screen.getByText('String 2')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Redo', exact: true }));
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(document, { key: 'Delete' });
+    expect(screen.getByText('String 2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo', exact: true }));
+    expect(screen.getByText('Fret 4')).toBeTruthy();
+  });
+
+  it('adds a native note at an empty staff position and replaces it without changing the chord', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect(screen.getByText('String 2')).toBeTruthy();
+    expect(screen.getByText('Fret 1')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByText('Fret 2')).toBeTruthy();
+  });
+
+  it('removes native notes, makes rests, and ignores Delete on an empty selection', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('delete-empty'));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
+    expect(screen.queryByText('Fret 0')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    expect(screen.queryByText('Fret 0')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+  });
+
+  it('requires confirmation for imported dependencies and restores the source with one Undo', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    const beforeBeat = { notes: [{ fret: 0 }], playbackStart: 0, graceType: 0, isRest: false };
+    const afterBeat = { notes: [], playbackStart: 0, graceType: 0, isRest: true };
+    const imported = (value: string) => ({ ...preview, source: value, score: {
+      ...preview.score, tracks: [{ staves: [{ bars: [{ voices: [{ beats: [value.includes('removed') ? afterBeat : beforeBeat] }] }] }] }],
+    } });
+    readMusicXml.mockImplementation((value: string) => imported(value));
+    removeMusicXmlNotes.mockReturnValue({ source: '<score-partwise removed="true"/>', dependencies: ['hammer-on'] });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    expect(screen.getByRole('dialog', { name: 'Confirm note removal' }).textContent).toContain('hammer-on');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    fireEvent.click(screen.getByRole('dialog', { name: 'Confirm note removal' }).querySelector('button:last-child')!);
+    expect(screen.queryByText('Fret 0')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+  });
+
+  it('blocks an imported deletion with a protected attachment', async () => {
+    const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
+    readMusicXml.mockReturnValue(imported);
+    removeMusicXmlNotes.mockImplementation(() => { throw new Error('This note has a protected tap attachment.'); });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', imported.source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Make rest' }));
+    expect(screen.getByRole('alert').textContent).toContain('protected tap attachment');
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('handles imported note corrections, empty selections, and failed restores', async () => {
+    const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
+    readMusicXml.mockReturnValue(imported);
+    musicXmlEditorState.mockReturnValue({ notes: [{ index: 0, measure: 0, beat: 0, string: 3, fret: 0, technique: 'none' }] });
+    applyMusicXmlEdits.mockReturnValue('<edited/>');
+    addMusicXmlNote.mockReturnValue('<added/>');
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    openImport();
+    selectFile('import.musicxml', imported.source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect(addMusicXmlNote).toHaveBeenCalledWith(imported.source, imported.score, expect.objectContaining({ measure: 0, beat: 1, string: 2, fret: 1 }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '23' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    await waitFor(() => expect(screen.getByText('Fret 23')).toBeTruthy());
+    fireEvent.keyDown(document, { key: 'Delete' });
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true });
+    expect(applyMusicXmlEdits).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
   });
 });

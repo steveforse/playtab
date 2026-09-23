@@ -25,7 +25,8 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     end
     tail_offset += parsed[:chords].length * 32
     lyrics_length = result[:bytes].byteslice(tail_offset, 2).unpack1("v")
-    assert_equal 0, result[:bytes].getbyte(tail_offset + 2)
+    assert result[:bytes].byteslice(tail_offset + 2, 9).start_with?("LYRICS &")
+    assert_equal 0, result[:bytes].getbyte(tail_offset + 2 + lyrics_length - 1)
     tail_offset += lyrics_length + 2
     assert_equal 5, result[:bytes].getbyte(tail_offset)
     assert_equal 99, result[:bytes].getbyte(tail_offset + 4)
@@ -86,7 +87,19 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert_equal 6, chord_model.notes.first[:annotation]
 
     tef2_chord = Tef2::FullParser.parse(Tef2::Exporter::LegacyWriter.build(chord_model))[:chords].first
-    tef3_chord = Tef2::TableditV3Parser.parse(Tef2::Exporter::TableditWriter.build(chord_model))[:chords].first
+    tef3_bytes = Tef2::Exporter::TableditWriter.build(chord_model)
+    tef3_chord = Tef2::TableditV3Parser.parse(tef3_bytes)[:chords].first
+    assert_equal [ 0x10, 0x00, 0x01, 0x03 ], tef3_bytes.byteslice(0, 4).bytes
+    assert_equal 0x00A2, tef3_bytes.byteslice(4, 2).unpack1("v")
+    assert_equal 0x0301, tef3_bytes.byteslice(0x1C, 2).unpack1("v")
+    assert_equal 0x100, tef3_bytes.byteslice(0x40, 4).unpack1("V")
+    lyrics_offset = tef3_bytes.byteslice(0x4C, 4).unpack1("V")
+    text_block_offset = tef3_bytes.byteslice(0x50, 4).unpack1("V")
+    assert_equal 1, tef3_bytes.byteslice(lyrics_offset, 2).unpack1("v")
+    assert_equal [ 1, 0, 0 ], tef3_bytes.byteslice(text_block_offset, 3).bytes
+    assert_equal text_block_offset + 3, tef3_bytes.byteslice(0x54, 4).unpack1("V")
+    assert_equal 12, tef3_bytes.byteslice(tef3_bytes.byteslice(0x5C, 4).unpack1("V"), 2).unpack1("v")
+    assert_equal 36, tef3_bytes.byteslice(tef3_bytes.byteslice(0x58, 4).unpack1("V"), 2).unpack1("v")
     assert_equal [ 0, 2, 2, 1, -1 ], tef2_chord[:strings]
     assert_equal [ 0, 2, 2, 1, -1 ], tef3_chord[:strings]
     assert_equal 2, tef3_chord[:first_fret]

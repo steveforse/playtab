@@ -10,6 +10,7 @@ export type EditableMusicXmlNote = {
   string: number;
   fret: number;
   technique: TechniqueChoice;
+  deleted?: boolean;
 };
 
 export type MusicXmlEditorState = {
@@ -48,6 +49,70 @@ function sourceTabNotes(document: Document) {
   if (!part) return [];
   return directMeasures(part).flatMap(measure => children(measure).filter(note => note.localName === 'note')
     .filter(note => Number(text(child(note, 'staff')) || '1') === staff && child(child(note, 'notations') ?? note, 'technical') && child(child(child(note, 'notations') ?? note, 'technical')!, 'string')));
+}
+
+// Match the original source before either representation is changed. Use
+// musical position and pitch, never parallel note-array indexes: chords may
+// be written in a different order on the two staves.
+function linkedStaffNotes(document: Document) {
+  type Fraction = [number, number];
+  const fraction = (n: number, d = 1): Fraction => {
+    const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
+    const divisor = gcd(Math.abs(n), d) || 1;
+    return [n / divisor, d / divisor];
+  };
+  const add = (a: Fraction, b: Fraction): Fraction => fraction(a[0] * b[1] + b[0] * a[1], a[1] * b[1]);
+  const keyFor = new Map<Element, string>();
+  const byStaff = new Map<number, Map<string, Element[]>>();
+  const part = descendants(document.documentElement, 'part')[0];
+  let divisions = 1;
+  for (const [measureIndex, measure] of (part ? directMeasures(part) : []).entries()) {
+    let position: Fraction = [0, 1];
+    const previous = new Map<string, Fraction>();
+    const graceCounts = new Map<string, number>();
+    for (const item of children(measure)) {
+      if (item.localName === 'attributes') divisions = Number(text(child(item, 'divisions'))) || divisions;
+      const duration = fraction(Number(text(child(item, 'duration'))) || 0, divisions);
+      if (item.localName === 'backup' || item.localName === 'forward') {
+        position = add(position, [duration[0] * (item.localName === 'backup' ? -1 : 1), duration[1]]);
+      }
+      if (item.localName !== 'note') continue;
+      const staff = Number(text(child(item, 'staff')) || '1');
+      const voice = text(child(item, 'voice')) || '1';
+      const lane = `${staff}:${voice}`;
+      const onset = child(item, 'chord') ? previous.get(lane) ?? position : position;
+      previous.set(lane, onset);
+      const grace = Boolean(child(item, 'grace'));
+      const graceKey = `${lane}:${onset.join('/')}`;
+      if (grace && !child(item, 'chord')) graceCounts.set(graceKey, (graceCounts.get(graceKey) ?? 0) + 1);
+      if (!grace && !child(item, 'chord')) position = add(position, duration);
+      const pitch = child(item, 'pitch');
+      if (!pitch) continue;
+      const pitchValue = (Number(text(child(pitch, 'octave'))) + 1) * 12
+        + ({ C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[text(child(pitch, 'step'))] ?? 0)
+        + Number(text(child(pitch, 'alter')) || 0);
+      const key = `${measureIndex}:${onset.join('/')}:${duration.join('/')}:${grace ? graceCounts.get(graceKey) : 'main'}:${pitchValue}`;
+      keyFor.set(item, key);
+      if (!byStaff.has(staff)) byStaff.set(staff, new Map());
+      const notes = byStaff.get(staff)!;
+      notes.set(key, [...(notes.get(key) ?? []), item]);
+    }
+  }
+  const tabStaff = sourceTabStaff(document);
+  return (note: Element): Element[] => {
+    const key = keyFor.get(note);
+    if (!key) return [];
+    const result: Element[] = [];
+    for (const [staff, notes] of byStaff) {
+      if (staff === tabStaff) continue;
+      const candidates = notes.get(key) ?? [];
+      if (candidates.length !== 1 || byStaff.get(tabStaff)?.get(key)?.length !== 1) {
+        throw new Error('This note cannot be uniquely matched to its paired notation staff.');
+      }
+      result.push(candidates[0]);
+    }
+    return result;
+  };
 }
 
 function modelNotes(score: model.Score) {
@@ -110,7 +175,7 @@ export function musicXmlEditorState(source: string, score: model.Score): MusicXm
     tempo: Number.isInteger(tempo) ? tempo : 96,
     tuning: [...(tab?.tuning ?? [])],
     measureCount: score.masterBars?.length ?? (part ? directMeasures(part).length : 1),
-    lyricsSection: lyrics?.textContent?.replace(/^\s*LYRICS\s*&\s*CHORDS\s*\r?\n?/i, '').trimEnd() ?? '',
+    lyricsSection: lyrics?.textContent?.replace(/^\s*(?:LYRICS\s*&\s*CHORDS|CHORDS\s*&\s*LYRICS)\s*\r?\n?/i, '').trimEnd() ?? '',
     annotations,
     chords,
     notes,
@@ -143,11 +208,12 @@ function setPitch(note: Element, midi: number) {
 }
 
 export function replaceTechnique(note: Element, choice: TechniqueChoice) {
+  if (choice === 'keep') return;
   const notations = child(note, 'notations') ?? (() => { const created = note.ownerDocument!.createElement('notations'); note.appendChild(created); return created; })();
   const technical = child(notations, 'technical') ?? (() => { const created = note.ownerDocument!.createElement('technical'); notations.appendChild(created); return created; })();
   const replaceable = ['fingering', 'hammer-on', 'pull-off', 'slide', 'bend', 'other-technical'];
   children(technical).filter(item => replaceable.includes(item.localName)).forEach(item => technical.removeChild(item));
-  if (choice === 'keep' || choice === 'none') return;
+  if (choice === 'none') return;
   const document = note.ownerDocument!;
   if (choice.startsWith('finger-')) {
     const fingering = document.createElement('fingering');
@@ -260,8 +326,49 @@ function setMeasureCount(document: Document, count: number) {
   }
 }
 
-export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState): string {
-  const document = parseDocument(source);
+function removePairedTechniqueForDeletedNote(sourceNotes: Element[], index: number) {
+  const note = sourceNotes[index];
+  const technical = child(child(note, 'notations') ?? note, 'technical');
+  if (!technical) return;
+  const string = text(child(technical, 'string'));
+  children(technical).filter(item => item.localName === 'hammer-on' || item.localName === 'pull-off').forEach(marker => {
+    const type = marker.getAttribute('type') || 'start';
+    const step = type === 'stop' ? -1 : 1;
+    for (let cursor = index + step; cursor >= 0 && cursor < sourceNotes.length; cursor += step) {
+      const candidateTechnical = child(child(sourceNotes[cursor], 'notations') ?? sourceNotes[cursor], 'technical');
+      if (!candidateTechnical || text(child(candidateTechnical, 'string')) !== string) continue;
+      const paired = children(candidateTechnical).find(item => item.localName === marker.localName && (item.getAttribute('type') || 'start') === (type === 'stop' ? 'start' : 'stop'));
+      if (paired) candidateTechnical.removeChild(paired);
+      break;
+    }
+  });
+}
+
+function removeIncompatibleDirectionalTechniques(sourceNotes: Element[]) {
+  sourceNotes.forEach((note, index) => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    if (!technical) return;
+    const string = text(child(technical, 'string'));
+    const fret = Number(text(child(technical, 'fret')));
+    children(technical).filter(item => (item.localName === 'hammer-on' || item.localName === 'pull-off') && (item.getAttribute('type') || 'start') === 'start').forEach(marker => {
+      for (let cursor = index + 1; cursor < sourceNotes.length; cursor++) {
+        const candidateTechnical = child(child(sourceNotes[cursor], 'notations') ?? sourceNotes[cursor], 'technical');
+        if (!candidateTechnical || text(child(candidateTechnical, 'string')) !== string) continue;
+        const paired = children(candidateTechnical).find(item => item.localName === marker.localName && (item.getAttribute('type') || 'start') === 'stop');
+        if (!paired) continue;
+        const destinationFret = Number(text(child(candidateTechnical, 'fret')));
+        const validDirection = marker.localName === 'hammer-on' ? destinationFret > fret : destinationFret < fret;
+        if (!validDirection) {
+          technical.removeChild(marker);
+          candidateTechnical.removeChild(paired);
+        }
+        break;
+      }
+    });
+  });
+}
+
+function applyScoreSettings(document: Document, state: MusicXmlEditorState) {
   const root = document.documentElement;
   const work = descendants(root, 'work')[0] ?? (() => { const created = document.createElement('work'); root.insertBefore(created, root.firstChild); return created; })();
   setText(work, 'work-title', state.title.slice(0, 160));
@@ -278,7 +385,6 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState): 
       measure.appendChild(sound);
     }
   }
-
   const tunings = descendants(root, 'staff-tuning').filter(item => (item.parentNode?.parentNode as Element | null)?.localName === 'attributes');
   tunings.forEach(tuning => {
     const line = Number(tuning.getAttribute('line') || '1');
@@ -290,23 +396,280 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState): 
       setText(tuning, 'tuning-octave', String(pitch.octave));
     }
   });
+}
 
+export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, noteIndexes?: number[]): string {
+  const document = parseDocument(source);
+  const linkedNotes = linkedStaffNotes(document);
+  if (!noteIndexes) applyScoreSettings(document, state);
   const sourceNotes = sourceTabNotes(document);
   const tuning = state.tuning.length === 5 ? state.tuning : [62, 59, 55, 50, 67];
+  const deletedNoteIndexes = new Set(state.notes.filter(edit => edit.deleted).map(edit => edit.index));
+  const pairedDeletions: Element[] = [];
   state.notes.forEach(edit => {
+    if (noteIndexes && !noteIndexes.includes(edit.index)) return;
     const note = sourceNotes[edit.index];
     if (!note) return;
+    const paired = linkedNotes(note);
+    if (edit.deleted) { pairedDeletions.push(...paired); return; }
     const notations = child(note, 'notations') ?? (() => { const created = document.createElement('notations'); note.appendChild(created); return created; })();
     const technical = child(notations, 'technical') ?? (() => { const created = document.createElement('technical'); notations.appendChild(created); return created; })();
     setText(technical, 'string', String(edit.string));
     setText(technical, 'fret', String(edit.fret));
     setPitch(note, tuning[edit.string - 1] + edit.fret);
-    replaceTechnique(note, edit.technique);
+    paired.forEach(partner => setPitch(partner, tuning[edit.string - 1] + edit.fret));
+    // The inspector exposes one choice, but a source note can carry several
+    // independent markings (including a stop followed by another start).
+    // An unchanged choice must preserve all of those source elements.
+    if (edit.technique !== techniqueOf(note)) replaceTechnique(note, edit.technique);
   });
+  removeIncompatibleDirectionalTechniques(sourceNotes);
+  const notesToDelete = sourceNotes.filter((_, index) => deletedNoteIndexes.has(index) && (!noteIndexes || noteIndexes.includes(index)));
+  notesToDelete.forEach(note => removePairedTechniqueForDeletedNote(sourceNotes, sourceNotes.indexOf(note)));
+  deleteSourceNotes(document, [...notesToDelete, ...pairedDeletions]);
 
-  setLyrics(document, state.lyricsSection);
-  setWords(document, state.annotations);
-  setChords(document, state.chords);
-  setMeasureCount(document, Math.max(1, Math.min(256, Math.round(state.measureCount))));
+  if (!noteIndexes) {
+    setLyrics(document, state.lyricsSection);
+    setWords(document, state.annotations);
+    setChords(document, state.chords);
+    setMeasureCount(document, Math.max(1, Math.min(256, Math.round(state.measureCount))));
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+type NotePosition = { measure: number; beat: number; voice: number; string: number; fret: number };
+type RemovalPosition = Pick<NotePosition, 'measure' | 'beat' | 'voice'> & { string?: number };
+
+function sourceBeatGroups(measure: Element, staff: number): Element[][] {
+  const groups: Element[][] = [];
+  children(measure).filter(item => item.localName === 'note' && Number(text(child(item, 'staff')) || '1') === staff).forEach(note => {
+    if (child(note, 'chord') && groups.length) groups[groups.length - 1].push(note);
+    else groups.push([note]);
+  });
+  return groups;
+}
+
+// Deletion must be conservative: an unfamiliar attachment may carry source
+// information that cannot be reconstructed after the note is removed.
+function protectedNoteAttachment(note: Element): string | null {
+  const allowed: Record<string, Set<string>> = {
+    note: new Set(['chord', 'pitch', 'rest', 'duration', 'voice', 'type', 'dot', 'accidental', 'stem', 'beam', 'staff', 'notations', 'grace', 'tie', 'time-modification', 'instrument']),
+    pitch: new Set(['step', 'alter', 'octave']),
+    notations: new Set(['technical', 'tied', 'slide', 'glissando']),
+    technical: new Set(['string', 'fret', 'fingering', 'other-technical', 'hammer-on', 'pull-off', 'slide', 'bend']),
+    'time-modification': new Set(['actual-notes', 'normal-notes', 'normal-type', 'normal-dot']),
+  };
+  const inspect = (parent: Element): string | null => {
+    for (const item of children(parent)) {
+      if (!allowed[parent.localName]?.has(item.localName)) return item.localName;
+      if (item.localName === 'other-technical' && !/TEF fingering\s+(?:T|Thumb)$/i.test(text(item))) return item.localName;
+      if (allowed[item.localName]) {
+        const nested = inspect(item);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  };
+  return inspect(note);
+}
+
+function deletionMarkers(note: Element) {
+  const kinds = ['hammer-on', 'pull-off', 'slide', 'glissando', 'tie', 'tied'];
+  return kinds.flatMap(kind => descendants(note, kind));
+}
+
+function removeLinkedMarkers(note: Element, staffNotes: Element[], deleting: Set<Element>) {
+  const index = staffNotes.indexOf(note);
+  const technical = child(child(note, 'notations') ?? note, 'technical');
+  const string = text(child(technical ?? note, 'string'));
+  const voice = text(child(note, 'voice')) || '1';
+  const pitch = child(note, 'pitch');
+  const pitchKey = pitch ? `${text(child(pitch, 'step'))}:${text(child(pitch, 'alter'))}:${text(child(pitch, 'octave'))}` : '';
+  for (const marker of deletionMarkers(note)) {
+    const type = marker.getAttribute('type');
+    if (type !== 'start' && type !== 'stop') continue;
+    const opposite = type === 'start' ? 'stop' : 'start';
+    const step = type === 'start' ? 1 : -1;
+    for (let cursor = index + step; cursor >= 0 && cursor < staffNotes.length; cursor += step) {
+      const candidate = staffNotes[cursor];
+      const candidateTechnical = child(child(candidate, 'notations') ?? candidate, 'technical');
+      if ((text(child(candidate, 'voice')) || '1') !== voice) continue;
+      if (string && text(child(candidateTechnical ?? candidate, 'string')) !== string) continue;
+      if (!string && (marker.localName === 'tie' || marker.localName === 'tied')) {
+        const candidatePitch = child(candidate, 'pitch');
+        if (!candidatePitch || `${text(child(candidatePitch, 'step'))}:${text(child(candidatePitch, 'alter'))}:${text(child(candidatePitch, 'octave'))}` !== pitchKey) continue;
+      }
+      const counterpart = deletionMarkers(candidate).find(item => item.localName === marker.localName && item.getAttribute('type') === opposite
+        && (item.getAttribute('number') || '1') === (marker.getAttribute('number') || '1'));
+      if (counterpart && !deleting.has(candidate)) {
+        counterpart.parentNode?.removeChild(counterpart);
+      }
+      if (string || counterpart) break;
+    }
+  }
+}
+
+function deleteSourceNotes(document: Document, notes: Element[]) {
+  notes.forEach(note => {
+    const siblings = note.parentNode ? children(note.parentNode as Element) : [];
+    const next = siblings[siblings.indexOf(note) + 1];
+    if (!child(note, 'chord') && next?.localName === 'note' && child(next, 'chord')) {
+      // The first member carries the time advance; promote its successor.
+      removeChildren(next, 'chord');
+      note.parentNode?.removeChild(note);
+    } else if (child(note, 'chord') || child(note, 'grace')) {
+      note.parentNode?.removeChild(note);
+    } else {
+      // Keep the event duration when its last ordinary member is removed.
+      ['pitch', 'notations', 'accidental', 'tie', 'stem', 'beam'].forEach(name => removeChildren(note, name));
+      note.insertBefore(document.createElement('rest'), note.firstChild);
+    }
+  });
+}
+
+export function removeMusicXmlNotes(source: string, score: model.Score, position: RemovalPosition): { source: string; dependencies: string[] } | null {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const voice = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice];
+  const beat = voice?.beats?.[position.beat];
+  if (!measure || !beat || beat.isRest || beat.notes.length === 0 || beat.graceType) return null;
+  const tabStaff = sourceTabStaff(document);
+  const groups = sourceBeatGroups(measure, tabStaff);
+  if (new Set(groups.flat().map(note => text(child(note, 'voice')) || '1')).size > 1) throw new Error('This source event has multiple voices and cannot be removed safely.');
+  const mainGroups = groups.filter(group => !group.some(note => child(note, 'grace')));
+  const mainIndex = voice!.beats.slice(0, position.beat).filter(candidate => !candidate.graceType).length;
+  const group = mainGroups[mainIndex];
+  if (!group || group.some(note => child(note, 'rest'))) throw new Error('The source event cannot be matched safely for removal.');
+  const sourceMembers = group.map(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
+  }).sort();
+  const renderedMembers = beat.notes.map(note => `${6 - note.string}:${note.fret}`).sort();
+  if (sourceMembers.join('|') !== renderedMembers.join('|')) throw new Error('The source chord does not match the selected event.');
+  const selected = position.string === undefined ? group : group.filter(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return Number(text(child(technical ?? note, 'string'))) === position.string;
+  });
+  if (position.string !== undefined && selected.length !== 1) return null;
+  const removeWholeEvent = selected.length === group.length;
+  const grace: Element[] = [];
+  if (removeWholeEvent) {
+    for (let index = groups.indexOf(group) - 1; index >= 0 && groups[index].every(note => child(note, 'grace')); index--) grace.unshift(...groups[index]);
+  }
+  const linked = linkedStaffNotes(document);
+  const otherStaves = new Set(children(measure).filter(item => item.localName === 'note').map(note => Number(text(child(note, 'staff')) || '1')));
+  otherStaves.delete(tabStaff);
+  const toDelete = [...selected, ...grace];
+  const paired = toDelete.flatMap(note => {
+    const matches = linked(note);
+    if (matches.length !== otherStaves.size) throw new Error('The paired notation note cannot be matched safely for removal.');
+    return matches;
+  });
+  const all = [...toDelete, ...paired];
+  for (const note of all) {
+    const attachment = protectedNoteAttachment(note);
+    if (attachment) throw new Error(`This note has a protected ${attachment} attachment that Playtab cannot remove safely.`);
+  }
+  const dependencies = new Set<string>();
+  if (grace.length) dependencies.add(`${grace.length} grace note${grace.length === 1 ? '' : 's'}`);
+  for (const note of all) {
+    for (const marker of deletionMarkers(note)) {
+      const label: Record<string, string> = { 'hammer-on': 'hammer-on', 'pull-off': 'pull-off', slide: 'slide', glissando: 'slide', tie: 'tie', tied: 'tie' };
+      dependencies.add(label[marker.localName]);
+    }
+    if (descendants(note, 'bend').length) dependencies.add('bend');
+  }
+  const deleting = new Set(all);
+  const staffNotes = new Map<string, Element[]>();
+  descendants(part!, 'note').filter(note => !child(note, 'rest')).forEach(note => {
+    const staff = text(child(note, 'staff')) || '1';
+    staffNotes.set(staff, [...(staffNotes.get(staff) ?? []), note]);
+  });
+  all.forEach(note => removeLinkedMarkers(note, staffNotes.get(text(child(note, 'staff')) || '1') ?? [], deleting));
+  deleteSourceNotes(document, all);
+  return { source: new XMLSerializer().serializeToString(document), dependencies: [...dependencies] };
+}
+
+function newChordMember(document: Document, anchor: Element, midi: number, string?: number, fret?: number): Element {
+  const added = document.createElement('note');
+  added.appendChild(document.createElement('chord'));
+  setPitch(added, midi);
+  // Carry only the event's timing and staff identity. Lyrics, ties, grace
+  // markers, techniques and other note-owned data belong to the source note.
+  for (const name of ['duration', 'voice', 'type', 'dot', 'time-modification', 'staff']) {
+    children(anchor).filter(item => item.localName === name).forEach(item => added.appendChild(item.cloneNode(true)));
+  }
+  if (string !== undefined && fret !== undefined) {
+    const technical = ensure(ensure(added, 'notations'), 'technical');
+    setText(technical, 'string', String(string));
+    setText(technical, 'fret', String(fret));
+  }
+  return added;
+}
+
+function replaceRestWithNote(rest: Element, midi: number, string?: number, fret?: number) {
+  removeChildren(rest, 'rest');
+  setPitch(rest, midi);
+  const pitch = child(rest, 'pitch')!;
+  rest.insertBefore(pitch, child(rest, 'duration') ?? rest.firstChild);
+  if (string !== undefined && fret !== undefined) {
+    const technical = ensure(ensure(rest, 'notations'), 'technical');
+    setText(technical, 'string', String(string));
+    setText(technical, 'fret', String(fret));
+  }
+}
+
+// Add to the original MusicXML in one transaction, including its verified
+// duplicate notation staff. Never shift the source event's duration or onset.
+export function addMusicXmlNote(source: string, score: model.Score, position: NotePosition): string {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const beat = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!measure || !beat || beat.graceType) throw new Error('This source event cannot be mapped safely for note insertion.');
+  if (beat.notes.some(note => 6 - note.string === position.string)) throw new Error('This string already has a note at this event.');
+  const tabStaff = sourceTabStaff(document);
+  const tabGroups = sourceBeatGroups(measure, tabStaff);
+  const tabNotes = tabGroups.flat();
+  if (new Set(tabNotes.map(note => text(child(note, 'voice')) || '1')).size > 1) throw new Error('This source event has multiple voices and cannot be mapped safely.');
+  const group = tabGroups[position.beat];
+  if (!group || group.some(note => child(note, 'grace'))) throw new Error('This source event cannot be mapped safely for note insertion.');
+  const midi = score.tracks[0].staves[0].tuning[position.string - 1] + position.fret;
+  if (!Number.isInteger(midi)) throw new Error('The selected string has no valid source tuning.');
+  const otherStaves = new Set(children(measure).filter(item => item.localName === 'note').map(note => Number(text(child(note, 'staff')) || '1')));
+  otherStaves.delete(tabStaff);
+  if (group.length === 1 && child(group[0], 'rest')) {
+    if (!beat.isRest) throw new Error('The source rest does not match the selected event.');
+    const pairedRests = [...otherStaves].map(staff => {
+      const paired = sourceBeatGroups(measure, staff)[position.beat];
+      if (!paired || paired.length !== 1 || !child(paired[0], 'rest') || text(child(paired[0], 'duration')) !== text(child(group[0], 'duration'))) {
+        throw new Error('The paired notation rest cannot be matched safely.');
+      }
+      return paired[0];
+    });
+    replaceRestWithNote(group[0], midi, position.string, position.fret);
+    pairedRests.forEach(rest => replaceRestWithNote(rest, midi));
+  } else {
+    if (beat.isRest || group.some(note => child(note, 'rest'))) throw new Error('The source chord does not match the selected event.');
+    const sourceMembers = group.map(note => {
+      const technical = child(child(note, 'notations') ?? note, 'technical');
+      return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
+    }).sort();
+    const renderedMembers = beat.notes.map(note => `${6 - note.string}:${note.fret}`).sort();
+    if (sourceMembers.join('|') !== renderedMembers.join('|')) throw new Error('The source chord does not match the selected event.');
+    const linked = linkedStaffNotes(document);
+    const paired = linked(group[0]);
+    if (paired.length !== otherStaves.size) throw new Error('The paired notation chord cannot be matched safely.');
+    const insert = (anchor: Element, string?: number, fret?: number) => {
+      const siblings = children(anchor.parentNode as Element);
+      const index = siblings.indexOf(anchor);
+      let last = anchor;
+      for (let cursor = index + 1; cursor < siblings.length && siblings[cursor].localName === 'note' && child(siblings[cursor], 'chord'); cursor++) last = siblings[cursor];
+      last.parentNode!.insertBefore(newChordMember(document, anchor, midi, string, fret), last.nextSibling);
+    };
+    insert(group[0], position.string, position.fret);
+    paired.forEach(note => insert(note));
+  }
   return new XMLSerializer().serializeToString(document);
 }

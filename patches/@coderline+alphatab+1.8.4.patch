@@ -1,8 +1,223 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..1d20005
+index b6203da..a1cfd03 100644
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-@@ -43390,7 +43390,7 @@ class MidiFileGenerator {
+@@ -33251,7 +33251,12 @@ class JsonConverter {
+ 				tempo.beatsPerMinute = JsonHelper.getValue(midiEvent, "beatsPerMinute");
+ 				return tempo;
+ 			case MidiEventType.PitchBend: return new PitchBendEvent(track, tick, JsonHelper.getValue(midiEvent, "channel"), JsonHelper.getValue(midiEvent, "value"));
+-			case MidiEventType.PerNotePitchBend: return new NoteBendEvent(track, tick, JsonHelper.getValue(midiEvent, "channel"), JsonHelper.getValue(midiEvent, "noteKey"), JsonHelper.getValue(midiEvent, "value"));
++			case MidiEventType.PerNotePitchBend: {
++				const noteBend = new NoteBendEvent(track, tick, JsonHelper.getValue(midiEvent, "channel"), JsonHelper.getValue(midiEvent, "noteKey"), JsonHelper.getValue(midiEvent, "value"));
++				noteBend.isHammerPull = JsonHelper.getValue(midiEvent, "isHammerPull") === true;
++				noteBend.hammerPullDestinationKey = JsonHelper.getValue(midiEvent, "hammerPullDestinationKey");
++				return noteBend;
++			}
+ 			case MidiEventType.EndOfTrack: return new EndOfTrackEvent(track, tick);
+ 		}
+ 		throw new AlphaTabError(AlphaTabErrorType.Format, `Unknown Midi Event type: ${type}`);
+@@ -33328,6 +33333,8 @@ class JsonConverter {
+ 				o.set("channel", midiEvent.channel);
+ 				o.set("noteKey", midiEvent.noteKey);
+ 				o.set("value", midiEvent.value);
++				if (midiEvent.isHammerPull === true) o.set("isHammerPull", true);
++				if (midiEvent.hammerPullDestinationKey !== undefined) o.set("hammerPullDestinationKey", midiEvent.hammerPullDestinationKey);
+ 				break;
+ 			case MidiEventType.EndOfTrack: break;
+ 		}
+@@ -37962,6 +37969,11 @@ class Channel {
+ 	tuning = 0;
+ 	mixVolume = 0;
+ 	mute = false;
++	// A hammer-on/pull-off contact uses the bank's own attack sample as a
++	// short, quiet transient. It must not steal the held legato voice.
++	articulationOnly = false;
++	articulationSamplesRemaining = 0;
++	articulationFadeSamples = 0;
+ 	solo = false;
+ }
+ //#endregion
+@@ -38696,8 +38708,9 @@ class Voice {
+ 			let gainMono;
+ 			let gainLeft;
+ 			let gainRight = 0;
+-			let blockSamples = numSamples > Voice.renderEffectSampleBlock ? Voice.renderEffectSampleBlock : numSamples;
+-			numSamples -= blockSamples;
++			const blockSampleCount = numSamples > Voice.renderEffectSampleBlock ? Voice.renderEffectSampleBlock : numSamples;
++			let blockSamples = blockSampleCount;
++			numSamples -= blockSampleCount;
+ 			if (dynamicLowpass) {
+ 				const fres = tmpInitialFilterFc + this.modLfo.level * tmpModLfoToFilterFc + this.modEnv.level * tmpModEnvToFilterFc;
+ 				tmpLowpass.active = fres <= 13500;
+@@ -38710,6 +38723,9 @@ class Voice {
+ 			gainMono = noteGain * this.ampEnv.level;
+ 			if (isMuted) gainMono = 0;
+ 			else gainMono *= this.mixVolume;
++			if (this.articulationOnly && this.articulationSamplesRemaining <= this.articulationFadeSamples) {
++				gainMono *= Math.max(0, this.articulationSamplesRemaining / this.articulationFadeSamples);
++			}
+ 			if (updateModLFO) this.modLfo.process(blockSamples);
+ 			if (updateVibLFO) this.vibLfo.process(blockSamples);
+ 			switch (f.outputMode) {
+@@ -38762,6 +38778,13 @@ class Voice {
+ 					break;
+ 			}
+ 			const inaudible = this.ampEnv.segment === VoiceEnvelopeSegment.Release && Math.abs(gainMono) < SynthConstants.AudibleLevelThreshold;
++			if (this.articulationOnly) {
++				this.articulationSamplesRemaining -= blockSampleCount;
++				if (this.articulationSamplesRemaining <= 0) {
++					this.kill();
++					return;
++				}
++			}
+ 			if (tmpSourceSamplePosition >= tmpSampleEndDbl || this.ampEnv.segment === VoiceEnvelopeSegment.Done || inaudible) {
+ 				this.kill();
+ 				return;
+@@ -38994,9 +39017,15 @@ class TinySoundFont {
+ 				break;
+ 			case MidiEventType.PerNotePitchBend:
+ 				const noteBend = e;
++				// H/PO pitch steps carry a private flag so the Web Audio synth can
++				// add a short bank-native contact without changing MIDI note keys.
++				const isHammerPull = noteBend.isHammerPull === true;
++				const noteKey = noteBend.noteKey;
++				const destinationKey = noteBend.hammerPullDestinationKey;
+ 				let perNotePitchWheel = noteBend.value;
+ 				perNotePitchWheel = perNotePitchWheel * SynthConstants.MaxPitchWheel / SynthConstants.MaxPitchWheel20;
+-				this.channelSetPerNotePitchWheel(noteBend.channel, noteBend.noteKey, perNotePitchWheel);
++				this.channelSetPerNotePitchWheel(noteBend.channel, noteKey, perNotePitchWheel);
++				if (isHammerPull) this.channelNoteOn(noteBend.channel, destinationKey >= 0 ? destinationKey : noteKey, .55, true);
+ 				break;
+ 		}
+ 	}
+@@ -39086,10 +39115,11 @@ class TinySoundFont {
+ 	/**
+ 	* Start playing a note
+ 	* @param presetIndex preset index >= 0 and < {@link presetCount}
+-	* @param key note value between 0 and 127 (60 being middle C)
+-	* @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
+-	*/
+-	noteOn(presetIndex, key, vel) {
++	 * @param key note value between 0 and 127 (60 being middle C)
++	 * @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
++	 * @param articulationOnly whether to play a short bank-native contact transient
++	 */
++	noteOn(presetIndex, key, vel, articulationOnly = false) {
+ 		if (!this.presets) return;
+ 		const midiVelocity = vel * 127 | 0;
+ 		if (presetIndex < 0 || presetIndex >= this.presets.length) return;
+@@ -39102,8 +39132,8 @@ class TinySoundFont {
+ 			if (key < region.loKey || key > region.hiKey || midiVelocity < region.loVel || midiVelocity > region.hiVel) continue;
+ 			let voice = null;
+ 			if (region.group !== 0) {
+-				for (const v of this._voices) if (v.playingPreset === presetIndex && v.region.group === region.group) v.endQuick(this.outSampleRate);
+-				else if (v.playingPreset === -1 && !voice) voice = v;
++				if (!articulationOnly) for (const v of this._voices) if (v.playingPreset === presetIndex && v.region.group === region.group) v.endQuick(this.outSampleRate);
++				for (const v of this._voices) if (v.playingPreset === -1 && !voice) voice = v;
+ 			} else for (const v of this._voices) if (v.playingPreset === -1) voice = v;
+ 			if (!voice) {
+ 				for (let i = 0; i < 4; i++) {
+@@ -39116,6 +39146,9 @@ class TinySoundFont {
+ 			voice.region = region;
+ 			voice.playingPreset = presetIndex;
+ 			voice.playingKey = key;
++			voice.articulationOnly = articulationOnly;
++			voice.articulationSamplesRemaining = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .08)) : 0;
++			voice.articulationFadeSamples = articulationOnly ? Math.max(1, Math.round(this.outSampleRate * .008)) : 0;
+ 			voice.playIndex = voicePlayIndex;
+ 			voice.noteGainDb = this.globalGainDb - region.attenuation - SynthHelper.gainToDecibels(1 / vel);
+ 			if (this._channels) this._channels.setupVoice(this, voice);
+@@ -39251,16 +39284,17 @@ class TinySoundFont {
+ 	}
+ 	/**
+ 	* Start playing a note on a channel
+-	* @param channel channel number
+-	* @param key note value between 0 and 127 (60 being middle C)
+-	* @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
+-	*/
+-	channelNoteOn(channel, key, vel) {
++	 * @param channel channel number
++	 * @param key note value between 0 and 127 (60 being middle C)
++	 * @param vel velocity as a float between 0.0 (equal to note off) and 1.0 (full)
++	 * @param articulationOnly whether to play a short bank-native contact transient
++	 */
++	channelNoteOn(channel, key, vel, articulationOnly = false) {
+ 		if (!this._channels || channel > this._channels.channelList.length) return;
+ 		if (this._transpositionPitches.has(channel)) key += this._transpositionPitches.get(channel);
+ 		if (this._liveTranspositionPitches.has(channel)) key += this._liveTranspositionPitches.get(channel);
+ 		this._channels.activeChannel = channel;
+-		this.noteOn(this._channels.channelList[channel].presetIndex, key, vel);
++		this.noteOn(this._channels.channelList[channel].presetIndex, key, vel, articulationOnly);
+ 	}
+ 	/**
+ 	* Stop playing notes on a channel
+@@ -41571,6 +41605,8 @@ class AlphaSynthWebWorklet {
+ */
+ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 	_worklet = null;
++	_workletGeneration = 0;
++	_sourceStarted = false;
+ 	_bufferTimeInMilliseconds = 0;
+ 	_settings;
+ 	_boundHandleMessage;
+@@ -41588,8 +41624,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 	play() {
+ 		super.play();
+ 		const ctx = this.context;
++		const source = this.source;
++		const generation = ++this._workletGeneration;
++		this._sourceStarted = false;
+ 		if (this._pendingEvents) this._pendingEvents = void 0;
+ 		BrowserUiFacade.createAlphaSynthAudioWorklet(ctx, this._settings).then(() => {
++			if (generation !== this._workletGeneration || source !== this.source) return;
+ 			this._worklet = new AudioWorkletNode(ctx, "alphatab", {
+ 				numberOfOutputs: 1,
+ 				outputChannelCount: [2],
+@@ -41597,8 +41637,9 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 			});
+ 			this._worklet.port.addEventListener("message", this._boundHandleMessage);
+ 			this._worklet.port.start();
+-			this.source.connect(this._worklet);
+-			this.source.start(0);
++			source.connect(this._worklet);
++			source.start(0);
++			this._sourceStarted = true;
+ 			this._worklet.connect(ctx.destination);
+ 			const pending = this._pendingEvents;
+ 			if (pending) {
+@@ -41621,7 +41662,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+ 		}
+ 	}
+ 	pause() {
+-		super.pause();
++		this._workletGeneration++;
++		if (this.source && !this._sourceStarted) {
++			this.source.disconnect();
++			this.source = null;
++		} else super.pause();
++		this._sourceStarted = false;
+ 		if (this._worklet) {
+ 			this._worklet.port.postMessage({ cmd: "alphaSynth.output.stop" });
+ 			this._worklet.port.removeEventListener("message", this._boundHandleMessage);
+@@ -41923,12 +41969,15 @@ class AlphaSynthMidiFileHandler {
+ 		else value = Math.floor(value);
+ 		this._midiFile.addEvent(new PitchBendEvent(track, tick, channel, value));
+ 	}
+-	addNoteBend(track, tick, channel, key, value) {
++	addNoteBend(track, tick, channel, key, value, isHammerPull = false, destinationKey = -1) {
+ 		tick += this.tickShift;
+ 		if (this._smf1Mode) this.addBend(track, tick, channel, value);
+ 		else {
+ 			value = value * SynthConstants.MaxPitchWheel20 / SynthConstants.MaxPitchWheel;
+-			this._midiFile.addEvent(new NoteBendEvent(track, tick, channel, key, value));
++			const noteBend = new NoteBendEvent(track, tick, channel, key, value);
++			noteBend.isHammerPull = isHammerPull;
++			if (destinationKey >= 0) noteBend.hammerPullDestinationKey = destinationKey;
++			this._midiFile.addEvent(noteBend);
+ 		}
+ 	}
+ 	finishTrack(track, tick) {
+@@ -43390,7 +43439,7 @@ class MidiFileGenerator {
  		if (staff.tuning.length > 0) for (const t of staff.tuning) this._handler.addNote(staff.track.index, beatStart, deadSlapDuration, t, MidiUtils.dynamicToVelocity(DynamicValue.F), staff.track.playbackInfo.primaryChannel);
  	}
  	_needsSecondaryChannel(note) {
@@ -11,7 +226,7 @@ index b6203da..1d20005
  	}
  	_determineChannel(track, note) {
  		if (this._needsSecondaryChannel(note)) return track.playbackInfo.secondaryChannel;
-@@ -43422,6 +43422,13 @@ class MidiFileGenerator {
+@@ -43422,6 +43471,13 @@ class MidiFileGenerator {
  		noteDuration.letRingEnd -= brushOffset;
  		const velocity = MidiFileGenerator._getNoteVelocity(note);
  		const channel = this._determineChannel(track, note);
@@ -19,17 +234,17 @@ index b6203da..1d20005
 +		// destination can also be an origin in a chained H/PO passage; in that
 +		// case each transition updates the original held voice.
 +		if (note.hammerPullOrigin) {
-+			if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel);
++			if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel, noteStart);
 +			return;
 +		}
  		let initialBend = 0;
  		const noteSoundDuration = Math.max(noteDuration.untilTieOrSlideEnd, noteDuration.letRingEnd);
  		if (note.hasBend) initialBend = MidiFileGenerator.getPitchWheel(note.bendPoints[0].value);
-@@ -43446,10 +43453,11 @@ class MidiFileGenerator {
+@@ -43446,10 +43502,11 @@ class MidiFileGenerator {
  			return;
  		}
  		if (note.hasBend) this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
-+		else if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel);
++		else if (note.isHammerPullOrigin && note.hammerPullDestination) this._generateHammerPull(note, noteKey, channel, noteStart);
  		else if (note.beat.hasWhammyBar && note.index === 0) this._generateWhammy(note.beat, noteStart, noteDuration, channel, tempoOnBeatStart);
  		else if (note.slideInType !== SlideInType.None || note.slideOutType !== SlideOutType.None) this._generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
  		else if (note.vibrato !== VibratoType.None || note.isTieDestination && note.tieOrigin.vibrato !== VibratoType.None) this._generateVibrato(note, noteStart, noteDuration, noteKey, channel);
@@ -38,7 +253,7 @@ index b6203da..1d20005
  	}
  	/**
  	* For every note within the octave, the number of keys to go up when playing ornaments.
-@@ -43576,6 +43584,14 @@ class MidiFileGenerator {
+@@ -43576,6 +43633,14 @@ class MidiFileGenerator {
  				const tieDestinationDuration = this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart);
  				durationWithEffects.untilTieOrSlideEnd = endNote.beat.absolutePlaybackStart + tieDestinationDuration.untilTieOrSlideEnd - startTick;
  			} else durationWithEffects.untilTieOrSlideEnd = beatPlayDuration + this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart).untilTieOrSlideEnd;
@@ -53,11 +268,11 @@ index b6203da..1d20005
  		} else if (note.slideOutType === SlideOutType.Legato) {
  			const endNote = note.slideTarget;
  			if (endNote) {
-@@ -43716,6 +43732,19 @@ class MidiFileGenerator {
+@@ -43716,6 +43781,22 @@ class MidiFileGenerator {
  	static getPitchWheel(bendValue) {
  		return SynthConstants.DefaultPitchWheel + bendValue / 2 * MidiFileGenerator._pitchValuePerSemitone;
  	}
-+	_generateHammerPull(note, noteKey, channel) {
++	_generateHammerPull(note, noteKey, channel, noteStart) {
 +		let origin = note;
 +		while (origin.hammerPullOrigin) origin = origin.hammerPullOrigin;
 +		const destination = note.hammerPullDestination;
@@ -67,13 +282,124 @@ index b6203da..1d20005
 +		const bendValue = MidiFileGenerator.getPitchWheel((destinationKey - originKey) * 2);
 +		const track = note.beat.voice.bar.staff.track;
 +		// An H/PO changes pitch at the destination onset. This is an immediate
-+		// per-note pitch step, unlike a legato slide's interpolated glide.
-+		this._handler.addNoteBend(track.index, destination.beat.absolutePlaybackStart, channel, originKey, bendValue);
++		// per-note pitch step, unlike a legato slide's interpolated glide. The
++		// private event flag lets alphaTab's own synth add a short bank-native
++		// fret contact without creating another picked attack in the generated MIDI.
++		const destinationOffset = destination.beat.absolutePlaybackStart - note.beat.absolutePlaybackStart;
++		this._handler.addNoteBend(track.index, noteStart + destinationOffset, channel, originKey, bendValue, true, destinationKey);
 +	}
  	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
  		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
  		const playedBendPoints = [];
-@@ -59240,6 +59269,10 @@ class TieGlyphLabels {
+@@ -50739,7 +50820,7 @@ class CapoEffectInfo extends EffectInfo {
+ 		return beat.index === 0 && beat.voice.bar.index === 0 && beat.voice.bar.staff.capo !== 0;
+ 	}
+ 	createNewGlyph(renderer, beat) {
+-		return new TextGlyph(0, 0, `Capo. fret ${beat.voice.bar.staff.capo}`, renderer.resources.elementFonts.get(NotationElement.EffectCapo), TextAlign.Left);
++		return new TextGlyph(0, 0, `Capo. Fret ${beat.voice.bar.staff.capo}`, renderer.resources.elementFonts.get(NotationElement.EffectCapo), TextAlign.Left);
+ 	}
+ 	canExpand(_from, _to) {
+ 		return false;
+@@ -51996,7 +52077,9 @@ class MarkerEffectInfo extends EffectInfo {
+ 		return beat.voice.bar.staff.index === 0 && beat.voice.index === 0 && beat.index === 0 && beat.voice.bar.masterBar.isSectionStart;
+ 	}
+ 	createNewGlyph(renderer, beat) {
+-		return new TextGlyph(0, 0, !beat.voice.bar.masterBar.section.marker ? beat.voice.bar.masterBar.section.text : `[${beat.voice.bar.masterBar.section.marker}] ${beat.voice.bar.masterBar.section.text}`, renderer.resources.elementFonts.get(NotationElement.EffectMarker), TextAlign.Left);
++		const glyph = new TextGlyph(0, 0, !beat.voice.bar.masterBar.section.marker ? beat.voice.bar.masterBar.section.text : `[${beat.voice.bar.masterBar.section.marker}] ${beat.voice.bar.masterBar.section.text}`, renderer.resources.elementFonts.get(NotationElement.EffectMarker), TextAlign.Left);
++		glyph.playtabSectionAnnotation = true;
++		return glyph;
+ 	}
+ 	canExpand(_from, _to) {
+ 		return true;
+@@ -52641,13 +52724,69 @@ class EffectBand extends Glyph {
+ 				const g = v[k];
+ 				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
+ 				try {
+-					g.paint(cx + this.x, cy + this.y, canvas);
++					const sectionOffset = this._getPlaytabSectionAnnotationOffset(g);
++					const slideOffset = g.playtabSlideAnnotation === true ? this._getPlaytabSlideAnnotationOffset(g) : 0;
++					g.paint(cx + this.x, cy + this.y - sectionOffset - slideOffset, canvas);
+ 				} finally {
+ 					_?.[Symbol.dispose]?.();
+ 				}
+ 			}
+ 		}
+ 	}
++	_getPlaytabSectionAnnotationOffset(g) {
++		if (g.playtabSectionAnnotation !== true) return 0;
++		const sectionLeft = this.renderer.x + this.x + g.x;
++		const sectionRight = sectionLeft + g.width;
++		const sectionY = this.renderer.y + this.renderer.height + this.renderer.staff.bottomOverflow - this.renderer.bottomEffects.height + this.y + g.y;
++		const thumbs = [];
++		for (const barRenderer of this.renderer.staff.barRenderers) {
++			for (const beatGlyphs of barRenderer.voiceContainer.beatGlyphs.values()) {
++				for (const beatGlyph of beatGlyphs) {
++					const tabBeatGlyph = beatGlyph.onNotes;
++					const noteNumbers = tabBeatGlyph?.noteNumbers;
++					const thumbFingering = noteNumbers?._thumbFingering;
++					if (thumbFingering) {
++						thumbs.push({
++							left: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x - thumbFingering.width / 2,
++							right: barRenderer.x + barRenderer.beatGlyphsStart + beatGlyph.x + tabBeatGlyph.x + noteNumbers.x + thumbFingering.x + thumbFingering.width / 2,
++							y: barRenderer.y + barRenderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + noteNumbers.y + thumbFingering.y,
++							height: thumbFingering.height,
++						});
++						continue;
++					}
++					const beat = beatGlyph.beat;
++					if (!beat?.text || !/^[IMT](?:[ \n][IMT])*$/.test(beat.text)) continue;
++					const textBand = barRenderer.bottomEffects.getBand(beat.voice, NotationElement.EffectText);
++					const textGlyph = textBand?._effectGlyphs?.[beat.voice.index]?.get(beat.index);
++					if (!textBand || !textGlyph) continue;
++					thumbs.push({
++						left: barRenderer.x + textBand.x + textGlyph.x,
++						right: barRenderer.x + textBand.x + textGlyph.x + textGlyph.width,
++						y: barRenderer.y + barRenderer.height + barRenderer.staff.bottomOverflow - barRenderer.bottomEffects.height + textBand.y + textGlyph.y,
++						height: textGlyph.height,
++					});
++				}
++			}
++		}
++		if (thumbs.length === 0) return 0;
++		let targetY = thumbs[0].y;
++		for (const thumb of thumbs) {
++			if (sectionLeft < thumb.right && sectionRight > thumb.left) {
++				targetY = Math.max(targetY, thumb.y + thumb.height + this.renderer.settings.display.effectBandPaddingBottom);
++			}
++		}
++		return sectionY - targetY;
++	}
++	_getPlaytabSlideAnnotationOffset(g) {
++		const beatGlyph = this.renderer.getBeatContainer(g.beat);
++		const tabBeatGlyph = beatGlyph?.onNotes;
++		if (!beatGlyph || !tabBeatGlyph?.noteNumbers) return this.renderer.smuflMetrics.tabLineSpacing * 5.2;
++
++		const noteY = this.renderer.y + this.renderer.voiceContainer.y + beatGlyph.y + tabBeatGlyph.y + tabBeatGlyph.getHighestNoteY(NoteYPosition.Top);
++		const labelY = this.renderer.y + this.renderer.height + this.renderer.staff.bottomOverflow - this.renderer.bottomEffects.height + this.y + g.y;
++		const padding = this.renderer.smuflMetrics.tabLineSpacing;
++		return Math.max(0, labelY - (noteY - g.height - padding));
++	}
+ 	alignGlyphs() {
+ 		for (let v = 0; v < this._effectGlyphs.length; v++) for (const beatIndex of this._effectGlyphs[v].keys()) {
+ 			const g = this.renderer.bar.voices[v].beats[beatIndex];
+@@ -55698,7 +55837,15 @@ class TextEffectInfo extends EffectInfo {
+ 		return !!beat.text;
+ 	}
+ 	createNewGlyph(renderer, beat) {
+-		return new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
++		const effectFont = renderer.resources.elementFonts.get(NotationElement.EffectText);
++		const isPlaytabFingering = beat.playtabFingerings?.length > 0 || /^[IMT](?:[ \n][IMT])*$/.test(beat.text.trim());
++		const isPlaytabSlide = beat.playtabSlideAnnotation === true || /^(?:sl\.?|slide)$/i.test(beat.text.trim());
++		const font = isPlaytabFingering ? Font.withFamilyList(effectFont.families, effectFont.size, FontStyle.Plain, effectFont.weight) : effectFont;
++		const glyph = new TextGlyph(0, 0, beat.text, font, isPlaytabFingering || isPlaytabSlide ? TextAlign.Center : TextAlign.Left);
++		glyph.playtabSectionAnnotation = !isPlaytabFingering && !isPlaytabSlide;
++		glyph.playtabFingering = isPlaytabFingering;
++		glyph.playtabSlideAnnotation = isPlaytabSlide;
++		return glyph;
+ 	}
+ 	canExpand(_from, _to) {
+ 		return true;
+@@ -59240,11 +59387,17 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {
@@ -82,5 +408,206 @@ index b6203da..1d20005
 +		return this._forSlide ? super.calculateTieDirection() : BeamDirection.Up;
 +	}
  	_forSlide;
++	_segment;
  	_labels = null;
- 	constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
+-	constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
++	constructor(slurEffectId, startNote, endNote, forSlide, forEnd, segment = null) {
+ 		super(slurEffectId, startNote, endNote, forEnd);
+ 		this._forSlide = forSlide;
++		this._segment = segment;
+ 	}
+ 	getTieHeight(startX, _startY, endX, _endY) {
+ 		return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
+@@ -59253,9 +59406,9 @@ class TabSlurGlyph extends TabTieGlyph {
+ 		if (this._labels === null) {
+ 			this._labels = [];
+ 			const slur = this.startNote.effectSlur;
+-			if (slur !== null) {
++			if (slur !== null || this._segment !== null) {
+ 				const notationSettings = this.renderer.settings.notation;
+-				for (const s of slur.segments) {
++				for (const s of this._segment ? [this._segment] : slur.segments) {
+ 					const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
+ 					if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
+ 				}
+@@ -63810,6 +63963,7 @@ class TabNoteChordGlyph extends Glyph {
+ 	_deadSlapped = null;
+ 	_isGrace;
+ 	beat;
++	_thumbFingering = null;
+ 	maxStringNote = null;
+ 	minStringNote = null;
+ 	beatEffects = /* @__PURE__ */ new Map();
+@@ -63907,7 +64061,9 @@ class TabNoteChordGlyph extends Glyph {
+ 			let maxEffectY = NaN;
+ 			let effectY = this.getNoteY(this.minStringNote, NoteYPosition.Center) + tabHeight / 2;
+ 			const effectSpacing = this.renderer.smuflMetrics.onNoteEffectPadding;
++			const thumbFingering = this._thumbFingering;
+ 			for (const g of this.beatEffects.values()) {
++				if (g === thumbFingering) continue;
+ 				g.y += effectY;
+ 				g.x += this.width / 2;
+ 				g.renderer = this.renderer;
+@@ -63916,6 +64072,17 @@ class TabNoteChordGlyph extends Glyph {
+ 				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
+ 				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
+ 			}
++			if (thumbFingering) {
++				const effectFont = this.renderer.resources.elementFonts.get(NotationElement.EffectText);
++				thumbFingering.font = Font.withFamilyList(effectFont.families, effectFont.size, FontStyle.Plain, effectFont.weight);
++				thumbFingering.y += this.renderer.getLineY(this.renderer.drawnLineCount - 1) + tabHeight + effectSpacing + this.renderer.settings.notation.rhythmHeight;
++				thumbFingering.x += w / 2;
++				thumbFingering.renderer = this.renderer;
++				thumbFingering.doLayout();
++				const thumbBottom = thumbFingering.y + thumbFingering.height;
++				if (Number.isNaN(minEffectY) || minEffectY > thumbFingering.y) minEffectY = thumbFingering.y;
++				if (Number.isNaN(maxEffectY) || maxEffectY < thumbBottom) maxEffectY = thumbBottom;
++			}
+ 			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
+ 		}
+ 		this.width = w;
+@@ -63923,6 +64090,12 @@ class TabNoteChordGlyph extends Glyph {
+ 	addNoteGlyph(noteGlyph, note) {
+ 		this._notes.push(noteGlyph);
+ 		this.notesPerString.set(note.string, noteGlyph);
++		const hasPlaytabThumb = this.beat?.text?.split("\n").some((line) => line.trim() === "T") === true;
++		if (note.leftHandFinger === Fingers.Thumb && !hasPlaytabThumb && !this._thumbFingering) {
++			this._thumbFingering = new TextGlyph(0, 0, "T", null, TextAlign.Center, TextBaseline.Middle);
++			this._thumbFingering.center = true;
++			this.beatEffects.set("leftHandThumb", this._thumbFingering);
++		}
+ 		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
+ 		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
+ 	}
+@@ -64060,7 +64233,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
+ 				centeredEffectGlyphs.push(glyph);
+ 			}
+ 			if (this.container.beat.dots > 0 && tabRenderer.rhythmMode !== TabRhythmMode.Hidden) {
+-				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem);
++				const y = this.getNoteY(this.container.beat.maxNote, NoteYPosition.BottomWithStem) - tabRenderer.beamThickness - 2 * tabRenderer.beamSpacing;
+ 				for (let i = 0; i < this.container.beat.dots; i++) this.addEffect(new AugmentationDotGlyph(0, y));
+ 			}
+ 		} else {
+@@ -64379,7 +64552,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+ 			const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
+ 			this.addTie(tapSlur);
+ 		}
+-		if (n.isEffectSlurOrigin && n.effectSlurDestination) {
++		const effectSlur = n.effectSlur ?? n.effectSlurOrigin?.effectSlur;
++		const isChainedEffectSlur = effectSlur?.segments?.length > 1;
++		if (isChainedEffectSlur) {
++			if (effectSlur.segments[0].fromNote === n) for (const segment of effectSlur.segments) {
++				const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, false, segment);
++				this.addTie(segmentSlur);
++			}
++		} else if (n.isEffectSlurOrigin && n.effectSlurDestination) {
+ 			let expanded = false;
+ 			for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
+ 				expanded = true;
+@@ -64391,7 +64571,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+ 				this.addTie(effectSlur);
+ 			}
+ 		}
+-		if (n.isEffectSlurDestination && n.effectSlurOrigin) {
++		if (isChainedEffectSlur && n.isEffectSlurDestination && n.effectSlurOrigin) {
++			const segment = effectSlur.segments.find(s => s.toNote === n);
++			if (segment) {
++				const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, true, segment);
++				this.addTie(segmentSlur);
++			}
++		} else if (n.isEffectSlurDestination && n.effectSlurOrigin) {
+ 			let expanded = false;
+ 			for (const slur of this._effectSlurs) if (slur.tryExpand(n.effectSlurOrigin, n, false, true)) {
+ 				expanded = true;
+@@ -64530,8 +64716,10 @@ class TabBarRenderer extends LineBarRenderer {
+ 	createLinePreBeatGlyphs() {
+ 		if (this.isFirstOfStaff) {
+ 			const center = (this.bar.staff.tuning.length - 1) / 2;
+-			this.createStartSpacing();
+-			this.addPreBeatGlyph(new TabClefGlyph(0, this.getLineY(center)));
++			if (this.bar.staff.track.score.stylesheet.playtabHideTabClef !== true) {
++				this.createStartSpacing();
++				this.addPreBeatGlyph(new TabClefGlyph(0, this.getLineY(center)));
++			}
+ 		}
+ 		if (this.showTimeSignature && (!this.bar.previousBar || this.bar.previousBar && this.bar.masterBar.timeSignatureNumerator !== this.bar.previousBar.masterBar.timeSignatureNumerator || this.bar.previousBar && this.bar.masterBar.timeSignatureDenominator !== this.bar.previousBar.masterBar.timeSignatureDenominator || this.bar.previousBar && this.bar.masterBar.isFreeTime && this.bar.masterBar.isFreeTime !== this.bar.previousBar.masterBar.isFreeTime)) {
+ 			this.createStartSpacing();
+@@ -64923,7 +65111,7 @@ class Environment {
+ 			},
+ 			{
+ 				effect: new MarkerEffectInfo(),
+-				mode: EffectBandMode.SharedTop
++				mode: EffectBandMode.SharedBottom
+ 			},
+ 			{
+ 				effect: new DirectionsEffectInfo(),
+@@ -64935,7 +65123,7 @@ class Environment {
+ 			},
+ 			{
+ 				effect: new TextEffectInfo(),
+-				mode: EffectBandMode.SharedTop
++				mode: EffectBandMode.SharedBottom
+ 			},
+ 			{
+ 				effect: new BeatTimerEffectInfo(),
+diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.js b/node_modules/@coderline/alphatab/dist/alphaTab.js
+index 6da399c..2c0a5c3 100644
+--- a/node_modules/@coderline/alphatab/dist/alphaTab.js
++++ b/node_modules/@coderline/alphatab/dist/alphaTab.js
+@@ -59245,10 +59245,12 @@
+ 	*/
+ 	var TabSlurGlyph = class extends TabTieGlyph {
+ 		_forSlide;
++		_segment;
+ 		_labels = null;
+-		constructor(slurEffectId, startNote, endNote, forSlide, forEnd) {
++		constructor(slurEffectId, startNote, endNote, forSlide, forEnd, segment = null) {
+ 			super(slurEffectId, startNote, endNote, forEnd);
+ 			this._forSlide = forSlide;
++			this._segment = segment;
+ 		}
+ 		getTieHeight(startX, _startY, endX, _endY) {
+ 			return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
+@@ -59257,9 +59259,9 @@
+ 			if (this._labels === null) {
+ 				this._labels = [];
+ 				const slur = this.startNote.effectSlur;
+-				if (slur !== null) {
++				if (slur !== null || this._segment !== null) {
+ 					const notationSettings = this.renderer.settings.notation;
+-					for (const s of slur.segments) {
++					for (const s of this._segment ? [this._segment] : slur.segments) {
+ 						const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
+ 						if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
+ 					}
+@@ -64383,7 +64385,14 @@
+ 				const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
+ 				this.addTie(tapSlur);
+ 			}
+-			if (n.isEffectSlurOrigin && n.effectSlurDestination) {
++			const effectSlur = n.effectSlur ?? n.effectSlurOrigin?.effectSlur;
++			const isChainedEffectSlur = effectSlur?.segments?.length > 1;
++			if (isChainedEffectSlur) {
++				if (effectSlur.segments[0].fromNote === n) for (const segment of effectSlur.segments) {
++					const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, false, segment);
++					this.addTie(segmentSlur);
++				}
++			} else if (n.isEffectSlurOrigin && n.effectSlurDestination) {
+ 				let expanded = false;
+ 				for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
+ 					expanded = true;
+@@ -64395,7 +64404,13 @@
+ 					this.addTie(effectSlur);
+ 				}
+ 			}
+-			if (n.isEffectSlurDestination && n.effectSlurOrigin) {
++			if (isChainedEffectSlur && n.isEffectSlurDestination && n.effectSlurOrigin) {
++				const segment = effectSlur.segments.find(s => s.toNote === n);
++				if (segment) {
++					const segmentSlur = new TabSlurGlyph(`tab.slur.effect.${segment.fromNote.id}`, segment.fromNote, segment.toNote, false, true, segment);
++					this.addTie(segmentSlur);
++				}
++			} else if (n.isEffectSlurDestination && n.effectSlurOrigin) {
+ 				let expanded = false;
+ 				for (const slur of this._effectSlurs) if (slur.tryExpand(n.effectSlurOrigin, n, false, true)) {
+ 					expanded = true;

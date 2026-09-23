@@ -1,6 +1,7 @@
-import { Settings, type model } from '@coderline/alphatab';
+import { Settings, model } from '@coderline/alphatab';
 
-type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; kind: string; type: string; number: string };
+type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; ghost?: boolean; grace?: boolean; kind: string; type: string; number: string };
+type PlaytabBeat = model.Beat & { playtabFingerings?: string[] };
 const children = (node: Element) => Array.from(node.childNodes).filter((n): n is Element => n.nodeType === 1);
 const child = (node: Element, name: string) => children(node).find(n => n.localName === name);
 const value = (node: Element, name: string) => child(node, name)?.textContent ?? '';
@@ -12,7 +13,7 @@ export function extractTechniques(source: string) {
   if (doc.getElementsByTagName('parsererror').length) throw new Error('Invalid MusicXML.');
   const lyricsField = Array.from(doc.getElementsByTagName('miscellaneous-field'))
     .find(field => field.getAttribute('name') === 'playtab-lyrics');
-  const lyricsSection = lyricsField?.textContent?.replaceAll('\0', '').replace(/^\s*LYRICS\s*&\s*CHORDS\s*\r?\n?/i, '').trimEnd() || null;
+  const lyricsSection = lyricsField?.textContent?.replaceAll('\0', '').replace(/^\s*(?:LYRICS\s*&\s*CHORDS|CHORDS\s*&\s*LYRICS)\s*\r?\n?/i, '').trimEnd() || null;
   const markers: Marker[] = [];
   let divisions = 1;
   const part = child(doc.documentElement, 'part');
@@ -37,14 +38,30 @@ export function extractTechniques(source: string) {
         if (tag.localName === 'other-technical') {
           const unresolved = tag.textContent?.match(/(?:Unresolved TEF fingering annotation code|TEF fingering code)\s+(\d+)/i);
           const thumb = tag.textContent?.match(/TEF fingering\s+T(?:humb)?$/i);
-          if (!unresolved && !thumb) continue;
-          kind = 'tef-fingering';
-          number = unresolved?.[1] ?? 'T';
+          const rightHand = tag.textContent?.match(/TEF fingering\s+([IMP])$/i);
+          const pdfRightHand = tag.textContent?.match(/TEF right-hand fingering\s+([mpt])$/i);
+          const pdfStrum = tag.textContent?.match(/TEF strum\s+(up|down)$/i);
+          const rake = tag.textContent?.match(/TEF rake/i);
+          const printedTechnique = tag.textContent?.match(/TEF (slide|bend)\s+(.+)/i);
+          if (rake) {
+            kind = 'rake';
+            number = 'R';
+          } else if (pdfStrum) {
+            kind = 'tef-strum';
+            number = pdfStrum[1].toLowerCase();
+          } else if (printedTechnique) {
+            kind = `tef-${printedTechnique[1].toLowerCase()}`;
+            number = printedTechnique[2].trim();
+          } else {
+            if (!unresolved && !thumb && !rightHand && !pdfRightHand) continue;
+            kind = pdfRightHand ? 'tef-right-hand' : 'tef-fingering';
+            number = unresolved?.[1] ?? (thumb ? 'T' : rightHand ? rightHand[1].toUpperCase() : pdfRightHand![1].toLowerCase());
+          }
         }
-        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering') continue;
-        if (child(item, 'grace')) throw new Error('Grace-note techniques are not supported by this preview yet.');
+        if (kind !== 'hammer-on' && kind !== 'pull-off' && kind !== 'fingering' && kind !== 'tef-fingering' && kind !== 'tef-right-hand' && kind !== 'rake' && kind !== 'tef-strum' && kind !== 'tef-slide' && kind !== 'tef-bend') continue;
         markers.push({ bar, tick: onset, staff: Number(value(item, 'staff') || 1) - 1, voice: value(item, 'voice') || '1',
           string: Number(value(technical, 'string')), fret: Number(value(technical, 'fret')),
+          ghost: child(item, 'notehead')?.getAttribute('parentheses') === 'yes', grace: Boolean(child(item, 'grace')),
           kind, type: tag.getAttribute('type') || '', number });
         technical.removeChild(tag);
       }
@@ -61,10 +78,27 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
   }
   const pending = new Map<string, model.Note>();
   const spans: { from: model.Note; to: model.Note; label: string }[] = [];
+  const appendFingering = (note: model.Note, label: string) => {
+    const beat = note.beat as PlaytabBeat;
+    const existingText = beat.playtabFingerings ? '' : beat.text;
+    const fingerings = beat.playtabFingerings ?? [];
+    if (!fingerings.includes(label)) fingerings.push(label);
+    beat.playtabFingerings = fingerings;
+    beat.text = [existingText, fingerings.join('\n')].filter(Boolean).join('\n');
+    if (label === 'T') note.leftHandFinger = 0;
+  };
+  const beatsInBar = (bar: number) => tab.bars[bar]?.voices.flatMap(v => v.beats) ?? [];
   for (const marker of markers.filter(m => m.staff === staffIndex)) {
-    const notes = tab.bars[marker.bar].voices.flatMap(v => v.beats.filter(b => Math.abs(b.playbackStart - marker.tick) < 0.01).flatMap(b => b.notes))
-      .filter(n => n.string === 6 - marker.string && n.fret === marker.fret);
-    if (notes.length !== 1) throw new Error('Cannot uniquely locate a MusicXML technique note.');
+    const beats = beatsInBar(marker.bar);
+    const normalBeats = beats.filter(b => Math.abs(b.playbackStart - marker.tick) < 0.01);
+    const targetBeats = marker.grace
+      ? normalBeats.flatMap(beat => beat.graceGroup?.beats ?? [])
+      : normalBeats;
+    const notes = targetBeats.flatMap(b => b.notes)
+      .filter(n => n.string === 6 - marker.string && n.fret === marker.fret && (marker.ghost === undefined || n.isGhost === marker.ghost));
+    if (notes.length !== 1) {
+      throw new Error(`Cannot uniquely locate a MusicXML technique note (bar ${marker.bar + 1}, tick ${marker.tick}, string ${marker.string}, fret ${marker.fret}, matches ${notes.length}).`);
+    }
     const note = notes[0];
     if (marker.kind === 'fingering') {
       // MusicXML's numeric fretting-hand fingers are not piano finger numbers.
@@ -76,8 +110,36 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       continue;
     }
     if (marker.kind === 'tef-fingering') {
-      const label = marker.number === '6' || marker.number === 'T' ? 'T' : `TEF ${marker.number}`;
-      note.beat.text = [note.beat.text, label].filter(Boolean).join(' ');
+      if (marker.number === '6' || /^[IMT]$/.test(marker.number)) {
+        const label = marker.number === '6' ? 'T' : marker.number;
+        appendFingering(note, label);
+      }
+      else note.beat.text = [note.beat.text, `TEF ${marker.number}`].filter(Boolean).join(' ');
+      continue;
+    }
+    if (marker.kind === 'tef-right-hand') {
+      const label = marker.number === 'm' ? 'M' : 'T';
+      appendFingering(note, label);
+      continue;
+    }
+    if (marker.kind === 'rake') {
+      note.beat.text = [note.beat.text, 'R'].filter(Boolean).join(' ');
+      note.beat.brushType = model.BrushType.ArpeggioDown;
+      continue;
+    }
+    if (marker.kind === 'tef-strum') {
+      // AlphaTab names brush direction by the stroke gesture; its BrushDown
+      // glyph is the one with the arrowhead at the top of the tab stem.
+      note.beat.brushType = marker.number === 'up' ? model.BrushType.BrushDown : model.BrushType.BrushUp;
+      continue;
+    }
+    if (marker.kind === 'tef-slide' || marker.kind === 'tef-bend') {
+      if (marker.kind === 'tef-slide' && marker.number === '/') {
+        note.slideInType = model.SlideInType.IntoFromBelow;
+        continue;
+      }
+      note.beat.text = [note.beat.text, marker.number].filter(Boolean).join(' ');
+      (note.beat as model.Beat & { playtabSlideAnnotation?: boolean }).playtabSlideAnnotation = true;
       continue;
     }
     const key = `${marker.voice}:${marker.string}:${marker.kind}:${marker.number}`;
@@ -93,6 +155,8 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       if (!next?.notes.includes(note)) throw new Error('Technique must end on the next note on the same string.');
       if (marker.kind === 'pull-off' ? from.fret <= note.fret : from.fret >= note.fret) throw new Error('Technique direction disagrees with the frets.');
       from.isHammerPullOrigin = true;
+      from.beat.noteStringLookup.set(from.string, from);
+      note.beat.noteStringLookup.set(note.string, note);
       spans.push({ from, to: note, label: marker.kind === 'pull-off' ? 'PO' : 'H' });
     } else throw new Error('Unsupported MusicXML technique marker.');
   }

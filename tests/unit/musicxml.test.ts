@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readMusicXml, toImportedScoreDocument } from '../../app/frontend/music/musicxml';
+import { configureChordDiagrams, readMusicXml, toImportedScoreDocument } from '../../app/frontend/music/musicxml';
 import { applyTechniques, extractTechniques } from '../../app/frontend/music/musicxml-techniques';
 import { importer, model } from '@coderline/alphatab';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
@@ -22,6 +22,16 @@ ${[['G',4],['C',3],['G',3],['C',4],['D',4]].map(([step, octave], i) => `<staff-t
 
 describe('MusicXML preview', () => {
   const techniques = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
+  it('creates preview IDs when randomUUID is unavailable on the serving origin', () => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {} });
+    try {
+      expect(readMusicXml(techniques, 'insecure-origin.xml').id).toMatch(/^preview-/);
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'crypto', original);
+      else delete (globalThis as { crypto?: Crypto }).crypto;
+    }
+  });
   it.skipIf(!process.env.PLAYTAB_CORRECTED_XML || !process.env.PLAYTAB_TEFSOURCE)('preserves base frets for every flagged annotation in the private TEF', () => {
     const preview = readMusicXml(fs.readFileSync(process.env.PLAYTAB_CORRECTED_XML!, 'utf8'), 'corrected.xml');
     const tab = preview.score.tracks[0].staves[0];
@@ -54,17 +64,93 @@ describe('MusicXML preview', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><other-technical>TEF fingering code 6</other-technical>');
     const { score } = readMusicXml(annotated, 'unknown-finger.xml');
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
-    const baseline = readMusicXml(techniques, 'baseline.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
-    expect([note.fret, note.realValue, note.leftHandFinger]).toEqual([3, 51, baseline.leftHandFinger]);
-    expect(note.beat.text).toBe('T');
+    expect([note.fret, note.realValue, note.leftHandFinger, note.beat.text]).toEqual([3, 51, 0, 'T']);
   });
-  it('shows a native TEF3 thumb fingering without changing the note', () => {
+  it('shows a TEF3 thumb fingering as a tab annotation without changing the note', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><other-technical>TEF fingering T</other-technical>');
     const { score } = readMusicXml(annotated, 'native-thumb.xml');
     const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
-    const baseline = readMusicXml(techniques, 'baseline-native-thumb.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
-    expect([note.fret, note.realValue, note.leftHandFinger]).toEqual([3, 51, baseline.leftHandFinger]);
-    expect(note.beat.text).toContain('T');
+    expect([note.fret, note.realValue, note.leftHandFinger, note.beat.text]).toEqual([3, 51, 0, 'T']);
+  });
+  it('shows TEF index and middle finger annotations', () => {
+    const annotated = techniques
+      .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering I</other-technical><hammer-on type="start">H</hammer-on>')
+      .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF fingering M</other-technical><hammer-on type="stop"/>');
+    const { score } = readMusicXml(annotated, 'right-hand-fingering.xml');
+    const first = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    const second = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(first.beat.text).toBe('I');
+    expect(second.beat.text).toBe('M');
+  });
+  it('stacks a thumb below a same-beat index annotation', () => {
+    const annotated = techniques.replace(
+      '<fret>0</fret><hammer-on type="start">H</hammer-on>',
+      '<fret>0</fret><other-technical>TEF fingering T</other-technical><other-technical>TEF fingering I</other-technical><hammer-on type="start">H</hammer-on>',
+    );
+    const { score } = readMusicXml(annotated, 'stacked-fingering.xml');
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    expect(note.leftHandFinger).toBe(0);
+    expect(note.beat.text).toBe('T\nI');
+  });
+  it('shows vector PDF right-hand m and t annotations below the notes', () => {
+    const annotated = techniques
+      .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF right-hand fingering m</other-technical><hammer-on type="start">H</hammer-on>')
+      .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF right-hand fingering t</other-technical><hammer-on type="stop"/>');
+    const { score } = readMusicXml(annotated, 'pdf-right-hand-fingering.xml');
+    const first = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    const second = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(first.beat.text).toBe('M');
+    expect(second.leftHandFinger).toBe(0);
+    expect(second.beat.text).toBe('T');
+  });
+  it('shows a PDF rake as an R annotation and arpeggio', () => {
+    const annotated = techniques.replace(
+      '<fret>3</fret>',
+      '<fret>3</fret><other-technical>TEF rake</other-technical><arpeggiate direction="down" />',
+    );
+    const { score } = readMusicXml(annotated, 'rake.xml');
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(note.beat.text).toBe('R');
+    expect(note.beat.brushType).toBe(model.BrushType.ArpeggioDown);
+  });
+  it('maps PDF strum direction markers to brush direction', () => {
+    const up = techniques.replace('<fret>3</fret>', '<fret>3</fret><other-technical>TEF strum up</other-technical>');
+    const down = techniques.replace('<fret>3</fret>', '<fret>3</fret><other-technical>TEF strum down</other-technical>');
+    const upNote = readMusicXml(up, 'strum-up.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    const downNote = readMusicXml(down, 'strum-down.xml').score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+
+    expect(upNote.beat.brushType).toBe(model.BrushType.BrushDown);
+    expect(downNote.beat.brushType).toBe(model.BrushType.BrushUp);
+  });
+  it('preserves a PDF slide label beside the native slide notation', () => {
+    const annotated = techniques.replace(
+      '<notations><technical><string>4</string><fret>0</fret>',
+      '<notations><slide type="start">Sl</slide><technical><string>4</string><fret>0</fret><other-technical>TEF slide Sl</other-technical>',
+    );
+    const { score } = readMusicXml(annotated, 'slide.xml');
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    expect(note.beat.text).toBe('Sl');
+  });
+  it('maps a standalone PDF slide-in slash to AlphaTab slide-in notation', () => {
+    const annotated = techniques.replace(
+      '<fret>3</fret>',
+      '<fret>3</fret><other-technical>TEF slide /</other-technical>',
+    );
+    const { score } = readMusicXml(annotated, 'slide-in.xml');
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[1].notes[0];
+    expect(note.slideInType).toBe(model.SlideInType.IntoFromBelow);
+    expect(note.beat.text).toBeNull();
+  });
+  it('imports a MusicXML grace note without rejecting its tab technical data', () => {
+    const firstNote = '    <note><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>4</string><fret>0</fret><hammer-on type="start">H</hammer-on></technical></notations></note>';
+    const grace = '    <note><grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><voice>1</voice><type>eighth</type><notations><technical><string>4</string><fret>2</fret></technical></notations></note>';
+    const annotated = techniques.replace(firstNote.trimStart(), `${grace.trimStart()}\n${firstNote.trimStart()}`);
+    const preview = readMusicXml(annotated, 'grace.xml');
+    const beats = preview.score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
+    const graceBeat = beats.find(beat => beat.graceType !== model.GraceType.None);
+
+    expect(graceBeat).toBeDefined();
+    expect(graceBeat?.notes[0].fret).toBe(2);
   });
   it('maps the TEF code for finger 1 to a circled fingering', () => {
     const annotated = techniques.replace('<fret>3</fret>', '<fret>3</fret><fingering enclosure="circle">1</fingering>');
@@ -81,10 +167,42 @@ describe('MusicXML preview', () => {
     const annotated = fixture()
       .replace('<note><pitch', `${direction}${harmony}<note><pitch`)
       .replace('<backup><duration>4</duration></backup>', `<backup><duration>4</duration></backup>${tabDirection}${tabHarmony}`);
-    const { score } = readMusicXml(annotated, 'annotations.xml');
+    const { score, chordDiagrams } = readMusicXml(annotated, 'annotations.xml');
     const beats = score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
     expect(beats.find(beat => beat.text)?.text).toBe('Verse');
     expect(beats.find(beat => beat.chord)?.chord?.name).toBe('Cm');
+    expect(chordDiagrams).toEqual([]);
+  });
+  it('keeps timed lyrics aligned and imports TEF chord voicings without enabling diagrams', () => {
+    const harmony = '<harmony data-playtab-strings="0,2,0,1,0" data-playtab-first-fret="1"><root><root-step>C</root-step></root><kind>minor</kind><staff>2</staff></harmony>';
+    const annotated = fixture()
+      .replace('<backup><duration>4</duration></backup>', `<forward><duration>0</duration></forward><backup><duration>4</duration></backup>${harmony}`)
+      .replace('</notations></note>', '</notations><lyric number="1"><syllabic>single</syllabic><text>There</text></lyric></note>');
+    const preview = readMusicXml(annotated, 'presentation.xml');
+    const chord = preview.score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats).find(beat => beat.chord)?.chord;
+    expect(preview.timedLyrics).toEqual([{ measure: 1, beat: 1, text: 'There' }]);
+    expect(chord?.strings).toEqual([0, 2, 0, 1, 0]);
+    expect(preview.chordDiagrams).toEqual([{ name: 'Cm', strings: [0, 2, 0, 1, 0], firstFret: 1, barreFrets: [] }]);
+    expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(false);
+    configureChordDiagrams(preview.score, true);
+    expect(preview.score.stylesheet.globalDisplayChordDiagramsInScore).toBe(false);
+    expect(preview.score.stylesheet.globalDisplayChordDiagramsOnTop).toBe(true);
+    expect(chord?.showDiagram).toBe(true);
+  });
+  it('applies voicings when alphaTab attaches an offset chord to the measure start', () => {
+    const harmony = '<harmony offset="99" data-playtab-strings="4,0,0,0,-1" data-playtab-first-fret="1"><root><root-step>A</root-step></root><kind>major</kind></harmony>';
+    const preview = readMusicXml(fixture().replace('</backup>', `</backup>${harmony}`), 'offset-chord.xml');
+    expect(preview.chordDiagrams).toContainEqual({ name: 'A', strings: [4, 0, 0, 0, -1], firstFret: 1, barreFrets: [] });
+  });
+  it('imports MusicXML subtitle and arranger credits', () => {
+    const annotated = fixture().replace(
+      '<part-list>',
+      '<credit page="1"><credit-type>subtitle</credit-type><credit-words>gCGCD# (capo 2), Brainjo level 3</credit-words></credit>' +
+      '<credit page="1"><credit-type>arranger</credit-type><credit-words>arranged by Josh Turknett CLAWHAMMERBANJO.NET</credit-words></credit><part-list>'
+    );
+    const preview = readMusicXml(annotated, 'credits.xml');
+    expect(preview.score.subTitle.replaceAll('\u00a0', ' ')).toBe('gCGCD# (capo 2), Brainjo level 3');
+    expect(preview.score.artist.replaceAll('\u00a0', ' ')).toBe('arranged by Josh Turknett CLAWHAMMERBANJO.NET');
   });
   it('imports MusicXML lyrics onto the retained tab staff', () => {
     const annotated = fixture().replace(
@@ -95,6 +213,18 @@ describe('MusicXML preview', () => {
     const beats = score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
     expect(beats.find(beat => beat.lyrics)?.lyrics).toEqual(['There']);
   });
+  it('uses the banjo playback program for imported five-string scores', () => {
+    const source = fixture().replace(
+      '<part-name>Banjo</part-name>',
+      '<part-name>Banjo</part-name><score-instrument id="P1-I1"><instrument-name>Banjo</instrument-name></score-instrument><midi-instrument id="P1-I1"><midi-program>1</midi-program></midi-instrument>'
+    );
+    const preview = readMusicXml(source, 'imported.xml');
+    const firstBeat = preview.score.tracks[0].staves[0].bars[0].voices[0].beats[0];
+
+    expect(preview.score.tracks[0].playbackInfo.program).toBe(105);
+    expect(preview.score.tracks[0].playbackInfo.bank).toBe(0);
+    expect(firstBeat.getAutomation(model.AutomationType.Instrument)?.value).toBe(105);
+  });
   it('extracts a separate Playtab lyrics section without attaching words to beats', () => {
     const annotated = fixture().replace(
       '<part-list>',
@@ -104,6 +234,9 @@ describe('MusicXML preview', () => {
     const beats = score.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats);
     expect(lyricsSection).toBe('VERSE\nThere once was a ship');
     expect(beats.every(beat => beat.lyrics === null)).toBe(true);
+
+    const reversedHeading = annotated.replace('LYRICS &amp; CHORDS', 'CHORDS &amp; LYRICS');
+    expect(readMusicXml(reversedHeading, 'reversed-lyrics-heading.xml').lyricsSection).toBe('VERSE\nThere once was a ship');
   });
   it.skipIf(!process.env.PLAYTAB_REVIEWED_XML)('preserves reviewed measure-eight fret and separate third-finger annotation', () => {
     const preview = readMusicXml(fs.readFileSync(process.env.PLAYTAB_REVIEWED_XML!, 'utf8'), 'reviewed.xml');
@@ -150,6 +283,49 @@ describe('MusicXML preview', () => {
     expect(notes.map(n => n.beat.playbackStart)).toEqual([0, 960, 1920, 2880]);
     expect(preview.source).toBe(techniques);
   });
+  it('connects a MusicXML grace pull-off to the following tab note', () => {
+    const source = techniques
+      .replace('<hammer-on type="start">H</hammer-on>', '')
+      .replace('<hammer-on type="stop"/>', '<pull-off type="stop"/>')
+      .replace(
+        '    <note><pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch>',
+        '    <note><grace slash="yes"/><pitch><step>F</step><alter>1</alter><octave>3</octave></pitch><voice>1</voice><type>eighth</type><notations><technical><string>4</string><fret>4</fret><pull-off type="start">PO</pull-off></technical></notations></note>\n    <note><pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch>',
+      );
+    const preview = readMusicXml(source, 'grace-pull-off.xml');
+    const beats = preview.score.tracks[0].staves[0].bars[0].voices[0].beats;
+    const graceNote = beats.find(beat => beat.graceType !== model.GraceType.None)?.notes[0];
+    const destination = beats.find(beat => beat.graceType === model.GraceType.None && beat.graceGroup)?.notes[0];
+
+    expect(graceNote?.fret).toBe(4);
+    expect(graceNote?.isHammerPullOrigin).toBe(true);
+    expect(graceNote?.hammerPullDestination).toBe(destination);
+  });
+  it('retains adjacent H and PO segments on one technique chain', () => {
+    const preview = readMusicXml(fs.readFileSync('tests/fixtures/chained-techniques.musicxml', 'utf8'), 'chained-techniques.xml');
+    const notes = preview.score.tracks[0].staves[0].bars[0].voices.flatMap(v => v.beats.flatMap(b => b.notes));
+
+    expect(notes.map(note => note.isHammerPullOrigin)).toEqual([true, true, false]);
+    const segments = (notes[0] as any).effectSlur.segments as Array<{ fromNote: (typeof notes)[number]; toNote: (typeof notes)[number]; text: string }>;
+    expect(segments.map(segment => [segment.fromNote, segment.toNote, segment.text])).toEqual([
+      [notes[0], notes[1], 'H'],
+      [notes[1], notes[2], 'PO'],
+    ]);
+  });
+  it('matches techniques to the normal note beside a same-onset ghost note', () => {
+    const ghostDuplicate = '<note><chord/><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notehead parentheses="yes">normal</notehead><notations><technical><string>4</string><fret>0</fret></technical></notations></note>';
+    const annotated = techniques.replace(
+      '    <note><pitch><step>E</step><alter>-1</alter><octave>3</octave></pitch><duration>1</duration><type>quarter</type><notations>',
+      `${ghostDuplicate}\n$&`,
+    );
+    const preview = readMusicXml(annotated, 'ghost-technique.xml');
+    const notes = preview.score.tracks[0].staves[0].bars[0].voices[0].beats[0].notes;
+    const origin = notes.find(note => !note.isGhost);
+
+    expect(notes).toHaveLength(2);
+    expect(origin?.isHammerPullOrigin).toBe(true);
+    expect(origin?.hammerPullDestination?.fret).toBe(3);
+    expect(notes.find(note => note.isGhost)?.isHammerPullOrigin).not.toBe(true);
+  });
   it('rejects unpaired and wrong-direction techniques', () => {
     expect(() => readMusicXml(techniques.replace('<pull-off type="stop"/>', ''), 'bad.xml')).toThrow('Unpaired');
     expect(() => readMusicXml(techniques.replaceAll('pull-off', 'hammer-on'), 'bad.xml')).toThrow('direction');
@@ -160,6 +336,7 @@ describe('MusicXML preview', () => {
       .replace('<pull-off type="stop"/>', '<hammer-on type="stop"/><pull-off type="stop"/>');
     expect(() => readMusicXml(delayedStop, 'bad.xml')).toThrow('next note');
   });
+
 
   it('checks technique connections and labels internal slur segments', () => {
     const marker = { bar: 0, tick: 0, staff: 0, voice: '1', string: 4, fret: 0, kind: 'hammer-on', type: 'start', number: '1' };
@@ -219,7 +396,8 @@ describe('MusicXML preview', () => {
     expect(extractTechniques(unknown).markers).toHaveLength(3);
     const forward = techniques.replace('<note>', '<forward><duration>1</duration></forward><note>');
     expect(extractTechniques(forward).markers.length).toBeGreaterThan(0);
-    expect(() => extractTechniques(techniques.replace('<note>', '<note><grace/>'))).toThrow('Grace-note');
+    const grace = extractTechniques(techniques.replace('<note>', '<note><grace/>'));
+    expect(grace.markers.some(marker => marker.grace)).toBe(true);
   });
   it('rejects oversized and structurally unsupported scores', () => {
     expect(() => readMusicXml('x'.repeat(2_000_001), 'big.xml')).toThrow('2 MB');

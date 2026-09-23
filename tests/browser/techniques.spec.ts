@@ -1,4 +1,19 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
+import fs from 'node:fs';
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!crypto.randomUUID) Object.defineProperty(crypto, 'randomUUID', { value: () => 'browser-test-id' });
+  });
+});
+
+async function exportAs(page: import('@playwright/test').Page, format: string) {
+  const dialog = page.locator('.export-dialog');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('Export format').selectOption(format);
+  await dialog.getByRole('button', { name: 'Export file', exact: true }).click();
+}
 
 test('renders H and PO on technique slurs and retains them after resize and printing', async ({ page, context }) => {
   const errors: string[] = [];
@@ -10,15 +25,224 @@ test('renders H and PO on technique slurs and retains them after resize and prin
   await expect(notation.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(1);
   await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
   await expect(notation.locator('svg text').filter({ hasText: /^sl\.?$/i })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled({ timeout: 60000 });
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await page.waitForTimeout(500);
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await page.setViewportSize({ width: 900, height: 1000 });
   await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
   await page.screenshot({ path: 'tmp/techniques.png', fullPage: true });
   await context.addInitScript(() => { window.print = () => {}; });
   const popup = page.waitForEvent('popup');
-  await page.getByLabel('Export score').selectOption('pdf');
+  await exportAs(page, 'pdf');
   const printPreview = await popup;
   await expect(printPreview.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(1);
   await expect(printPreview.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
   await printPreview.close();
   expect(errors).toEqual([]);
+});
+
+test('renders printed slide labels above the technique slur', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF slide Sl</other-technical><hammer-on type="stop"/>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'slide.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readPositions = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const positions = new Map<string, number>();
+    for (const node of nodes) {
+      if (!['H', 'Sl'].includes(node.textContent ?? '')) continue;
+      const y = (node as SVGGraphicsElement).getBBox().y;
+      if (Number.isFinite(y)) positions.set(node.textContent!, y);
+    }
+    return Object.fromEntries(positions);
+  });
+  await expect.poll(async () => Object.keys(await readPositions()).length).toBe(2);
+  const positions = await readPositions();
+  expect(Math.abs(positions.Sl - positions.H)).toBeLessThan(12);
+});
+
+test('renders consecutive hammer-on and pull-off segments as separate slurs', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/chained-techniques.musicxml');
+
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(1);
+  await expect(notation.locator('svg text').filter({ hasText: /^PO$/ })).toHaveCount(1);
+  const slurs = await notation.locator('svg path').evaluateAll(paths => paths.map(path => {
+    const box = (path as SVGGraphicsElement).getBBox();
+    return { d: path.getAttribute('d') ?? '', x: box.x, width: box.width, height: box.height };
+  }).filter(path => path.d.includes(' C') && path.width > 20 && path.height > 4)
+    .sort((left, right) => left.x - right.x));
+
+  expect(slurs).toHaveLength(2);
+  expect(slurs[0].x + slurs[0].width).toBeCloseTo(slurs[1].x, 3);
+});
+
+test('renders a native thumb fingering below the tablature staff', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><hammer-on type="start">H</hammer-on>')
+    .replace('<hammer-on type="stop"/></technical></notations></note>\n    <note>', '<hammer-on type="stop"/></technical></notations></note>\n    <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><type>quarter</type><notations><technical><string>5</string><fret>0</fret></technical></notations></note>\n    <note>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'thumb.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readThumbPosition = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const glyph = nodes.find(node => node.textContent === 'T');
+    const fretYs = nodes.filter(node => /^\d+$/.test(node.textContent ?? ''))
+      .map(node => Number(node.getAttribute('y')))
+      .filter(Number.isFinite);
+    const svg = (nodes[0] as SVGTextElement | undefined)?.ownerSVGElement;
+    const stemBottomYs = [...(svg?.querySelectorAll('rect') ?? [])]
+      .filter(rect => rect.getAttribute('fill') === '#000000')
+      .map(rect => Number(rect.getAttribute('y')) + Number(rect.getAttribute('height')))
+      .filter(Number.isFinite);
+    const tieBottomYs = [...(svg?.querySelectorAll('path') ?? [])]
+      .map(path => {
+        const box = (path as SVGGraphicsElement).getBBox();
+        return box.y + box.height;
+      })
+      .filter(Number.isFinite);
+    const directY = glyph?.getAttribute('y');
+    const match = glyph?.parentElement?.getAttribute('transform')?.match(/translate\([^ ]+ ([^)]+)\)/);
+    const glyphY = directY ? Number(directY) : match ? Number(match[1]) : NaN;
+    const lowerGeometryY = Math.max(...fretYs, ...stemBottomYs, ...tieBottomYs);
+    return Number.isFinite(glyphY) && Number.isFinite(lowerGeometryY) ? { glyphY, lowerGeometryY } : null;
+  });
+  await expect.poll(async () => (await readThumbPosition())?.glyphY ?? -1).toBeGreaterThan(0);
+  const position = await readThumbPosition();
+  expect(position?.glyphY).toBeGreaterThan(position?.lowerGeometryY ?? Number.POSITIVE_INFINITY);
+});
+
+test('renders TEF index and middle finger annotations', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering I</other-technical><hammer-on type="start">H</hammer-on>')
+    .replace('<fret>3</fret><hammer-on type="stop"/>', '<fret>3</fret><other-technical>TEF fingering M</other-technical><hammer-on type="stop"/>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'right-hand-fingering.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg text').filter({ hasText: /^I$/ })).toHaveCount(1);
+  await expect(notation.locator('svg text').filter({ hasText: /^M$/ })).toHaveCount(1);
+});
+
+test('stacks thumb above a same-beat index annotation', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><other-technical>TEF fingering I</other-technical><hammer-on type="start">H</hammer-on>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'stacked-fingering.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readPositions = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const positions: Record<string, number> = {};
+    for (const node of nodes) {
+      if (!['T', 'I'].includes(node.textContent ?? '')) continue;
+      const y = (node as SVGGraphicsElement).getBBox().y;
+      if (Number.isFinite(y)) positions[node.textContent!] = y;
+    }
+    return positions;
+  });
+  await expect.poll(async () => Object.keys(await readPositions()).length).toBe(2);
+  const positions = await readPositions();
+  expect(positions.I).toBeGreaterThan(positions.T);
+});
+
+test('renders section words below the tablature staff', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<note><pitch', '<direction><direction-type><words>Banjo Solo</words></direction-type></direction><note><pitch');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'section.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const readSectionPosition = () => page.getByTestId('notation').locator('svg text').evaluateAll(nodes => {
+    const label = nodes.find(node => node.textContent === 'Banjo Solo');
+    const svg = (label as SVGTextElement | undefined)?.ownerSVGElement;
+    const stems = [...(svg?.querySelectorAll('rect') ?? [])]
+      .filter(rect => rect.getAttribute('fill') === '#000000')
+      .map(rect => Number(rect.getAttribute('y')) + Number(rect.getAttribute('height')))
+      .filter(Number.isFinite);
+    const labelY = Number(label?.getAttribute('y'));
+    return Number.isFinite(labelY) && stems.length ? { labelY, stemBottomY: Math.max(...stems) } : null;
+  });
+  await expect.poll(async () => (await readSectionPosition())?.labelY ?? -1).toBeGreaterThan(0);
+  const position = await readSectionPosition();
+  expect((position?.labelY ?? Number.NEGATIVE_INFINITY) + 0.1).toBeGreaterThanOrEqual(position?.stemBottomY ?? Number.POSITIVE_INFINITY);
+});
+
+test('keeps an overlapping section word below a thumb fingering', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<note><pitch', '<direction><direction-type><words>Banjo Solo</words></direction-type></direction><note><pitch')
+    .replace('<fret>0</fret><hammer-on type="start">H</hammer-on>', '<fret>0</fret><other-technical>TEF fingering T</other-technical><hammer-on type="start">H</hammer-on>');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'section-thumb.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  const notation = page.getByTestId('notation');
+  const readPositions = () => notation.locator('svg').evaluateAll(svgs => {
+    const y = (node: Element) => {
+      const direct = node.getAttribute('y');
+      if (direct) return Number(direct);
+      const match = node.parentElement?.getAttribute('transform')?.match(/translate\([^ ]+ ([^)]+)\)/);
+      return match ? Number(match[1]) : NaN;
+    };
+    for (const svg of svgs) {
+      const section = [...svg.querySelectorAll('text')].find(node => node.textContent === 'Banjo Solo');
+      const thumb = [...svg.querySelectorAll('text')].find(node => node.textContent === 'T');
+      if (section && thumb) return { sectionY: y(section), thumbY: y(thumb) };
+    }
+    return null;
+  });
+  await expect.poll(async () => (await readPositions())?.sectionY ?? -1).toBeGreaterThan(0);
+  const position = await readPositions();
+  expect(position).not.toBeNull();
+  expect(position!.sectionY).toBeGreaterThan(position!.thumbY);
+});
+
+test('renders duration dots between the tablature staff and rhythm beams in score and print preview', async ({ page, context }) => {
+  const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
+    .replace('<divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type>', '<divisions>4</divisions><time><beats>9</beats><beat-type>16</beat-type>')
+    .replace('<duration>1</duration><type>quarter</type>', '<duration>3</duration><type>eighth</type><dot/>')
+    .replaceAll('<duration>1</duration><type>quarter</type>', '<duration>2</duration><type>eighth</type>');
+  const readPositions = (container: Locator) => container.locator('svg').evaluateAll(svgs => {
+    const dots = svgs.flatMap(svg => [...svg.querySelectorAll('text')]
+      .filter(text => text.textContent?.length === 1 && text.textContent.codePointAt(0) === 57831)
+      .map(dot => ({ svg, dot })));
+    const dot = dots[0]?.dot;
+    const transform = dot?.parentElement?.getAttribute('transform');
+    const dotY = Number(transform?.match(/translate\([^ ]+ ([^)]+)\)/)?.[1]);
+    const svg = dots[0]?.svg;
+    const staffLineYs = [...(svg?.querySelectorAll('rect') ?? [])]
+      .filter(rect => rect.getAttribute('fill') === '#A5A5A5' && Number(rect.getAttribute('height')) < 2)
+      .map(rect => Number(rect.getAttribute('y')))
+      .filter(Number.isFinite);
+    const beamTopYs = [...(svg?.querySelectorAll('path') ?? [])]
+      .map(path => {
+        const box = (path as SVGGraphicsElement).getBBox();
+        return { y: box.y, height: box.height, width: box.width };
+      })
+      .filter(box => box.width > 10 && box.height > 3 && box.height < 6)
+      .map(box => box.y)
+      .filter(Number.isFinite);
+    return dots.length && staffLineYs.length && beamTopYs.length ? { dotY, staffBottomY: Math.max(...staffLineYs), beamTopY: Math.min(...beamTopYs) } : null;
+  });
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'dotted-technique.musicxml', mimeType: 'application/xml', buffer: Buffer.from(source) });
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Technique exercise');
+  const notation = page.getByTestId('notation');
+  await expect.poll(async () => (await readPositions(notation))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
+  const position = await readPositions(notation);
+  expect(position).not.toBeNull();
+  expect(position!.dotY).toBeGreaterThan(position!.staffBottomY);
+  expect(position!.dotY).toBeLessThan(position!.beamTopY);
+
+  await context.addInitScript(() => { window.print = () => {}; });
+  const popup = page.waitForEvent('popup');
+  await exportAs(page, 'pdf');
+  const printPreview = await popup;
+  await expect.poll(async () => (await readPositions(printPreview.locator('body')))?.dotY ?? -1).toBeGreaterThanOrEqual(0);
+  const printPosition = await readPositions(printPreview.locator('body'));
+  expect(printPosition).not.toBeNull();
+  expect(printPosition!.dotY).toBeGreaterThan(printPosition!.staffBottomY);
+  expect(printPosition!.dotY).toBeLessThan(printPosition!.beamTopY);
+  await printPreview.close();
 });

@@ -14,7 +14,7 @@ export type ImportedScoreDocument = {
   kind: 'musicxml';
   title: string;
   sourceName: string;
-  sourceFormat: 'musicxml' | 'tef';
+  sourceFormat: 'musicxml' | 'tef' | 'pdf';
   source: string;
   warnings: string[];
 };
@@ -56,7 +56,7 @@ export function validateImportedScore(value: unknown): asserts value is Imported
   if (document.version !== 2 || document.kind !== 'musicxml') fail('Unsupported imported score document.');
   if (typeof document.title !== 'string' || !document.title.trim() || document.title.length > 160) fail('Title must contain 1–160 characters.');
   if (typeof document.sourceName !== 'string' || !document.sourceName.trim() || document.sourceName.length > 160) fail('Imported filename must contain 1–160 characters.');
-  if (document.sourceFormat !== 'musicxml' && document.sourceFormat !== 'tef') fail('Unsupported imported score format.');
+  if (document.sourceFormat !== 'musicxml' && document.sourceFormat !== 'tef' && document.sourceFormat !== 'pdf') fail('Unsupported imported score format.');
   if (typeof document.source !== 'string' || new TextEncoder().encode(document.source).length > 2_000_000 || !/<score-partwise[\s>]/.test(document.source)) fail('Imported MusicXML is invalid or too large.');
   if (!Array.isArray(document.warnings) || document.warnings.length > 20 || document.warnings.some(warning => typeof warning !== 'string' || warning.length > 500)) fail('Invalid import warnings.');
 }

@@ -1,7 +1,5 @@
 module Api
   class TefImportsController < ApplicationController
-    skip_before_action :verify_authenticity_token, only: :create
-
     def create
       response.headers["Cache-Control"] = "no-store"
       if request.content_length.to_i > 110_000

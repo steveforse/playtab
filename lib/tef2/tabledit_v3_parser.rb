@@ -76,7 +76,8 @@ module Tef2
         annotations: {},
         title: indirect_text(bytes, 0x40),
         subtitle: indirect_text(bytes, 0x44),
-        comment: indirect_text(bytes, 0x48)
+        comment: indirect_text(bytes, 0x48),
+        lyrics_text: indirect_text(bytes, 0x4C)
       }
     end
 

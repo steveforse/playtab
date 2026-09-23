@@ -4,31 +4,24 @@ require_relative "tef2/parser"
 require_relative "tef2/timeline"
 require_relative "tef2/musicxml_builder"
 require_relative "tef2/full_parser"
+require_relative "tef2/repeat_map"
 require_relative "tef2/full_musicxml_builder"
 require_relative "tef2/tabledit_v3_parser"
-require_relative "tef2/converter_client"
 require_relative "tef2/exporter"
 
 module Tef2
   class Error < StandardError; end
   class Invalid < Error; end
-  class Unavailable < Error; end
 
   # High-level conversion from TEF2 bytes to MusicXML
-  # Uses full native parser for complete TEF2 support
-  # Falls back to Python/Java converter only if native parser fails
+  # Uses the full native parser for TEF2 and TablEdit 3.00 files.
   def self.convert(bytes)
-    # Try full native parser first (handles real TEF2 files)
     result = try_full_parse(bytes)
     return result if result
 
-    # Fall back to Python/Java converter
-    try_converter_service(bytes)
+    try_native_parse(bytes)
   rescue Parser::Invalid, FullParser::Invalid, TableditV3Parser::Invalid => e
     raise Invalid, e.message
-  rescue Unavailable
-    # Converter unavailable - try simple native parser
-    try_native_parse(bytes)
   end
 
   # Full native TEF2 parser (complete implementation)
@@ -40,22 +33,31 @@ module Tef2
     # Validate we got meaningful data
     raise FullParser::Invalid, "No notes parsed" if parsed[:notes].empty?
 
+    repeat_records, repeat_warnings, decoded_repeats = RepeatMap.decode(parsed[:repeats], parsed[:measures])
+    parsed[:endings] = (parsed[:endings] || []) + repeat_records
+
     musicxml = FullMusicxmlBuilder.build(parsed)
     warnings = [
       tabledit_v3 ? "Native Ruby TablEdit 3.00 conversion" : "Native Ruby TEF2 conversion (full)"
-    ]
-    if parsed[:annotations].values.any? { |code| ![ 2, 4, 6 ].include?(code) }
+    ] + repeat_warnings
+    unknown_annotations = parsed[:annotations].values.uniq - [ 2, 3, 4, 5, 6, 18 ]
+    suppressed = unknown_annotations & Tef2::FullMusicxmlBuilder::SUPPRESSED_ANNOTATIONS
+    unless suppressed.empty?
+      warnings << "TEF annotation codes with no visible TefView rendering are omitted: #{suppressed.sort.join(', ')}."
+    end
+    unless (unknown_annotations - suppressed).empty?
       warnings << "TEF fingering codes without a known finger mapping are shown as TEF code labels."
     end
     unsupported_effects = unsupported_effect_codes(parsed[:notes])
     unless unsupported_effects.empty?
       warnings << "Unsupported TEF effect codes are preserved as TEF technical metadata: #{unsupported_effects.join(', ')}."
     end
-    if parsed[:track_data].any? { |track| track[:capo].to_i.positive? }
-      warnings << "Capo metadata is preserved in the source tuning; imported fret numbers are unchanged."
+    capo = (parsed[:track_data] || []).map { |track| track[:capo].to_i }.max.to_i
+    if capo.positive?
+      warnings << "Capo #{capo}: 5th-string fret numbers are displayed relative to the capo, matching the printed tab; other strings are unchanged."
     end
-    if parsed[:repeats].any? { |repeat| repeat[:start] != 0 || repeat[:length] != 0 }
-      warnings << "Repeat maps are not expanded; the imported score follows the source's written measures once."
+    if parsed[:repeats].count { |repeat| repeat[:start].nonzero? || repeat[:length].nonzero? } > decoded_repeats
+      warnings << "Some TEF2 repeat-map entries were not decoded; the imported score follows the source's written measures once."
     end
     { musicxml: musicxml, warnings: warnings }
   rescue FullParser::Invalid, TableditV3Parser::Invalid => e
@@ -91,17 +93,5 @@ module Tef2
     { musicxml: musicxml, warnings: [ "Native Ruby TEF2 conversion (fallback - limited)" ] }
   rescue Parser::Invalid => e
     raise Invalid, e.message
-  end
-
-  # Try Python/Java converter service (child process)
-  def self.try_converter_service(bytes)
-    client = ConverterClient.new
-    client.convert(bytes)
-  rescue ConverterClient::Invalid => e
-    raise Invalid, e.message
-  rescue ConverterClient::Unavailable => e
-    raise Unavailable, e.message
-  ensure
-    client&.stop!
   end
 end

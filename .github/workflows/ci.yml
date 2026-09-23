@@ -81,6 +81,13 @@ jobs:
         with:
           bundler-cache: true
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build -- --mode test
+
       - name: Run tests
         env:
           RAILS_ENV: test
@@ -88,10 +95,4 @@ jobs:
           # REDIS_URL: redis://localhost:6379/0
         run: bin/rails db:prepare test
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
       - run: npm run typecheck && npm run test:coverage && npm run build
-      - run: python3 -m unittest discover -s converter -p 'test_*.py'

@@ -31,7 +31,6 @@ module Tef2
       else raise Invalid, "Unsupported TEF export version."
       end
       warnings = model.warnings.dup
-      warnings << "The standalone lyric section is not represented by TablEdit TEF3." if version.to_s == TEF3 && model.lyrics
       if version.to_s == TEF2 && model.notes.any? { |note| note[:annotation] && ![ 2, 4 ].include?(note[:annotation]) }
         warnings << "TEF2 can encode only the imported 1 and 3 fingering markers; other fingering and thumb markers remain unresolved metadata."
       end
@@ -63,12 +62,14 @@ module Tef2
             raise Invalid, "Native score contains an unsupported measure."
           end
           beat_ticks = TEF2_TICKS_PER_QUARTER * 4 / beats.length
+          measure_ticks = TEF2_TICKS_PER_QUARTER * 4
+          note_durations = { "q" => measure_ticks / 4, "8" => measure_ticks / 8, "16" => measure_ticks / 16 }
           beats.each_with_index do |beat, beat_index|
             Array(beat["notes"]).each do |note|
               notes << {
                 measure: measure_index,
                 position: beat_index * beat_ticks,
-                duration: beat_ticks,
+                duration: note_durations.fetch(note["duration"], beat_ticks),
                 string: note["string"].to_i - 1,
                 fret: note["fret"].to_i,
                 effect1: 0,
@@ -539,7 +540,7 @@ module Tef2
         if model.lyrics
           encoded = model.lyrics.encode(Encoding::UTF_8).bytes
           length = encoded.length + 1
-          bytes.concat([ length & 0xFF, (length >> 8) & 0xFF, 0, *encoded ])
+          bytes.concat([ length & 0xFF, (length >> 8) & 0xFF, *encoded, 0 ])
         end
         track = Array.new(50, 0)
         track[0] = 5
@@ -562,6 +563,11 @@ module Tef2
     end
 
     class TableditWriter
+      # TablEdit 3.00 files reserve the first 0x100 bytes for the fixed
+      # header.  The parser can read a shorter synthetic header, but TefView
+      # validates the real container layout before it opens the file.
+      HEADER_SIZE = 0x100
+
       DURATION_CODES = {
         0 => 1024, 1 => 768, 3 => 512, 4 => 384, 6 => 256, 7 => 192,
         9 => 128, 10 => 96, 12 => 64, 13 => 48, 15 => 32, 18 => 16,
@@ -571,22 +577,28 @@ module Tef2
 
       def self.build(model)
         sections = []
-        header = Array.new(0xCE, 0)
-        header[0, 4] = [ 84, 69, 70, 51 ]
+        header = Array.new(HEADER_SIZE, 0)
+        header[0, 4] = [ 0x10, 0x00, 0x01, 0x03 ]
+        Binary.u16(header, 0x04, 0x00A2)
+        Binary.u16(header, 0x1C, 0x0301)
         header[0x38, 4] = "debt".bytes
         Binary.u16(header, 6, model.tempo.clamp(30, 240))
         Binary.u16(header, 0xCA, 4)
         Binary.u16(header, 0xCC, 0x0A04)
 
+        title_offset = append_section(sections, text_record(model.title))
+        lyrics_offset = append_section(sections, free_text_record(model.lyrics))
+        text_block_offset = append_section(sections, text_block(model.texts))
         measures_offset = append_section(sections, measures_section(model))
         instruments_offset = append_section(sections, instrument_section(model))
-        texts_offset = model.texts.empty? ? 0 : append_section(sections, texts_section(model.texts))
+        texts_offset = model.texts.empty? ? 0 : text_block_offset + 3
         chords_offset = model.chords.empty? ? 0 : append_section(sections, chords_section(model.chords))
         content_offset = append_section(sections, content_section(model))
-        title_offset = append_section(sections, text_record(model.title))
 
         Binary.u32(header, 0x3C, content_offset)
         Binary.u32(header, 0x40, title_offset)
+        Binary.u32(header, 0x4C, lyrics_offset)
+        Binary.u32(header, 0x50, text_block_offset)
         Binary.u32(header, 0x54, texts_offset)
         Binary.u32(header, 0x58, chords_offset)
         Binary.u32(header, 0x5C, measures_offset)
@@ -595,13 +607,15 @@ module Tef2
       end
 
       def self.append_section(sections, bytes)
-        offset = 0xCE + sections.sum(&:length)
+        offset = HEADER_SIZE + sections.sum(&:length)
         sections << bytes
         offset
       end
 
       def self.measures_section(model)
-        bytes = [ 8, 0, model.measures.length, 0, 0, 0, 0, 0 ]
+        # The table records are eight bytes, while the table's declared
+        # structure size is twelve in files written by TablEdit.
+        bytes = [ 12, 0, model.measures.length, 0, 0, 0, 0, 0 ]
         model.measures.each do |signature|
           bytes.concat([ 0, 0, 0, 0, signature[:denominator], signature[:numerator], 0, 0 ])
         end
@@ -631,10 +645,18 @@ module Tef2
         [ (encoded.length + 1) & 0xFF, ((encoded.length + 1) >> 8) & 0xFF, *encoded, 0 ]
       end
 
+      def self.free_text_record(value)
+        text_record(value.to_s)
+      end
+
+      def self.text_block(texts)
+        [ 1, 0, 0 ] + (texts.empty? ? [] : texts_section(texts))
+      end
+
       def self.chords_section(chords)
-        bytes = [ 32, 0, chords.length & 0xFF, (chords.length >> 8) & 0xFF ]
+        bytes = [ 36, 0, chords.length & 0xFF, (chords.length >> 8) & 0xFF ]
         chords.each do |chord|
-          record = Array.new(32, 0)
+          record = Array.new(36, 0)
           record[0, 5] = Exporter.chord_values(chord)
           record[5, 9] = Array.new(9, 0xFF)
           record[14, 17] = Binary.text(chord[:name], 17)

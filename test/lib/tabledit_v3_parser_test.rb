@@ -17,6 +17,7 @@ class TableditV3ParserTest < ActiveSupport::TestCase
     assert_equal [ "T" ], Tef2::TableditV3Parser.modern_fingerings(6)
     assert_equal [ [ 0, 0, 0, "Section" ] ], parsed[:texts].map { |text| [ text[:measure], text[:position], text[:text_index], text[:text] ] }
     assert_equal [ [ 0, 0, "C min" ] ], parsed[:chords].map { |chord| [ chord[:measure], chord[:position], chord[:name] ] }
+    assert_equal "LYRICS & CHORDS\n\nVerse text", parsed[:lyrics_text]
 
     musicxml = Tef2::FullMusicxmlBuilder.build(parsed)
     document = Nokogiri::XML(musicxml)
@@ -153,6 +154,11 @@ class TableditV3ParserTest < ActiveSupport::TestCase
     chord.concat("C min".bytes, [ 0 ])
     chord.concat(Array.new(11, 0), [ 1 ], Array.new(4, 0))
     bytes[0x344, 36] = chord
+
+    put_u32(bytes, 0x4C, 0x380)
+    bytes[0x380, 2] = [ 28, 0 ]
+    bytes[0x382, 27] = "LYRICS & CHORDS\n\nVerse text".bytes
+    bytes[0x39D] = 0
 
     put_u32(bytes, 0x200, 0)
     bytes[0x204, 8] = [ 1, 0x4C, 0x31, 0, 0, 0, 2, 0 ]

@@ -33,7 +33,7 @@ class Tef2TimelineMusicxmlCoverageTest < ActiveSupport::TestCase
     assert_equal 1, document.xpath("//hammer-on[@type='start']").length
     assert_equal 0, document.xpath("//pull-off[@type='start']").length
     assert_equal [ "1" ], document.xpath("//fingering").map(&:text)
-    assert_equal [ "TEF fingering code 6" ], document.xpath("//other-technical").map(&:text)
+    assert_equal [ "TEF fingering T" ], document.xpath("//other-technical").map(&:text)
     assert_equal "G", document.at_xpath("//staff-tuning[1]/tuning-step").text
   end
 

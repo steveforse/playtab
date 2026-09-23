@@ -1,0 +1,37 @@
+[
+  {
+    "id": "philharmonia-banjo-f",
+    "label": "Philharmonia Banjo-F",
+    "filename": "philharmonia-banjo-f.sf2",
+    "description": "Dedicated banjo comparison bank",
+    "source": "tmp/soundfonts/extracted/philharmonia banjo-f.sf2"
+  },
+  {
+    "id": "musescore-general-lite",
+    "label": "MuseScore General Lite",
+    "filename": "musescore-general-lite.sf3",
+    "description": "Bundled General MIDI baseline",
+    "source": "app/frontend/public/soundfont/musescore-general-lite.sf3"
+  },
+  {
+    "id": "timbres-of-heaven",
+    "label": "Timbres of Heaven",
+    "filename": "timbres-of-heaven.sf2",
+    "description": "GM/GS/XG comparison bank",
+    "source": "tmp/soundfonts/extracted/timbres-of-heaven.sf2"
+  },
+  {
+    "id": "generaluser-gs",
+    "label": "GeneralUser GS",
+    "filename": "generaluser-gs.sf2",
+    "description": "Compact GM/GS comparison bank",
+    "source": "tmp/soundfonts/extracted/generaluser-gs.sf2"
+  },
+  {
+    "id": "fluidr3-gm",
+    "label": "FluidR3 GM",
+    "filename": "fluidr3-gm.sf2",
+    "description": "Compatible GM comparison bank",
+    "source": "tmp/soundfonts/extracted/fluidr3-gm.sf2"
+  }
+]

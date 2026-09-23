@@ -1,19 +1,14 @@
-SONiVOX EAS Version 2.10 Editing Software: Synthfont Viena
+MuseScore General Lite SF3
+==========================
 
-Ported from Samsung GT-E1272, SM-B109E, SM-B310E, Spreadtrum, and Android Soundfont of SONiVOX EAS Full Presets and Full Keys Range (no reverb). Frequency 11khz - 32khz
-Using a Creative Sound Blaster GM bank. Using a Software Creative Vienna Soundfont Studio. Copy a Soundfont wt210k_G.sf2 from in 3.5 Floppy Disk 1.44MB Assembled of Indonesia.
+This directory contains the MuseScore General Lite 0.2.1 SoundFont in SF3
+format. It is the Debian `musescore-general-soundfont-small` build and is
+used by Playtab's alphaTab player for General MIDI program 105 (banjo).
 
-Recommended Synthesizer: CoolSoft VirtualMIDISynth and BASSMIDI Driver.
+The source package and its complete attribution text are available from:
+https://people.debian.org/~tg/sf/MuseScore_General_Lite.sf3
+https://people.debian.org/~tg/sf/MuseScore_General_Lite.copyright
 
-Windows OS Update 2021
-Microsoft Community https://answers.microsoft.com/
-English: SONiVOX Sound That Rocks Japanese: SONiVOX 揺れる音
-Available in country: Hong Kong Taiwan Japan
-Powered by BASSMIDI Copyright 1993 Sonic Network, Inc. All Rights Reserved Sonivox Corporation Tokyo Japan. Made in Japan
-
-https://musical-artifacts.com/artifacts/1517
-
-This soundfont is based on the Sonivox EAS synthesizer, Copyright Sonic Network Inc. 2006. 
-Sonivox EAS belongs to the Android Open Source Project. 
-https://android.googlesource.com/platform/external/sonivox/+/refs/heads/master
-
+The SoundFont's copyright and license notices are preserved in
+`MuseScore_General_Lite.copyright`. Keep that file with the SoundFont when
+redistributing the asset.

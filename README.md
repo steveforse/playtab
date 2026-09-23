@@ -2,7 +2,7 @@
 
 A Rails 8.1 + React/TypeScript practice room for five-string banjo, using alphaTab for notation and SoundFont playback.
 
-This is the first playable prototype: a local, single-user workspace. Authentication and production deployment hardening are not implemented. Compose binds the app to localhost.
+The workspace supports account sign-in, private libraries, native TEF/PDF imports, and synchronized database-backed scores. Compose is a local development setup; production deployments must set the host and mailer environment variables described below.
 
 See [TODO.md](TODO.md) for the ordered feature roadmap.
 
@@ -40,7 +40,7 @@ bin/setup
 1. Play the original open-G practice exercise. Adjust speed, switch the metronome on, and loop a selected range.
 2. Choose **Import a tab** to use the included plaintext example or load a `.txt` file.
 3. Choose a note duration. Read the import assumptions before trusting playback.
-4. Save to the library; reopen the score after a page reload.
+4. Create an account or sign in, save to the library, and reopen the score after a page reload.
 5. Export plaintext, MIDI, Playtab JSON, TEF2, TablEdit TEF3, or use the browser print dialog to save a PDF.
 
 Play/pause and restart are available above and below the score, synchronized to one player.
@@ -53,35 +53,38 @@ Play/pause and restart are available above and below the score, synchronized to 
 - Fifth-string frets are relative to its own nut: 0 sounds G4, 2 sounds A4. **Physical neck fret numbering is not supported yet.**
 - JSON can preserve rest beats. ASCII import cannot infer rests or durations from whitespace; ASCII export rejects rests and mixed-duration measures to avoid silent loss.
 - The stored version-1 score format remains intentionally limited. Imported MusicXML/TEF previews additionally preserve explicit alternate tunings, chords, section text, fingering, hammer-ons, pull-offs, bends, and selected other techniques where the source format provides enough information.
-- The score editor can change native notes and measures, and can edit imported title, tempo, tuning, note strings and frets, measure count, lyrics, chord names, section text, annotations, and supported techniques. Imported edits are applied to the source MusicXML before the score is saved, so untouched source metadata remains available when the score is reopened.
 
-PDF uploads are still pending. The bundled SoundFont is a starter sound, not an auditioned premium banjo library.
+PDF uploads are supported as a reviewable MusicXML preview. Selectable-text and vector PDFs preserve visible tablature, section labels, chord names, standalone lyrics, visible repeats, first/second endings, and nearby technique/fingering marks where the PDF geometry is clear. Image-only PDFs use a 300-DPI raster and OCR fallback that recovers staff geometry, fret digits, readable time signatures, and direction-validated hammer-on/pull-off marks. Scan quality can still affect frets, timing, and other metadata, so the import reports those limits. The bundled MuseScore General Lite SF3 bank provides a fuller General MIDI baseline; it is still not a dedicated sampled banjo library.
 
 ### Direct TEF uploads
 
-Choose **Import a tab → Open a file** and select the original `.tef`. Rails first uses the native Ruby TEF parser and opens the converted MusicXML as a playable preview. The pinned TuxGuitar converter remains as a bounded fallback for formats or records the native path cannot handle. No separate conversion or XML file selection is needed.
+Choose **Import a tab → Open a file** and select the original `.tef` or a PDF. Rails uses the native Ruby TEF parser and the selectable-text/vector or 300-DPI raster/OCR PDF recognizers; both open as playable MusicXML previews. Image-only PDFs can take longer to process, so the browser allows up to two minutes for a PDF import. No separate conversion or XML file selection is needed.
 
-The native path supports legacy TEF2 and modern TablEdit TEF 3.00 files with one five-string track, bounded file size and measure count, source time signatures, alternate tunings, fingering, verified note effects, tuplets, grace notes, ties, voices, tempo changes, and alternate endings. Unsupported or malformed files return an error without replacing the current score. Values without a verified MusicXML equivalent remain explicit technical metadata and conversion warnings remain visible. Raw TEF2 repeat maps and source-only layout records are retained as bounded warnings until their playback semantics are verified. Save an imported TEF to the library to preserve its generated MusicXML document, then reopen it with the imported tuning, rhythm, techniques, chords, sections, and lyrics intact. TEF export is not implemented.
+The native path supports legacy TEF2 and modern TablEdit TEF 3.00 files with one five-string track, bounded file size and measure count, source time signatures, alternate tunings, fingering, verified note effects, tuplets, grace notes, ties, voices, tempo changes, and alternate endings. Unsupported or malformed files return an error without replacing the current score. Values without a verified MusicXML equivalent remain explicit technical metadata and conversion warnings remain visible. Raw TEF2 repeat maps and source-only layout records are retained as bounded warnings until their playback semantics are verified. Save an imported TEF or PDF preview to the library to preserve its generated MusicXML document; selectable PDFs preserve more visible annotations than the raster/OCR path, which warns about annotations it cannot yet verify. TEF2 and TablEdit TEF3 export is available with explicit loss warnings.
 
-`docker compose up -d --build` builds and starts the converter along with the app. Its image downloads the pinned TuxGuitar 2.1.0 archive and verifies SHA-256; it does not depend on workstation `/tmp` installs. Rails connects through `TEF_CONVERTER_URL`. The converter has no published port, uses an internal-only network, runs as an unprivileged user with a read-only filesystem, bounded temporary storage, memory/CPU/process limits, and a 15-second conversion deadline. Temporary uploads and XML are deleted after each conversion. This remains a local single-user prototype, not a hardened public upload service.
+`docker compose up -d` starts the Rails app, Vite, and PostgreSQL. Rails handles native TEF parsing and both PDF recognition paths in-process; PDF and TEF uploads do not require a separate converter service. The PDF path uses the MIT-licensed `pdf-reader` gem and Nokogiri, plus Poppler's `pdftoppm`, Tesseract OCR, and `ruby-vips` for image-only PDFs. Production requests are capped before Rails parameter parsing at 12 MB, with smaller limits for score, TEF, and PDF endpoints.
 
-Test the converter with `python3 -m unittest discover -s converter -p 'test_*.py'`. Set `PLAYTAB_TEFSOURCE` to a private `.tef` path to enable the real browser upload/conversion/playback regression. Never commit private arrangements as fixtures.
+### Production configuration
+
+Set `PLAYTAB_ALLOWED_HOSTS` to a comma-separated list of public hostnames, `PLAYTAB_HOST` to the hostname used in password-reset links, and `PLAYTAB_PROTOCOL=https`. Configure the production mail delivery adapter before enabling password resets. Rails forces HTTPS and uses secure, HttpOnly, same-site session cookies in production. `/up` remains available for health checks.
+
+Set `PLAYTAB_TEFSOURCE` to a private `.tef` path to enable the real browser upload/conversion/playback regression. Never commit private arrangements as fixtures.
+
+Run `bundle exec ruby script/check_pdf_corpus.rb /private/path/to/pdfs` to scan a local vector-PDF corpus. Use `--manifest tmp/pdf-corpus/manifest.json` for a paired corpus report; the checker skips byte-identical duplicates and writes no source files to the repository.
 
 ### MusicXML preview
 
 Import an uncompressed `.musicxml` or `.xml` file containing one five-string tablature part (up to 2 MB and 256 measures). Preview supports explicit alternate tuning and offers playback, MIDI, printing, download of the original XML, and saving the imported document to the library. It cannot be exported to the restricted JSON/plaintext format. Verified duplicate notation/TAB staves are combined for playback; independent staff music is rejected.
 
-Explicit hammer-on/pull-off pairs are connected and labeled H/PO. The adapter repairs alphaTab 1.8.4's imported string lookup and start/stop handling; ambiguous, unpaired, or wrong-direction spans are rejected. Preview rendering and printing run on the main thread to preserve the renderer's custom PO label (a version-pinned internal field); normal v1 scores still use rendering workers. A version-pinned patch makes both H/PO slurs arch upward; `npm ci` applies it automatically. Synthetic technique tests cover both labels, resize, and print preview. Fretting-hand fingers 1–4 remain separate from fret/pitch and are shown as circled annotations above the tablature. Imported TEF previews retain a standalone Lyrics & chords section when the source has untimed lyrics text, with configurable measures per line and lyric columns for the print layout.
+Explicit hammer-on/pull-off pairs are connected and labeled H/PO. The adapter repairs alphaTab 1.8.4's imported string lookup and start/stop handling; ambiguous, unpaired, or wrong-direction spans are rejected. Preview rendering and printing run on the main thread to preserve the renderer's custom PO label (a version-pinned internal field); normal v1 scores still use rendering workers. A version-pinned patch makes both H/PO slurs arch upward; `npm ci` applies it automatically. Synthetic technique tests cover both labels, resize, and print preview. Fretting-hand fingers 1–4 remain separate from fret/pitch and are shown as circled annotations above the tablature. Timed MusicXML lyrics stay aligned with their notes. Imported TEF previews retain a standalone Lyrics & chords section when the source has untimed lyrics text, with configurable measures per line, compact lyric columns, and an explicit chord-diagram control when source voicings are available.
 
-Playback tests verify pitch-changing MIDI events for imported slides and bends. H/PO currently soften the destination attack but still trigger another picked sample; realistic legato articulation is **not yet implemented**. General TEF technique fidelity and dedicated banjo articulations remain follow-up work.
+Playback tests verify pitch-changing MIDI events for imported slides and bends. H/PO hold the origin voice, apply an immediate destination pitch step, and add a short bank-native contact transient without a second picked attack. The result remains dependent on the selected SoundFont; dedicated sampled banjo articulations remain follow-up work.
 
-This is an experimental preview, not lossless TEF import. `script/TefProbe.java` exercises separately installed TuxGuitar 2.1.0 libraries; `script/compare-tef.mjs XML REPORT` checks decoded note timing, duration, string, and fret against alphaTab's import. The probe fills explicit rests without reflowing note starts, then sorts beats before MusicXML export. Converter technique omissions still require review against the original. Private input and generated artifacts belong in ignored `tmp/`, never public fixtures.
+This is an experimental preview, not lossless TEF import. The native TEF parser preserves verified timing, tuning, techniques, fingering, chords, sections, lyrics, and other supported metadata, while rejecting ambiguous or unsupported structures instead of silently guessing. Private input and generated artifacts belong in ignored `tmp/`, never public fixtures.
 
-The probe also restores TEF2 effect1=2 to TuxGuitar's shared hammer/pull flag and corrects descending exported technique pairs to MusicXML `pull-off`. It rejects ambiguous mappings and overlapping spans rather than guessing. This is still a bounded diagnostic converter, not a general TEF library.
+TEF2 annotation-flagged records are normalized before decoding: annotation payloads are preserved separately and never added to frets or interpreted as ordinary effect bytes. Known codes 2 and 4 become circled fretting-hand fingers 1 and 3; code 6 becomes the visible right-hand thumb marker `T`. Other codes remain `other-technical` XML metadata with a preview warning.
 
-TEF2 annotation-flagged records are normalized before decoding: annotation payloads are preserved separately and never added to frets or interpreted as ordinary effect bytes. Known codes 2 and 4 become circled fretting-hand fingers 1 and 3; code 6 becomes the visible right-hand thumb marker `T`. Other codes remain `other-technical` XML metadata with a preview warning. `script/TefAnnotationTest.java` tests the byte-level rule on synthetic records, including unchanged unflagged effects and original input preservation. Optional `PLAYTAB_CORRECTED_XML` plus `PLAYTAB_TEFSOURCE` enables an all-annotated-notes regression against the private TEF.
-
-`script/review_musicxml.py INPUT_XML REVIEW_JSON OUTPUT_XML` applies explicit, human-reviewed fret/pitch/fingering corrections to both duplicate staves. Reviews are bound to the input XML SHA-256 and expected original note values. The original XML is retained; private review manifests and outputs belong in ignored `tmp/`. This workflow does not imply a general annotation-decoding fix.
+`script/review_musicxml.rb INPUT_XML REVIEW_JSON OUTPUT_XML` applies explicit, human-reviewed fret/pitch/fingering corrections to both duplicate staves. Reviews are bound to the input XML SHA-256 and expected original note values. The original XML is retained; private review manifests and outputs belong in ignored `tmp/`. This workflow does not imply a general annotation-decoding fix.
 
 To include the private conversion in browser checks, set `PLAYTAB_TEFPREVIEW_XML` to its absolute MusicXML path along with `PLAYTAB_URL`.
 
@@ -96,7 +99,7 @@ npm ci
 npm run typecheck
 npm test
 npm run build
-docker compose -f compose.yml exec -T web bash -c 'RAILS_ENV=test bundle exec rails db:prepare && bundle exec rails test'
+docker compose -f compose.yml exec -T web bash -c 'CI=1 RAILS_ENV=test bundle exec rails db:prepare && CI=1 RAILS_ENV=test bundle exec rails test'
 docker compose -f compose.yml exec -T web bundle exec rubocop
 docker compose -f compose.yml exec -T web bundle exec brakeman --no-pager
 npx playwright install --with-deps chromium
@@ -118,6 +121,6 @@ On this WSL machine, Chromium's missing ALSA library was extracted under `/tmp/p
 
 The schema is intentionally versioned. Expand it before attempting general TEF/MusicXML conversion; reject unsupported features rather than simplifying them silently.
 
-Playback currently selects alphaTab's supported ScriptProcessor output: 1.8.4's AudioWorklet output has a start/pause race that surfaced in browser testing. Synthesis still runs in a worker. Revisit AudioWorklet output when upgrading alphaTab.
+Playback uses alphaTab's Web Audio AudioWorklet output, with synthesis running in a worker. The bundled MuseScore General Lite SF3 bank is selected as General MIDI program 105 (banjo); H/PO transitions use its attack sample as a short contact transient while the origin voice is repitched. When optional comparison banks are present under ignored `tmp/soundfonts/extracted/`, the **Sound bank** selector makes them available in the local player; only the MuseScore bank is committed.
 
 See [THIRD_PARTY.md](THIRD_PARTY.md) for asset attribution. The production Dockerfile includes a frontend build stage, but this prototype has not been deployed publicly.

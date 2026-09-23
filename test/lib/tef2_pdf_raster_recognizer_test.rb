@@ -1,0 +1,271 @@
+# frozen_string_literal: true
+
+require "test_helper"
+require "tef2/pdf_raster_recognizer"
+
+class Tef2PdfRasterRecognizerTest < ActiveSupport::TestCase
+  test "groups five evenly spaced raster staff lines" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    lines = [ 100, 124, 149, 173, 198, 300, 324, 348, 373, 397 ].map { |y| { y: y, x0: 0, x1: 800 } }
+
+    groups = recognizer.send(:staff_groups, lines)
+
+    assert_equal 2, groups.length
+    assert_equal [ 100, 124, 149, 173, 198 ], groups.first.map { |line| line[:y] }
+  end
+
+  test "rejects uneven line spacing instead of inventing a staff" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    lines = [ 100, 124, 150, 190, 198 ].map { |y| { y: y, x0: 0, x1: 800 } }
+
+    assert_empty recognizer.send(:staff_groups, lines)
+  end
+
+  test "clusters nearby raster bar pixels into one boundary" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+
+    assert_equal [ [ 10, 11, 12 ], [ 40, 45 ], [ 100 ] ], recognizer.send(:cluster_pixels, [ 12, 10, 11, 45, 40, 100 ], 5)
+  end
+
+  test "rejects full-height note stems as raster barlines" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    width = 40
+    height = 90
+    pixels = "\xff".b * (width * height)
+    line_pixels = [ 20, 28, 36, 44, 52 ]
+
+    line_pixels.each do |y|
+      width.times { |x| pixels.setbyte(y * width + x, 0) }
+    end
+    (20..52).each { |y| pixels.setbyte(y * width + 10, 0) }
+    (14..68).each { |y| pixels.setbyte(y * width + 20, 0) }
+
+    assert_equal false, recognizer.send(:note_stem_extension?, pixels, width, 10, 20, 52)
+    assert_equal true, recognizer.send(:note_stem_extension?, pixels, width, 20, 20, 52)
+  end
+
+  test "merges digit fragments split by a staff line" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    fragments = [
+      { x: 10, y: 4, width: 14, height: 10, area: 40 },
+      { x: 11, y: 17, width: 13, height: 9, area: 36 },
+      { x: 50, y: 4, width: 12, height: 10, area: 40 }
+    ]
+
+    merged = recognizer.send(:merge_staff_fragments, fragments)
+
+    assert_equal [ { x: 10, y: 4, width: 14, height: 22, area: 76 }, fragments.last ], merged.sort_by { |item| item[:x] }
+  end
+
+  test "maps raster tab rows from the top staff line to the first string" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    component = { x: 10, y: 0, width: 16, height: 24, area: 100 }
+
+    assert_equal "0", recognizer.send(:raster_component_value, nil, component, 100, [ 100, 124, 148, 172, 196 ])
+  end
+
+  test "deduplicates overlapping raster glyph notes on one string" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    notes = [
+      { x: 100, string: 0, fret: 0 },
+      { x: 103, string: 0, fret: 9 },
+      { x: 103, string: 1, fret: 2 }
+    ]
+
+    assert_equal [ notes[0], notes[2] ], recognizer.send(:deduplicate_raster_notes, notes)
+  end
+
+  test "detects a stacked two-four time signature from OCR labels" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    system = {
+      bars: [ 100, 300 ],
+      texts: [ { x: 104, y: 150, text: "2" }, { x: 104, y: 140, text: "4" } ]
+    }
+
+    assert_equal({ numerator: 2, denominator: 4 }, recognizer.send(:detect_time_signature, [ system ]))
+  end
+
+  test "keeps unsupported raster annotations out while preserving structural metadata" do
+    recognizer = Tef2::PdfRasterRecognizer.new
+    score = {
+      tuning_label: "",
+      notes: [
+        { measure: 0, position: 0, string: 0, fret: 0, dead: false, ghost: false },
+        { measure: 0, position: 0, string: 0, fret: 0, dead: false, ghost: false }
+      ],
+      sections: [ { text: "Verse" } ],
+      chords: [ { name: "G" } ],
+      chord_diagrams: [ { name: "G" } ],
+      lyrics: "Verse",
+      techniques: [ { type: "hammer-on" } ],
+      fingerings: [ { value: "T" } ],
+      endings: [ { number: "1" } ],
+      repeats: [ { start: 0 } ],
+      ties: [ { type: "start" } ],
+      tempo: 120,
+      warnings: [ "PDF legato mark(s) were not attached because the nearby frets did not confirm its direction." ]
+    }
+
+    result = recognizer.send(:apply_raster_metadata_fallbacks, score, [ { texts: [ { text: "(G tuning)" } ] } ])
+
+    assert_equal "gDGBD", result[:tuning_label]
+    assert_empty result[:sections]
+    assert_empty result[:chords]
+    assert_empty result[:chord_diagrams]
+    assert_nil result[:lyrics]
+    assert_equal 1, result[:notes].length
+    assert_empty result[:techniques]
+    assert_equal [ { value: "T" } ], result[:fingerings]
+    assert_equal [ { number: "1" } ], result[:endings]
+    assert_equal [ { start: 0 } ], result[:repeats]
+    assert_empty result[:ties]
+    assert_nil result[:tempo]
+    assert result[:warnings].none? { |warning| warning.include?("legato") }
+    assert result[:warnings].any? { |warning| warning.include?("not imported yet") }
+  end
+
+  test "associates a grace note with the following event" do
+    recognizer = Tef2::PdfRecognizer.new
+    grace = { x: 110, string: 2, fret: 4, grace: true, grace_technique: "pull-off" }
+    events = [
+      { x: 100, notes: [ { string: 2, fret: 4 } ] },
+      { x: 110, notes: [ grace ] },
+      { x: 120, notes: [ { string: 2, fret: 2 } ] }
+    ]
+
+    assert_nil recognizer.send(:grace_note_for, events, 0, events[0][:notes].first)
+    assert_equal grace, recognizer.send(:grace_note_for, events, 2, events[2][:notes].first)
+  end
+
+  test "associates a grace note printed after the final event" do
+    recognizer = Tef2::PdfRecognizer.new
+    destination = { x: 100, notes: [ { string: 0, fret: 2 } ] }
+    grace = { x: 116, string: 0, fret: 3, grace: true, grace_technique: "slide-in" }
+
+    assert_equal grace, recognizer.send(:grace_note_for, [ destination, { x: 116, notes: [ grace ] } ], 0, destination[:notes].first)
+  end
+
+  test "recognizes the private scanned Ballad of Jed Clampett PDF when supplied" do
+    path = ENV["PLAYTAB_BALLAD_OF_JED_CLAMPETT_PDF"]
+    skip "Set PLAYTAB_BALLAD_OF_JED_CLAMPETT_PDF for the private raster-PDF regression." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+
+    assert_equal "BALLAD OF JED CLAMPETT", score[:title]
+    assert_equal "gDGBD", score[:tuning_label]
+    assert_equal({ numerator: 2, denominator: 4 }, score[:time_signature])
+    assert_equal 22, score[:measures]
+    assert_operator score[:notes].length, :>, 0
+    notes_for = ->(measure) {
+      score[:notes].select { |note| note[:measure] == measure }
+        .sort_by { |note| [ note[:position], note[:string] ] }
+        .map { |note| note.slice(:position, :string, :fret, :grace_note_fret) }
+    }
+    assert_equal [
+      { position: 0, string: 0, fret: 0 }, { position: 0, string: 2, fret: 0 },
+      { position: 128, string: 3, fret: 0 }, { position: 256, string: 3, fret: 2 },
+      { position: 384, string: 3, fret: 4 }
+    ], notes_for.call(0)
+    assert_equal [
+      { position: 0, string: 2, fret: 0 }, { position: 128, string: 0, fret: 0 },
+      { position: 128, string: 4, fret: 0 }, { position: 256, string: 1, fret: 0 },
+      { position: 384, string: 0, fret: 0 }, { position: 384, string: 4, fret: 0 }
+    ], notes_for.call(1)
+    assert_equal [
+      { position: 0, string: 2, fret: 2 }, { position: 64, string: 1, fret: 0 },
+      { position: 64, string: 2, fret: 4 }, { position: 128, string: 4, fret: 0 },
+      { position: 192, string: 0, fret: 0 }, { position: 256, string: 2, fret: 3 },
+      { position: 320, string: 2, fret: 2 }, { position: 384, string: 1, fret: 0 },
+      { position: 448, string: 2, fret: 0 }
+    ], notes_for.call(2)
+    assert_equal [
+      { position: 0, string: 2, fret: 2 }, { position: 64, string: 1, fret: 1 },
+      { position: 128, string: 0, fret: 2 }, { position: 192, string: 4, fret: 0 },
+      { position: 256, string: 0, fret: 2 }, { position: 320, string: 1, fret: 1 },
+      { position: 384, string: 2, fret: 2 }, { position: 448, string: 0, fret: 4, grace_note_fret: 3 }
+    ], notes_for.call(3)
+    techniques = score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) }
+    assert_includes techniques, { measure: 2, position: 0, string: 2, type: "slide" }
+    assert_includes techniques, { measure: 2, position: 256, string: 2, type: "pull-off" }
+    assert_includes techniques, { measure: 3, position: 448, string: 0, type: "slide-in" }
+    refute_includes techniques, { measure: 6, position: 256, string: 2, type: "slide-in" }
+    assert_equal [
+      [ 3, 0 ], [ 1, 3 ], [ 0, 4 ], [ 4, 0 ], [ 1, 3 ], [ 2, 2 ], [ 0, 4 ]
+    ], notes_for.call(4).map { |note| [ note[:string], note[:fret] ] }
+    assert_equal [
+      [ 3, 4 ], [ 1, 3 ], [ 0, 4 ], [ 4, 0 ], [ 1, 3 ], [ 2, 0 ], [ 0, 4 ]
+    ], notes_for.call(5).map { |note| [ note[:string], note[:fret] ] }
+    assert_equal [
+      [ 2, 2 ], [ 1, 3 ], [ 4, 0 ], [ 0, 4 ], [ 2, 4 ], [ 2, 2 ], [ 1, 3 ], [ 3, 4 ], [ 0, 0 ]
+    ], notes_for.call(6).map { |note| [ note[:string], note[:fret] ] }
+    grace_destination = score[:notes].find { |note| note[:measure] == 6 && note[:position] == 256 && note[:string] == 2 }
+    assert_equal 4, grace_destination[:grace_note_fret]
+    assert_equal "pull-off", grace_destination[:grace_note_technique]
+
+    assert_equal [
+      [ 3, 2 ], [ 0, 0 ], [ 3, 0 ]
+    ], notes_for.call(7).select { |note| note[:position] >= 384 }.map { |note| [ note[:string], note[:fret] ] }
+    assert_equal [
+      [ 0, nil ], [ 192, nil ], [ 256, 4 ]
+    ], score[:notes].select { |note| note[:measure] == 6 && note[:string] == 2 }
+      .sort_by { |note| note[:position] }.map { |note| [ note[:position], note[:grace_note_fret] ] }
+    assert_includes techniques, { measure: 7, position: 384, string: 3, type: "slide" }
+    m10_notes = notes_for.call(9)
+    assert_equal [ 3, 2 ], m10_notes.find { |note| note[:position] == 128 && note[:string] == 3 }.values_at(:string, :fret)
+    assert_equal [ 3, 5 ], m10_notes.find { |note| note[:position] == 192 && note[:string] == 3 }.values_at(:string, :fret)
+    assert_equal [ 2, 0 ], m10_notes.find { |note| note[:position] == 384 && note[:string] == 2 }.values_at(:string, :fret)
+    assert_includes techniques, { measure: 9, position: 128, string: 3, type: "slide" }
+    assert_includes techniques, { measure: 10, position: 256, string: 2, type: "pull-off" }
+    m12_grace = score[:notes].select { |note| note[:measure] == 11 && note[:position] == 384 }
+    assert_equal [
+      [ 0, 2, 3, "slide-in" ], [ 1, 1, 2, "slide-in" ]
+    ], m12_grace.sort_by { |note| note[:string] }.map { |note|
+      [ note[:string], note[:fret], note[:grace_note_fret], note[:grace_note_technique] ]
+    }
+  end
+
+  test "recognizes the private scanned Foggy Mountain PDF when supplied" do
+    path = ENV["PLAYTAB_FOGGY_MOUNTAIN_BREAKDOWN_PDF"]
+    skip "Set PLAYTAB_FOGGY_MOUNTAIN_BREAKDOWN_PDF for the private raster-PDF regression." unless path && File.file?(path)
+
+    score = Tef2::PdfRecognizer.recognize(File.binread(path), filename: File.basename(path))
+
+    assert_equal "FOGGY MOUNTAIN BREAKDOWN", score[:title]
+    assert_equal "gDGBD", score[:tuning_label]
+    assert_equal({ numerator: 2, denominator: 4 }, score[:time_signature])
+    assert_equal 99, score[:measures]
+    assert_operator score[:notes].length, :>, 0
+    notes_for = ->(measure) {
+      score[:notes].select { |note| note[:measure] == measure }.map { |note| [ note[:string], note[:fret] ] }
+    }
+    assert_equal [ [ 0, 0 ], [ 2, 0 ] ], notes_for.call(0)
+    assert_equal [ 0 ], score[:notes].select { |note| note[:measure] == 0 }.map { |note| note[:position] }.uniq
+    assert_equal [
+      [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 0, 0 ], [ 1, 3 ], [ 4, 0 ], [ 1, 0 ], [ 0, 0 ], [ 4, 0 ]
+    ], notes_for.call(1)
+    assert_equal [
+      [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 1, 3 ], [ 4, 0 ], [ 1, 0 ], [ 0, 0 ], [ 4, 0 ]
+    ], notes_for.call(2)
+    assert_equal [
+      [ 1, 2 ], [ 1, 3 ], [ 1, 2 ], [ 1, 3 ], [ 0, 0 ], [ 4, 0 ], [ 2, 3 ],
+      [ 0, 0 ], [ 2, 2 ], [ 4, 0 ]
+    ], notes_for.call(3)
+    assert_includes score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) },
+      { measure: 1, position: 0, string: 1, type: "hammer-on" }
+    assert_includes score[:techniques].map { |technique| technique.slice(:measure, :position, :string, :type) },
+      { measure: 3, position: 320, string: 2, type: "pull-off" }
+    fingerings_for = ->(measure) {
+      score[:fingerings].select { |fingering| fingering[:measure] == measure }
+        .sort_by { |fingering| [ fingering[:position], fingering[:string] ] }
+        .map { |fingering| fingering[:value] }
+    }
+    assert_equal %w[M I], fingerings_for.call(0)
+    assert_equal %w[I T M T I M T], fingerings_for.call(1)
+    assert_equal %w[I T M T I M T], fingerings_for.call(2)
+    assert_equal %w[I T M T I M T], fingerings_for.call(3)
+    assert_includes score[:repeats], { measure: 16, location: "left", direction: "forward", confidence: "high" }
+    assert_includes score[:repeats], { measure: 16, location: "right", direction: "backward", confidence: "high" }
+    assert_equal [ "1", "2" ], score[:endings].sort_by { |ending| ending[:measure] }.map { |ending| ending[:number] }
+    assert score[:warnings].any? { |warning| warning.start_with?("Raster PDF") }
+  end
+end
