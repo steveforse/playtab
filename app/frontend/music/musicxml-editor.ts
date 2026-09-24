@@ -1945,3 +1945,70 @@ export function removeMusicXmlTie(source: string, score: model.Score, position: 
   for (const note of [other.note, ...linked(other.note)]) removeTieMarker(note, outgoing ? 'stop' : 'start');
   return new XMLSerializer().serializeToString(document);
 }
+
+export type RepeatRegion = { start: number; end: number; count: number };
+
+function sourceRepeatRegions(measures: Element[]): RepeatRegion[] {
+  const regions: RepeatRegion[] = [];
+  let opening: number | null = null;
+  for (const [index, measure] of measures.entries()) {
+    for (const marker of descendants(measure, 'repeat')) {
+      const direction = marker.getAttribute('direction');
+      if (direction === 'forward') {
+        if (opening !== null) throw new Error('Nested or overlapping imported repeats are preserved but cannot be edited here.');
+        opening = index;
+      } else if (direction === 'backward') {
+        if (opening === null) throw new Error('An imported repeat end has no explicit start; redefine it before authoring another repeat.');
+        const count = Number(marker.getAttribute('times') || '2');
+        if (!Number.isInteger(count) || count < 2) throw new Error('An imported repeat has an unsupported play count.');
+        regions.push({ start: opening, end: index, count });
+        opening = null;
+      } else throw new Error('An imported repeat has an unsupported direction.');
+    }
+  }
+  if (opening !== null) throw new Error('An imported repeat start has no end; redefine it before authoring another repeat.');
+  return regions;
+}
+
+export function inspectMusicXmlRepeats(source: string): RepeatRegion[] {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  if (!part) throw new Error('The repeat source has no music part.');
+  return sourceRepeatRegions(directMeasures(part));
+}
+
+export function addMusicXmlRepeat(source: string, score: model.Score, start: number, end: number, count: number): string {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measures = part ? directMeasures(part) : [];
+  if (!part || measures.length !== score.masterBars.length) throw new Error('The repeat source measures do not match the rendered score.');
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end >= measures.length || start >= end) {
+    throw new Error('Choose a repeat start before its end within this score.');
+  }
+  if (!Number.isInteger(count) || count < 2 || count > 8) throw new Error('Repeat count must be from 2 to 8.');
+  if (measures.some(measure => descendants(measure, 'ending').length)) {
+    throw new Error('Existing repeat endings must be reviewed before adding another repeat.');
+  }
+  const existing = sourceRepeatRegions(measures);
+  if (existing.some(region => start <= region.end && end >= region.start)) {
+    throw new Error('Nested or overlapping repeat regions cannot be authored.');
+  }
+  const visits = measures.length + [...existing, { start, end, count }]
+    .reduce((total, region) => total + (region.end - region.start + 1) * (region.count - 1), 0);
+  if (visits > 4096) throw new Error('Repeat playback would exceed 4096 played measures.');
+  const barline = (measure: Element, location: 'left' | 'right') => {
+    let value = children(measure).find(item => item.localName === 'barline' && item.getAttribute('location') === location);
+    if (!value) {
+      value = document.createElement('barline'); value.setAttribute('location', location);
+      if (location === 'left') measure.insertBefore(value, children(measure).find(item => item.localName === 'note') ?? null);
+      else measure.appendChild(value);
+    }
+    return value;
+  };
+  const forward = document.createElement('repeat'); forward.setAttribute('direction', 'forward');
+  barline(measures[start], 'left').appendChild(forward);
+  const backward = document.createElement('repeat'); backward.setAttribute('direction', 'backward');
+  backward.setAttribute('times', String(count));
+  barline(measures[end], 'right').appendChild(backward);
+  return new XMLSerializer().serializeToString(document);
+}

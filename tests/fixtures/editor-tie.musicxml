@@ -13,10 +13,10 @@
           <staff-tuning line="4"><tuning-step>B</tuning-step><tuning-octave>3</tuning-octave></staff-tuning>
           <staff-tuning line="5"><tuning-step>D</tuning-step><tuning-octave>4</tuning-octave></staff-tuning>
         </staff-details></attributes>
-      <note><pitch><step>B</step><octave>3</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff><notations><technical><string>4</string><fret>0</fret></technical></notations></note>
+      <note><pitch><step>D</step><octave>3</octave></pitch><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff><notations><technical><string>4</string><fret>0</fret></technical></notations></note>
     </measure>
     <measure number="2">
-      <note><pitch><step>B</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><technical><string>4</string><fret>0</fret></technical></notations></note>
+      <note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><technical><string>4</string><fret>0</fret></technical></notations></note>
       <note><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/><staff>1</staff></note>
     </measure>
   </part>
