@@ -4,8 +4,8 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, createMusicXmlTriplet, insertMusicXmlEvent,
-  deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
+import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, createMusicXmlTriplet, insertMusicXmlEvent,
+  deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlTriplet, sourceTabNoteRecords,
   type InsertEventOptions } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
@@ -19,6 +19,8 @@ type PendingDuplication = { originalKey: string; base: MusicXmlPreview; source: 
   excluded: string[]; noteCount: number; restCount: number };
 type PendingMeasureDeletion = { originalKey: string; base: MusicXmlPreview; source: string; measureIndex: number;
   noteCount: number; restCount: number; labelCount: number };
+type MeterTarget = { originalKey: string; base: MusicXmlPreview; measureIndex: number };
+type PickupTarget = { originalKey: string; base: MusicXmlPreview };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
@@ -132,6 +134,20 @@ export function App() {
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
   const [pendingDuplication, setPendingDuplication] = useState<PendingDuplication | null>(null);
   const [pendingMeasureDeletion, setPendingMeasureDeletion] = useState<PendingMeasureDeletion | null>(null);
+  const [meterTarget, setMeterTarget] = useState<MeterTarget | null>(null);
+  const [meterApplyError, setMeterApplyError] = useState('');
+  const [meterDraft, setMeterDraft] = useState<{ numerator: number; denominator: 2 | 4 | 8 | 16; scope: 'this' | 'from' }>({
+    numerator: 4, denominator: 4, scope: 'this',
+  });
+  const meterDialog = useRef<HTMLDialogElement>(null);
+  const meterOpener = useRef<HTMLElement | null>(null);
+  const [pickupTarget, setPickupTarget] = useState<PickupTarget | null>(null);
+  const [pickupApplyError, setPickupApplyError] = useState('');
+  const [pickupDraft, setPickupDraft] = useState<{ numerator: number; denominator: 2 | 4 | 8 | 16 | 32 | 64 }>({
+    numerator: 1, denominator: 8,
+  });
+  const pickupDialog = useRef<HTMLDialogElement>(null);
+  const pickupOpener = useRef<HTMLElement | null>(null);
   const duplicateDialog = useRef<HTMLDialogElement>(null);
   const duplicateOpener = useRef<HTMLElement | null>(null);
   const deleteMeasureDialog = useRef<HTMLDialogElement>(null);
@@ -253,6 +269,24 @@ export function App() {
       if (deleteMeasureOpener.current?.isConnected) deleteMeasureOpener.current.focus({ preventScroll: true });
     }
   }, [pendingMeasureDeletion]);
+  useEffect(() => {
+    const dialog = meterDialog.current;
+    if (!dialog) return;
+    if (meterTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-meter-first]')?.focus(); }
+    else if (!meterTarget && dialog.open) {
+      dialog.close();
+      if (meterOpener.current?.isConnected) meterOpener.current.focus({ preventScroll: true });
+    }
+  }, [meterTarget]);
+  useEffect(() => {
+    const dialog = pickupDialog.current;
+    if (!dialog) return;
+    if (pickupTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-pickup-first]')?.focus(); }
+    else if (!pickupTarget && dialog.open) {
+      dialog.close();
+      if (pickupOpener.current?.isConnected) pickupOpener.current.focus({ preventScroll: true });
+    }
+  }, [pickupTarget]);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
     session.current++;
     const snapshot = { document: next, original, diagnostics, id, revision };
@@ -617,6 +651,65 @@ export function App() {
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
+  function openMeterDialog(opener: HTMLElement) {
+    if (!selection) return;
+    if (pendingFret) { setError('Apply the pending fret before changing the time signature.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const measureIndex = selection.measure - 1;
+      const master = base.score.masterBars[measureIndex];
+      if (!master) throw new Error('The selected measure cannot be identified safely.');
+      meterOpener.current = opener;
+      setMeterApplyError('');
+      setMeterDraft({ numerator: master.timeSignatureNumerator,
+        denominator: master.timeSignatureDenominator as 2 | 4 | 8 | 16, scope: 'this' });
+      setMeterTarget({ originalKey: documentKey(currentDocument), base, measureIndex });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function confirmMeterChange(candidate: ReturnType<typeof changeMusicXmlMeter>) {
+    if (!meterTarget || !selection) return;
+    if (meterTarget.originalKey !== documentKey(currentDocument)) {
+      setMeterTarget(null); setError('The score changed since this meter preview. Open it again.'); return;
+    }
+    try {
+      const { base } = meterTarget;
+      const nextPreview = withPreviewTitle(readMusicXml(candidate.source, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: null,
+        sourceIdentity: nextPreview.sourceIdentity }, `Change time signature in measures ${candidate.firstMeasure}–${candidate.lastMeasure}`);
+      setPreview(nextPreview); setSelection(null); setMeterTarget(null); setPassage(null);
+      setMessage(`Time signature changed in measures ${candidate.firstMeasure}–${candidate.lastMeasure}. Edit and playback selections cleared.`);
+      setError('');
+    } catch (failure) { setMeterApplyError((failure as Error).message); }
+  }
+  function openPickupDialog(opener: HTMLElement) {
+    if (!selection || selection.measure !== 1) return;
+    if (pendingFret) { setError('Apply the pending fret before changing the pickup.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      pickupOpener.current = opener;
+      setPickupApplyError('');
+      setPickupDraft({ numerator: 1, denominator: 8 });
+      setPickupTarget({ originalKey: documentKey(currentDocument), base });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function confirmPickupChange(nextSource: string) {
+    if (!pickupTarget) return;
+    if (pickupTarget.originalKey !== documentKey(currentDocument)) {
+      setPickupTarget(null); setError('The score changed since this pickup preview. Open it again.'); return;
+    }
+    try {
+      const { base } = pickupTarget;
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: null,
+        sourceIdentity: nextPreview.sourceIdentity }, 'Change pickup length');
+      setPreview(nextPreview); setSelection(null); setPickupTarget(null); setPassage(null);
+      setMessage('Pickup length changed. Edit and playback selections cleared.'); setError('');
+    } catch (failure) { setPickupApplyError((failure as Error).message); }
+  }
   function moveSelectedString() {
     if (!selection || selection.kind !== 'note' || selection.string === null) return;
     const destination = Number(moveString);
@@ -885,6 +978,24 @@ export function App() {
   const selectedTriplet = selection && preview ? inspectMusicXmlTriplet(preview.source,
     { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 }) : null;
   const selectedTupletLocked = Boolean(selectedTriplet?.triplet || selectedTriplet?.reason);
+  const meterPreview = (() => {
+    if (!meterTarget) return null;
+    try {
+      const range = inspectMusicXmlMeterRange(meterTarget.base.source, meterTarget.base.score,
+        meterTarget.measureIndex, meterDraft.scope);
+      try {
+        return { range, candidate: changeMusicXmlMeter(meterTarget.base.source, meterTarget.base.score,
+          meterTarget.measureIndex, meterDraft.numerator, meterDraft.denominator, meterDraft.scope), error: '' };
+      } catch (failure) { return { range, candidate: null, error: (failure as Error).message }; }
+    } catch (failure) { return { range: null, candidate: null, error: (failure as Error).message }; }
+  })();
+  const pickupPreview = (() => {
+    if (!pickupTarget) return null;
+    try {
+      return { source: changeMusicXmlPickup(pickupTarget.base.source, pickupTarget.base.score,
+        pickupDraft.numerator, pickupDraft.denominator), error: '' };
+    } catch (failure) { return { source: null, error: (failure as Error).message }; }
+  })();
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
       <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
@@ -964,6 +1075,9 @@ export function App() {
               <button type="button" disabled={(preview?.score.masterBars.length ?? score.measures.length) <= 1}
                 onClick={event => previewDeleteMeasure(event.currentTarget)}>Delete measure…</button>
               {(preview?.score.masterBars.length ?? score.measures.length) <= 1 && <p>The last remaining measure cannot be deleted.</p>}
+              <button type="button" onClick={event => openMeterDialog(event.currentTarget)}>Time signature…</button>
+              <button type="button" disabled={selection.measure !== 1} onClick={event => openPickupDialog(event.currentTarget)}>Pickup…</button>
+              {selection.measure !== 1 && <p>Pickup length is available only in the first measure.</p>}
             </details>
           </>}
         </div>
@@ -1010,6 +1124,39 @@ export function App() {
       <p>This permanently removes {pendingMeasureDeletion?.noteCount ?? 0} note{pendingMeasureDeletion?.noteCount === 1 ? '' : 's'}, {pendingMeasureDeletion?.restCount ?? 0} rest{pendingMeasureDeletion?.restCount === 1 ? '' : 's'}, and {pendingMeasureDeletion?.labelCount ?? 0} local label{pendingMeasureDeletion?.labelCount === 1 ? '' : 's'} from this score. Undo can restore them during this editing session.</p>
       <p>Edit and playback selections touching this measure will clear.</p>
       <div className="duplicate-dialog-actions"><button type="button" data-delete-measure-cancel onClick={() => setPendingMeasureDeletion(null)}>Cancel</button><button type="button" onClick={confirmDeleteMeasure}>Delete measure</button></div>
+    </dialog>
+    <dialog ref={meterDialog} className="duplicate-dialog" aria-label="Time signature" onCancel={event => { event.preventDefault(); setMeterTarget(null); }}>
+      <h2>Time signature</h2>
+      <div className="insert-dialog-fields">
+        <label>Numerator<input data-meter-first type="number" min={1} max={12} step={1} value={meterDraft.numerator}
+          onChange={event => { setMeterApplyError(''); setMeterDraft(current => ({ ...current, numerator: Number(event.target.value) })); }} /></label>
+        <label>Denominator<select value={meterDraft.denominator}
+          onChange={event => { setMeterApplyError(''); setMeterDraft(current => ({ ...current, denominator: Number(event.target.value) as 2 | 4 | 8 | 16 })); }}>
+          {[2, 4, 8, 16].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label>Apply to<select value={meterDraft.scope}
+          onChange={event => { setMeterApplyError(''); setMeterDraft(current => ({ ...current, scope: event.target.value as 'this' | 'from' })); }}>
+          <option value="this">This measure</option><option value="from">From here (until next explicit signature)</option></select></label>
+      </div>
+      {meterPreview?.range && <p>Affects measures {meterPreview.range.firstMeasure}–{meterPreview.range.lastMeasure} ({meterPreview.range.lastMeasure - meterPreview.range.firstMeasure + 1} total).</p>}
+      {meterPreview?.error && <p className="alert" role="alert">{meterPreview.error}</p>}
+      {meterApplyError && <p className="alert" role="alert">{meterApplyError}</p>}
+      <div className="duplicate-dialog-actions"><button type="button" onClick={() => setMeterTarget(null)}>Cancel</button>
+        <button type="button" disabled={!meterPreview?.candidate} onClick={() => { if (meterPreview?.candidate) confirmMeterChange(meterPreview.candidate); }}>Apply</button></div>
+    </dialog>
+    <dialog ref={pickupDialog} className="duplicate-dialog" aria-label="Pickup" onCancel={event => { event.preventDefault(); setPickupTarget(null); }}>
+      <h2>Pickup length</h2>
+      <p>Set the first measure’s actual length. It must be shorter than the nominal time signature.</p>
+      <div className="insert-dialog-fields">
+        <label>Numerator<input data-pickup-first type="number" min={1} step={1} value={pickupDraft.numerator}
+          onChange={event => { setPickupApplyError(''); setPickupDraft(current => ({ ...current, numerator: Number(event.target.value) })); }} /></label>
+        <label>Denominator<select value={pickupDraft.denominator}
+          onChange={event => { setPickupApplyError(''); setPickupDraft(current => ({ ...current, denominator: Number(event.target.value) as 2 | 4 | 8 | 16 | 32 | 64 })); }}>
+          {[2, 4, 8, 16, 32, 64].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+      </div>
+      {pickupPreview?.error && <p className="alert" role="alert">{pickupPreview.error}</p>}
+      {pickupApplyError && <p className="alert" role="alert">{pickupApplyError}</p>}
+      <div className="duplicate-dialog-actions"><button type="button" onClick={() => setPickupTarget(null)}>Cancel</button>
+        <button type="button" disabled={!pickupPreview?.source} onClick={() => { if (pickupPreview?.source) confirmPickupChange(pickupPreview.source); }}>Apply</button></div>
     </dialog>
     <dialog ref={duplicateDialog} className="duplicate-dialog" aria-label="Duplicate measure" onCancel={event => { event.preventDefault(); setPendingDuplication(null); }}>
       <h2>Duplicate measure {pendingDuplication ? pendingDuplication.measureIndex + 1 : ''}?</h2>

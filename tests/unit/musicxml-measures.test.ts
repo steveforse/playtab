@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure } from '../../app/frontend/music/musicxml-editor';
+import { changeMusicXmlMeter, changeMusicXmlPickup, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+  inspectMusicXmlMeterRange } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -188,5 +189,159 @@ describe('ED-12 measure deletion', () => {
     expect(next.getElementsByTagName('time')[0].getElementsByTagName('beats')[0].textContent).toBe('3');
     expect(next.getElementsByTagName('sound')[0].getAttribute('tempo')).toBe('108');
     expect(next.getElementsByTagName('staff-tuning')).toHaveLength(5);
+  });
+});
+
+describe('ED-13 meter changes', () => {
+  const blank = fs.readFileSync('tests/fixtures/editor-pickup.musicxml', 'utf8');
+
+  it('adds a quarter of trailing rest to every voice when 3/4 becomes 4/4', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    const result = changeMusicXmlMeter(rich, original.score, 1, 4, 4, 'this');
+    expect(result).toMatchObject({ firstMeasure: 2, lastMeasure: 2 });
+    const after = readMusicXml(result.source, 'rich.musicxml');
+    expect(after.score.masterBars[1].timeSignatureNumerator).toBe(4);
+    const measure = Array.from(new DOMParser().parseFromString(result.source, 'application/xml').getElementsByTagName('measure'))[1];
+    expect(Array.from(measure.getElementsByTagName('backup')).map(backup => backup.getElementsByTagName('duration')[0].textContent))
+      .toEqual(['4', '4', '4']);
+    expect(Array.from(measure.getElementsByTagName('note')).filter(note => note.getElementsByTagName('rest').length)).toHaveLength(4);
+    expect(Array.from(measure.getElementsByTagName('note')).filter(note => note.getElementsByTagName('rest').length)
+      .map(note => note.getElementsByTagName('duration')[0].textContent)).toEqual(['2', '2', '2', '2']);
+  });
+
+  it('shrinks removable trailing rest and blocks a voiced final quarter atomically', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    const result = changeMusicXmlMeter(rich, original.score, 1, 2, 4, 'this');
+    expect(readMusicXml(result.source, 'rich.musicxml').score.masterBars[1].timeSignatureNumerator).toBe(2);
+    expect(() => changeMusicXmlMeter(rich, original.score, 0, 3, 4, 'this'))
+      .toThrow('Measure 1, voice 1: final time is not removable rest');
+  });
+
+  it('reports the exact From here range through the next explicit signature', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    const withRest = insertMusicXmlMeasure(rich, original.score, 1, 'after');
+    const extended = readMusicXml(withRest, 'rich.musicxml');
+    expect(inspectMusicXmlMeterRange(withRest, extended.score, 1, 'from'))
+      .toEqual({ firstMeasure: 2, lastMeasure: 3 });
+    expect(inspectMusicXmlMeterRange(withRest, extended.score, 1, 'this'))
+      .toEqual({ firstMeasure: 2, lastMeasure: 2 });
+    expect(() => inspectMusicXmlMeterRange(withRest, extended.score, 9, 'from'))
+      .toThrow('selected source measure cannot be identified');
+    const result = changeMusicXmlMeter(withRest, extended.score, 1, 4, 4, 'from');
+    expect(result).toMatchObject({ firstMeasure: 2, lastMeasure: 3 });
+    const changed = readMusicXml(result.source, 'rich.musicxml');
+    expect(changed.score.masterBars.map(bar => bar.timeSignatureNumerator)).toEqual([4, 4, 4]);
+  });
+
+  it('restores the prior signature at the next inherited bar for This measure', () => {
+    const original = readMusicXml(blank, 'pickup.musicxml');
+    const result = changeMusicXmlMeter(blank, original.score, 0, 5, 4, 'this');
+    const after = readMusicXml(result.source, 'pickup.musicxml');
+    expect(after.score.masterBars.map(bar => bar.timeSignatureNumerator)).toEqual([5, 4]);
+    const measures = Array.from(new DOMParser().parseFromString(result.source, 'application/xml').getElementsByTagName('measure'));
+    expect(measures[1].getElementsByTagName('time')[0].getElementsByTagName('beats')[0].textContent).toBe('4');
+    expect(measures[0].getElementsByTagName('note')).toHaveLength(2);
+  });
+
+  it('does not resize a bar whose capacity already matches the chosen signature', () => {
+    const original = readMusicXml(blank, 'pickup.musicxml');
+    const unchanged = changeMusicXmlMeter(blank, original.score, 0, 4, 4, 'this');
+    expect(readMusicXml(unchanged.source, 'pickup.musicxml').score.masterBars[0].timeSignatureNumerator).toBe(4);
+    expect(new DOMParser().parseFromString(unchanged.source, 'application/xml').getElementsByTagName('measure')[0]
+      .getElementsByTagName('note')[0].getElementsByTagName('duration')[0].textContent).toBe('4');
+  });
+
+  it('rescales divisions for a fractional meter and restores timing precision at the next bar', () => {
+    const original = readMusicXml(blank, 'pickup.musicxml');
+    const result = changeMusicXmlMeter(blank, original.score, 0, 7, 8, 'this');
+    const xml = new DOMParser().parseFromString(result.source, 'application/xml');
+    const measures = Array.from(xml.getElementsByTagName('measure'));
+    expect(measures[0].getElementsByTagName('divisions')[0].textContent).toBe('2');
+    expect(measures[1].getElementsByTagName('divisions')[0].textContent).toBe('1');
+    expect(readMusicXml(result.source, 'pickup.musicxml').score.masterBars.map(bar => bar.timeSignatureNumerator))
+      .toEqual([7, 4]);
+  });
+
+  it('rejects a later sounding bar in From here without changing any source bytes', () => {
+    const original = readMusicXml(blank, 'pickup.musicxml');
+    expect(() => changeMusicXmlMeter(blank, original.score, 0, 3, 4, 'from'))
+      .toThrow('Measure 2, voice 1: final time is not removable rest');
+    expect(blank).toContain('<measure number="2">');
+  });
+
+  it('rejects unsupported timing and invalid signatures with named errors', () => {
+    const original = readMusicXml(blank, 'pickup.musicxml');
+    expect(() => changeMusicXmlMeter(blank, original.score, 0, 13, 4, 'this')).toThrow('numerator from 1–12');
+    expect(() => changeMusicXmlMeter(blank, original.score, 9, 3, 4, 'this'))
+      .toThrow('selected source measure cannot be identified');
+    const forwarded = blank.replace('<measure number="1">',
+      '<measure number="1"><forward><duration>1</duration></forward>');
+    expect(() => changeMusicXmlMeter(forwarded, original.score, 0, 3, 4, 'this'))
+      .toThrow('Measure 1: forward timing');
+    const brokenBackup = rich.replace('<backup><duration>3</duration></backup>', '<backup><duration>2</duration></backup>');
+    expect(() => changeMusicXmlMeter(brokenBackup, readMusicXml(rich, 'rich.musicxml').score, 1, 4, 4, 'this'))
+      .toThrow('Measure 2: voice timing');
+  });
+
+  it('retains an existing pickup’s actual length when its nominal signature changes', () => {
+    const original = readMusicXml(blank, 'pickup.musicxml');
+    const picked = changeMusicXmlPickup(blank, original.score, 1, 8);
+    const score = readMusicXml(picked, 'pickup.musicxml').score;
+    const changed = changeMusicXmlMeter(picked, score, 0, 3, 4, 'this');
+    const first = new DOMParser().parseFromString(changed.source, 'application/xml').getElementsByTagName('measure')[0];
+    expect(first.getAttribute('implicit')).toBe('yes');
+    expect(first.getElementsByTagName('duration')[0].textContent).toBe('1');
+    expect(readMusicXml(changed.source, 'pickup.musicxml').score.masterBars[0].timeSignatureNumerator).toBe(3);
+    expect(() => changeMusicXmlMeter(picked, score, 0, 1, 8, 'this')).toThrow('pickup must remain shorter');
+  });
+
+  it('fails closed on malformed voice and signature source layouts', () => {
+    const original = readMusicXml(blank, 'pickup.musicxml');
+    const empty = blank.replace('<note><rest/><duration>4</duration><voice>1</voice><type>whole</type><staff>1</staff></note>', '');
+    expect(() => changeMusicXmlMeter(empty, original.score, 0, 3, 4, 'this')).toThrow('no source voices');
+    const oddStaff = blank.replace('<staff>1</staff></note>', '<staff>0</staff></note>');
+    expect(() => changeMusicXmlMeter(oddStaff, original.score, 0, 3, 4, 'this')).toThrow('unsupported staff number');
+    const orphan = blank.replace('<note><rest/>', '<note><chord/><rest/>');
+    expect(() => changeMusicXmlMeter(orphan, original.score, 0, 3, 4, 'this')).toThrow('orphaned chord');
+    const short = blank.replace('<duration>4</duration><voice>1</voice><type>whole', '<duration>3</duration><voice>1</voice><type>whole');
+    expect(() => changeMusicXmlMeter(short, original.score, 0, 3, 4, 'this')).toThrow('source timing does not match');
+    const repeated = blank.replace('<time><beats>4</beats><beat-type>4</beat-type></time>',
+      '<time><beats>4</beats><beat-type>4</beat-type></time><time><beats>4</beats><beat-type>4</beat-type></time>');
+    expect(() => changeMusicXmlMeter(repeated, original.score, 0, 3, 4, 'this')).toThrow('Multiple source signatures');
+  });
+});
+
+describe('ED-13 pickup length', () => {
+  it('resizes a first rest bar to one eighth without leading silence and can resize it again', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    const withRest = insertMusicXmlMeasure(rich, original.score, 0, 'before');
+    const score = readMusicXml(withRest, 'rich.musicxml').score;
+    const eighth = changeMusicXmlPickup(withRest, score, 1, 8);
+    const xml = new DOMParser().parseFromString(eighth, 'application/xml');
+    const first = xml.getElementsByTagName('measure')[0];
+    expect(first.getAttribute('implicit')).toBe('yes');
+    expect(Array.from(first.getElementsByTagName('backup')).map(item => item.getElementsByTagName('duration')[0].textContent))
+      .toEqual(['1', '1', '1']);
+    expect(Array.from(first.getElementsByTagName('note')).map(item => item.getElementsByTagName('duration')[0].textContent))
+      .toEqual(['1', '1', '1', '1']);
+    const imported = readMusicXml(eighth, 'pickup.musicxml');
+    expect(imported.score.masterBars[0].isAnacrusis).toBe(true);
+    expect(imported.score.masterBars[0].calculateDuration()).toBe(480);
+    expect(imported.score.tracks[0].staves[0].bars[0].voices.filter(voice => !voice.isEmpty)
+      .every(voice => voice.beats[0].playbackStart === 0)).toBe(true);
+    const quarter = changeMusicXmlPickup(eighth, imported.score, 1, 4);
+    expect(readMusicXml(quarter, 'pickup.musicxml').score.masterBars[0].isAnacrusis).toBe(true);
+  });
+
+  it('rejects an invalid or sounding-note pickup without mutation', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    expect(() => changeMusicXmlPickup(rich, original.score, 4, 4)).toThrow('shorter');
+    expect(() => changeMusicXmlPickup(rich, original.score, 1, 8)).toThrow('Measure 1, voice 1');
+  });
+
+  it('rejects nonpositive pickup values and a source without a first measure', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    expect(() => changeMusicXmlPickup(rich, original.score, 0, 8)).toThrow('positive pickup length');
+    expect(() => changeMusicXmlPickup('<score-partwise/>', original.score, 1, 8)).toThrow('first source measure');
   });
 });
