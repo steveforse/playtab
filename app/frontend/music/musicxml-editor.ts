@@ -1996,12 +1996,18 @@ export function addMusicXmlRepeat(source: string, score: model.Score, start: num
     throw new Error('Choose a repeat start before its end within this score.');
   }
   if (!Number.isInteger(count) || count < 2 || count > 8) throw new Error('Repeat count must be from 2 to 8.');
-  if (measures.some(measure => descendants(measure, 'ending').length)) {
+  const existing = sourceRepeatRegions(measures);
+  const endingRanges = existing.map(region => knownRepeatEndings(measures, existing, region))
+    .filter((item): item is RepeatEndings => item !== null);
+  const endingMarkers = measures.reduce((total, measure) => total + descendants(measure, 'ending').length, 0);
+  if (endingMarkers !== endingRanges.length * 4) {
     throw new Error('Existing repeat endings must be reviewed before adding another repeat.');
   }
-  const existing = sourceRepeatRegions(measures);
   if (existing.some(region => start <= region.end && end >= region.start)) {
     throw new Error('Nested or overlapping repeat regions cannot be authored.');
+  }
+  if (endingRanges.some(item => start <= item.secondEnd && end >= item.firstStart)) {
+    throw new Error('A new repeat cannot overlap existing first or second endings.');
   }
   const visits = measures.length + [...existing, { start, end, count }]
     .reduce((total, region) => total + (region.end - region.start + 1) * (region.count - 1), 0);

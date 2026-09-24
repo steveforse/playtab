@@ -578,4 +578,16 @@ describe('ED-15 repeat authoring foundation', () => {
     expect(() => removeMusicXmlRepeat(new XMLSerializer().serializeToString(relocated), repeatedScore, 1, 3))
       .toThrow('endpoint changed');
   });
+
+  it('allows a separate repeat after a completed ending pair but not across it', () => {
+    const original = readMusicXml(source, 'repeat.musicxml');
+    const first = addMusicXmlRepeat(source, original.score, 0, 1, 2);
+    const endings = addMusicXmlEndings(first, readMusicXml(first, 'repeat.musicxml').score, 0, 1, 1, 2);
+    const score = readMusicXml(endings, 'repeat.musicxml').score;
+    expect(() => addMusicXmlRepeat(endings, score, 2, 3, 2)).toThrow('overlap existing first or second endings');
+    const separate = addMusicXmlRepeat(endings, score, 3, 4, 2);
+    expect(inspectMusicXmlRepeats(separate)).toEqual([{ start: 0, end: 1, count: 2 }, { start: 3, end: 4, count: 2 }]);
+    expect(inspectMusicXmlRepeatEndings(separate, 0, 1))
+      .toEqual({ firstStart: 1, firstEnd: 1, secondStart: 2, secondEnd: 2 });
+  });
 });
