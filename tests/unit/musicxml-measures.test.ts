@@ -3,8 +3,8 @@ import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { midi, Settings } from '@coderline/alphatab';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
-  inspectMusicXmlRepeats,
+import { addMusicXmlEndings, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+  inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
 
@@ -500,5 +500,73 @@ describe('ED-15 repeat authoring foundation', () => {
     document.getElementsByTagName('measure')[0].appendChild(document.createElement('ending'));
     expect(() => addMusicXmlRepeat(new XMLSerializer().serializeToString(document), original.score, 1, 3, 2))
       .toThrow('Existing repeat endings');
+  });
+
+  it('plays first and second endings in their assigned passes', () => {
+    const document = new DOMParser().parseFromString(source, 'application/xml');
+    const last = document.getElementsByTagName('measure')[4];
+    const sixth = last.cloneNode(true) as typeof last;
+    sixth.setAttribute('number', '6');
+    sixth.getElementsByTagName('step')[0].textContent = 'G';
+    sixth.getElementsByTagName('alter')[0]?.parentNode?.removeChild(sixth.getElementsByTagName('alter')[0]);
+    sixth.getElementsByTagName('fret')[0].textContent = '5';
+    last.parentNode!.appendChild(sixth);
+    const sixBars = new XMLSerializer().serializeToString(document);
+    const original = readMusicXml(sixBars, 'ending.musicxml');
+    const repeated = addMusicXmlRepeat(sixBars, original.score, 1, 3, 2);
+    const withEndings = addMusicXmlEndings(repeated, readMusicXml(repeated, 'ending.musicxml').score, 1, 3, 3, 4);
+    expect(inspectMusicXmlRepeatEndings(withEndings, 1, 3))
+      .toEqual({ firstStart: 3, firstEnd: 3, secondStart: 4, secondEnd: 4 });
+    const after = readMusicXml(withEndings, 'ending.musicxml');
+    const file = new midi.MidiFile();
+    new midi.MidiFileGenerator(after.score, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
+    expect(file.events.filter((event): event is midi.NoteOnEvent => event instanceof midi.NoteOnEvent)
+      .map(event => event.noteKey)).toEqual([50, 51, 52, 53, 51, 52, 54, 55]);
+    const cleared = removeMusicXmlRepeat(withEndings, after.score, 1, 3);
+    expect(inspectMusicXmlRepeats(cleared)).toEqual([]);
+    expect(new DOMParser().parseFromString(cleared, 'application/xml').getElementsByTagName('ending')).toHaveLength(0);
+    expect(readMusicXml(cleared, 'ending.musicxml').score.masterBars).toHaveLength(6);
+    expect(() => addMusicXmlEndings(repeated, readMusicXml(repeated, 'ending.musicxml').score, 1, 3, 1, 4))
+      .not.toThrow();
+    expect(() => addMusicXmlEndings(repeated, readMusicXml(repeated, 'ending.musicxml').score, 1, 3, 0, 4))
+      .toThrow('inside its repeat');
+    expect(() => addMusicXmlEndings(repeated, readMusicXml(repeated, 'ending.musicxml').score, 1, 3, 3, 3))
+      .toThrow('immediately after');
+  });
+
+  it('rejects unsafe ending and removal targets without changing source', () => {
+    const original = readMusicXml(source, 'repeat.musicxml');
+    const repeated = addMusicXmlRepeat(source, original.score, 1, 3, 2);
+    const repeatedScore = readMusicXml(repeated, 'repeat.musicxml').score;
+    expect(() => addMusicXmlEndings(source, original.score, 1, 3, 3, 4)).toThrow('known repeat region');
+    expect(() => addMusicXmlEndings(repeated, original.score, 0, 3, 3, 4)).toThrow('known repeat region');
+    const three = addMusicXmlRepeat(source, original.score, 1, 3, 3);
+    expect(() => addMusicXmlEndings(three, readMusicXml(three, 'repeat.musicxml').score, 1, 3, 3, 4))
+      .toThrow('count of 2');
+    const separate = addMusicXmlRepeat(addMusicXmlRepeat(source, original.score, 0, 1, 2), original.score, 2, 3, 2);
+    expect(() => addMusicXmlEndings(separate, readMusicXml(separate, 'repeat.musicxml').score, 0, 1, 1, 2))
+      .toThrow('overlap another repeat');
+    const withEndings = addMusicXmlEndings(repeated, repeatedScore, 1, 3, 3, 4);
+    expect(() => addMusicXmlEndings(withEndings, readMusicXml(withEndings, 'repeat.musicxml').score, 1, 3, 3, 4))
+      .toThrow('Imported endings');
+    expect(() => inspectMusicXmlRepeatEndings(repeated, 0, 3)).toThrow('cannot be identified');
+    expect(() => removeMusicXmlRepeat(repeated, repeatedScore, 0, 3)).toThrow('cannot be identified');
+    const malformed = new DOMParser().parseFromString(withEndings, 'application/xml');
+    const endingStops = Array.from(malformed.getElementsByTagName('ending')).filter(item => item.getAttribute('type') === 'stop');
+    endingStops[1].parentNode!.removeChild(endingStops[1]);
+    const incomplete = new XMLSerializer().serializeToString(malformed);
+    expect(() => inspectMusicXmlRepeatEndings(incomplete, 1, 3)).toThrow('preserved but cannot be edited safely');
+    expect(() => removeMusicXmlRepeat(incomplete, repeatedScore, 1, 3)).toThrow('preserved but cannot be edited safely');
+    expect(incomplete).toContain('ending');
+    expect(() => inspectMusicXmlRepeatEndings('<score-partwise version="4.0"/>', 1, 3)).toThrow('no music part');
+    expect(() => removeMusicXmlRepeat('<score-partwise version="4.0"/>', repeatedScore, 1, 3))
+      .toThrow('do not match');
+    expect(() => addMusicXmlEndings('<score-partwise version="4.0"/>', repeatedScore, 1, 3, 3, 4))
+      .toThrow('do not match');
+    const relocated = new DOMParser().parseFromString(repeated, 'application/xml');
+    const backward = relocated.getElementsByTagName('repeat')[1];
+    (backward.parentNode as typeof backward).setAttribute('location', 'left');
+    expect(() => removeMusicXmlRepeat(new XMLSerializer().serializeToString(relocated), repeatedScore, 1, 3))
+      .toThrow('endpoint changed');
   });
 });
