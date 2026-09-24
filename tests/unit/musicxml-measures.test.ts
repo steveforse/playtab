@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { midi, Settings } from '@coderline/alphatab';
+import { linearAuditionMidi, writtenPlaybackRange } from '../../app/frontend/editor/audition';
+import { selectionFromBeat } from '../../app/frontend/Player';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
 import { addMusicXmlEndings, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
   inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
@@ -522,6 +524,13 @@ describe('ED-15 repeat authoring foundation', () => {
     new midi.MidiFileGenerator(after.score, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
     expect(file.events.filter((event): event is midi.NoteOnEvent => event instanceof midi.NoteOnEvent)
       .map(event => event.noteKey)).toEqual([50, 51, 52, 53, 51, 52, 54, 55]);
+    expect(linearAuditionMidi(after.score).events.filter((event): event is midi.NoteOnEvent => event instanceof midi.NoteOnEvent)
+      .map(event => event.noteKey)).toEqual([50, 51, 52, 53, 54, 55]);
+    const firstBeat = after.score.tracks[0].staves[0].bars[1].voices[0].beats[0];
+    const lastBeat = after.score.tracks[0].staves[0].bars[3].voices[0].beats[0];
+    expect(writtenPlaybackRange(after.score, { start: selectionFromBeat(firstBeat), end: selectionFromBeat(lastBeat) }))
+      .toEqual({ startTick: after.score.masterBars[1].start,
+        endTick: after.score.masterBars[3].start + lastBeat.playbackDuration });
     const cleared = removeMusicXmlRepeat(withEndings, after.score, 1, 3);
     expect(inspectMusicXmlRepeats(cleared)).toEqual([]);
     expect(new DOMParser().parseFromString(cleared, 'application/xml').getElementsByTagName('ending')).toHaveLength(0);
