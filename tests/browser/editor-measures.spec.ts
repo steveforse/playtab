@@ -115,3 +115,59 @@ test('ED-12 confirms a safe deletion, clears the target, and restores it with Un
   await expect(page.getByLabel('Selection inspector')).toContainText('Measure 1');
   await expect(page.getByRole('combobox', { name: 'Selection measure' }).locator('option')).toHaveCount(2);
 });
+
+test('ED-13 expands a three-quarter measure after previewing the affected range', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
+  const firstFret = page.getByTestId('notation').locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(firstFret).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const box = (await firstFret.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('2');
+  await page.getByText('Measure', { exact: true }).last().click();
+  await page.getByRole('button', { name: 'Time signature…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Time signature' });
+  await dialog.getByLabel('Numerator').fill('4');
+  await expect(dialog).toContainText('Affects measures 2–2 (1 total).');
+  await dialog.screenshot({ path: testInfo.outputPath('time-signature-dialog.png') });
+  await dialog.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByText('Time signature changed in measures 2–2. Edit and playback selections cleared.')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByLabel('Selection inspector')).toContainText('Measure 2');
+});
+
+test('ED-13 sets a first-bar eighth-note pickup without adding leading silence', async ({ page }, testInfo) => {
+  let savedSource = '';
+  await page.route('**/api/songs', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: [] });
+    savedSource = route.request().postDataJSON().score.source;
+    return route.fulfill({ status: 201, json: { id: 72, title: 'Pickup exercise', revision: 0 } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-pickup.musicxml');
+  const fret = page.getByTestId('notation').locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(fret).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const box = (await fret.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('1');
+  await page.getByText('Measure', { exact: true }).last().click();
+  await page.getByRole('button', { name: 'Pickup…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Pickup' });
+  await expect(dialog.getByLabel('Numerator')).toHaveValue('1');
+  await expect(dialog.getByLabel('Denominator')).toHaveValue('8');
+  await dialog.screenshot({ path: testInfo.outputPath('pickup-dialog.png') });
+  await dialog.getByRole('button', { name: 'Apply' }).click();
+  await expect(page.getByText('Pickup length changed. Edit and playback selections cleared.')).toBeVisible();
+  await page.getByRole('button', { name: '＋ Save to library' }).click();
+  await expect.poll(() => savedSource).not.toBe('');
+  const first = new DOMParser().parseFromString(savedSource, 'application/xml').getElementsByTagName('measure')[0];
+  expect(first.getAttribute('implicit')).toBe('yes');
+  expect(Array.from(first.getElementsByTagName('note')).map(note => note.getElementsByTagName('duration')[0].textContent))
+    .toEqual(['1']);
+  expect(first.getElementsByTagName('type')[0].textContent).toBe('eighth');
+});
