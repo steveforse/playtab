@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
-  deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
-  removeMusicXmlNotes, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type InsertEventOptions, type TiePosition } from './music/musicxml-editor';
+import { addMusicXmlEndings, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+  deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
+  removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
+  type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -22,6 +22,7 @@ type PendingMeasureDeletion = { originalKey: string; base: MusicXmlPreview; sour
 type MeterTarget = { originalKey: string; base: MusicXmlPreview; measureIndex: number };
 type PickupTarget = { originalKey: string; base: MusicXmlPreview };
 type RepeatTarget = { originalKey: string; base: MusicXmlPreview };
+type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndings | null };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -149,8 +150,13 @@ export function App() {
   const meterOpener = useRef<HTMLElement | null>(null);
   const [repeatTarget, setRepeatTarget] = useState<RepeatTarget | null>(null);
   const [repeatDraft, setRepeatDraft] = useState({ start: 1, end: 2, count: 2 });
+  const [repeatAddTouched, setRepeatAddTouched] = useState(false);
+  const [repeatSelected, setRepeatSelected] = useState('');
+  const [endingDraft, setEndingDraft] = useState({ firstStart: 1, secondEnd: 1 });
   const [repeatApplyError, setRepeatApplyError] = useState('');
+  const [repeatRemoval, setRepeatRemoval] = useState<RepeatRemoval | null>(null);
   const repeatDialog = useRef<HTMLDialogElement>(null);
+  const repeatRemovalDialog = useRef<HTMLDialogElement>(null);
   const repeatOpener = useRef<HTMLElement | null>(null);
   const [pickupTarget, setPickupTarget] = useState<PickupTarget | null>(null);
   const [pendingTie, setPendingTie] = useState<PendingTie | null>(null);
@@ -299,6 +305,12 @@ export function App() {
       if (repeatOpener.current?.isConnected) repeatOpener.current.focus({ preventScroll: true });
     }
   }, [repeatTarget]);
+  useEffect(() => {
+    const dialog = repeatRemovalDialog.current;
+    if (!dialog) return;
+    if (repeatRemoval && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-repeat-remove-cancel]')?.focus(); }
+    else if (!repeatRemoval && dialog.open) dialog.close();
+  }, [repeatRemoval]);
   useEffect(() => {
     const dialog = pickupDialog.current;
     if (!dialog) return;
@@ -713,24 +725,52 @@ export function App() {
     if (pendingFret) { setError('Apply the pending fret before editing repeats.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      let regions: RepeatRegion[] = [];
+      try { regions = inspectMusicXmlRepeats(base.source); } catch { /* Preserve unsupported imported maps read-only in the dialog. */ }
+      const selected = regions.find(item => selection.measure - 1 >= item.start && selection.measure - 1 <= item.end) ?? regions[0];
       repeatOpener.current = opener;
       setRepeatDraft({ start: selection.measure, end: Math.min(base.score.masterBars.length, selection.measure + 1), count: 2 });
+      setRepeatAddTouched(false);
+      setRepeatSelected(selected ? `${selected.start}:${selected.end}` : '');
+      setEndingDraft({ firstStart: selected ? selected.end + 1 : selection.measure,
+        secondEnd: selected ? selected.end + 2 : selection.measure + 1 });
       setRepeatApplyError(''); setRepeatTarget({ originalKey: documentKey(currentDocument), base }); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function confirmRepeat(candidate: string) {
-    if (!repeatTarget) return;
-    if (repeatTarget.originalKey !== documentKey(currentDocument)) {
-      setRepeatTarget(null); setError('The score changed since this repeat preview. Open it again.'); return;
+  function commitRepeatChange(target: RepeatTarget, candidate: string, description: string, status: string) {
+    if (target.originalKey !== documentKey(currentDocument)) {
+      setRepeatTarget(null); setRepeatRemoval(null);
+      setError('The score changed since this repeat preview. Open it again.'); return;
     }
     try {
-      const { base } = repeatTarget;
+      const { base } = target;
       const nextPreview = withPreviewTitle(readMusicXml(candidate, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection,
-        sourceIdentity: nextPreview.sourceIdentity }, `Repeat measures ${repeatDraft.start}–${repeatDraft.end} ×${repeatDraft.count}`);
-      setPreview(nextPreview); setRepeatTarget(null); setError('');
-      setMessage(`Repeat added: measures ${repeatDraft.start}–${repeatDraft.end}, ${repeatDraft.count} plays.`);
+        sourceIdentity: nextPreview.sourceIdentity }, description);
+      setPreview(nextPreview); setRepeatTarget(null); setRepeatRemoval(null); setError(''); setMessage(status);
+    } catch (failure) { setRepeatApplyError((failure as Error).message); }
+  }
+  function confirmRepeat(candidate: string) {
+    if (repeatTarget) commitRepeatChange(repeatTarget, candidate,
+      `Repeat measures ${repeatDraft.start}–${repeatDraft.end} ×${repeatDraft.count}`,
+      `Repeat added: measures ${repeatDraft.start}–${repeatDraft.end}, ${repeatDraft.count} plays.`);
+  }
+  function previewRepeatRemoval(region: RepeatRegion) {
+    if (!repeatTarget) return;
+    try {
+      const endings = inspectMusicXmlRepeatEndings(repeatTarget.base.source, region.start, region.end);
+      removeMusicXmlRepeat(repeatTarget.base.source, repeatTarget.base.score, region.start, region.end);
+      setRepeatRemoval({ ...repeatTarget, region, endings }); setRepeatTarget(null); setRepeatApplyError('');
+    } catch (failure) { setRepeatApplyError((failure as Error).message); }
+  }
+  function confirmRepeatRemoval() {
+    if (!repeatRemoval) return;
+    try {
+      const { region, base } = repeatRemoval;
+      const candidate = removeMusicXmlRepeat(base.source, base.score, region.start, region.end);
+      commitRepeatChange(repeatRemoval, candidate, `Remove repeat measures ${region.start + 1}–${region.end + 1}`,
+        `Repeat in measures ${region.start + 1}–${region.end + 1} removed with its dependent endings.`);
     } catch (failure) { setRepeatApplyError((failure as Error).message); }
   }
   function openPickupDialog(opener: HTMLElement) {
@@ -1104,9 +1144,21 @@ export function App() {
       const existing = inspectMusicXmlRepeats(repeatTarget.base.source);
       try {
         return { existing, candidate: addMusicXmlRepeat(repeatTarget.base.source, repeatTarget.base.score,
-          repeatDraft.start - 1, repeatDraft.end - 1, repeatDraft.count), error: '' };
-      } catch (failure) { return { existing, candidate: null, error: (failure as Error).message }; }
-    } catch (failure) { return { existing: [], candidate: null, error: (failure as Error).message }; }
+          repeatDraft.start - 1, repeatDraft.end - 1, repeatDraft.count), error: '', structureError: false };
+      } catch (failure) { return { existing, candidate: null, error: (failure as Error).message, structureError: false }; }
+    } catch (failure) { return { existing: [], candidate: null, error: (failure as Error).message, structureError: true }; }
+  })();
+  const selectedRepeat = repeatPreview?.existing.find(region => `${region.start}:${region.end}` === repeatSelected);
+  const endingsPreview = (() => {
+    if (!repeatTarget || !selectedRepeat) return null;
+    try {
+      const existing = inspectMusicXmlRepeatEndings(repeatTarget.base.source, selectedRepeat.start, selectedRepeat.end);
+      if (existing) return { existing, candidate: null, error: 'This repeat already has first and second endings.' };
+      try {
+        return { existing: null, candidate: addMusicXmlEndings(repeatTarget.base.source, repeatTarget.base.score,
+          selectedRepeat.start, selectedRepeat.end, endingDraft.firstStart - 1, endingDraft.secondEnd - 1), error: '' };
+      } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
+    } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
   })();
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
@@ -1271,22 +1323,61 @@ export function App() {
     </dialog>
     <dialog ref={repeatDialog} className="duplicate-dialog" aria-label="Repeat / endings" onCancel={event => { event.preventDefault(); setRepeatTarget(null); }}>
       <h2>Repeat / endings</h2>
-      <p>Existing repeats: {repeatPreview?.existing.length ? repeatPreview.existing.map(region =>
+      <p>Existing repeats: {repeatPreview?.structureError ? 'unavailable (imported structure is read-only)' : repeatPreview?.existing.length ? repeatPreview.existing.map(region =>
         `measures ${region.start + 1}–${region.end + 1} ×${region.count}`).join('; ') : 'none'}.</p>
-      <p>Add a non-overlapping repeat. First and second endings will be available in the next editing step.</p>
+      <p>Add a non-overlapping repeat. Endings require a two-play repeat and one measure after its backward marker.</p>
       <div className="insert-dialog-fields">
         <label>Start measure<input data-repeat-first type="number" min={1} max={repeatTarget?.base.score.masterBars.length ?? 1} step={1}
-          value={repeatDraft.start} onChange={event => { setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, start: Number(event.target.value) })); }} /></label>
+          value={repeatDraft.start} onChange={event => { setRepeatAddTouched(true); setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, start: Number(event.target.value) })); }} /></label>
         <label>End measure<input type="number" min={1} max={repeatTarget?.base.score.masterBars.length ?? 1} step={1}
-          value={repeatDraft.end} onChange={event => { setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, end: Number(event.target.value) })); }} /></label>
+          value={repeatDraft.end} onChange={event => { setRepeatAddTouched(true); setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, end: Number(event.target.value) })); }} /></label>
         <label>Play count<select value={repeatDraft.count}
-          onChange={event => { setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, count: Number(event.target.value) })); }}>
+          onChange={event => { setRepeatAddTouched(true); setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, count: Number(event.target.value) })); }}>
           {[2, 3, 4, 5, 6, 7, 8].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
       </div>
-      {repeatPreview?.error && <p className="alert" role="alert">{repeatPreview.error}</p>}
+      {repeatPreview?.error && (repeatAddTouched || !repeatPreview.existing.length) && <p className="alert" role="alert">{repeatPreview.error}</p>}
       {repeatApplyError && <p className="alert" role="alert">{repeatApplyError}</p>}
       <div className="duplicate-dialog-actions"><button type="button" onClick={() => setRepeatTarget(null)}>Cancel</button>
         <button type="button" disabled={!repeatPreview?.candidate} onClick={() => { if (repeatPreview?.candidate) confirmRepeat(repeatPreview.candidate); }}>Add repeat</button></div>
+      {!!repeatPreview?.existing.length && <>
+        <h3>Selected repeat</h3>
+        <div className="insert-dialog-fields"><label>Repeat region<select value={repeatSelected} onChange={event => {
+          const region = repeatPreview.existing.find(item => `${item.start}:${item.end}` === event.target.value);
+          setRepeatSelected(event.target.value);
+          if (region) setEndingDraft({ firstStart: region.end + 1, secondEnd: region.end + 2 });
+          setRepeatApplyError('');
+        }}>
+          {repeatPreview.existing.map(region => <option key={`${region.start}:${region.end}`} value={`${region.start}:${region.end}`}>
+            Measures {region.start + 1}–{region.end + 1} · {region.count} plays
+          </option>)}</select></label></div>
+        {selectedRepeat && <>
+          {endingsPreview?.existing && <p>First ending: measures {endingsPreview.existing.firstStart + 1}–{endingsPreview.existing.firstEnd + 1}; second ending: measures {endingsPreview.existing.secondStart + 1}–{endingsPreview.existing.secondEnd + 1}.</p>}
+          {!endingsPreview?.existing && <>
+            <div className="insert-dialog-fields">
+              <label>First ending start<input type="number" min={selectedRepeat.start + 1} max={selectedRepeat.end + 1} step={1}
+                value={endingDraft.firstStart} onChange={event => { setRepeatApplyError(''); setEndingDraft(current => ({ ...current, firstStart: Number(event.target.value) })); }} /></label>
+              <p>First ending end: measure {selectedRepeat.end + 1} (fixed). Second ending start: measure {selectedRepeat.end + 2} (fixed).</p>
+              <label>Second ending end<input type="number" min={selectedRepeat.end + 2} max={repeatTarget?.base.score.masterBars.length ?? 1} step={1}
+                value={endingDraft.secondEnd} onChange={event => { setRepeatApplyError(''); setEndingDraft(current => ({ ...current, secondEnd: Number(event.target.value) })); }} /></label>
+            </div>
+            {endingsPreview?.error && <p className="alert" role="alert">{endingsPreview.error}</p>}
+            <button type="button" disabled={!endingsPreview?.candidate} onClick={() => {
+              if (repeatTarget && selectedRepeat && endingsPreview?.candidate) commitRepeatChange(repeatTarget, endingsPreview.candidate,
+                `Add endings to measures ${selectedRepeat.start + 1}–${selectedRepeat.end + 1}`,
+                `First and second endings added to measures ${selectedRepeat.start + 1}–${selectedRepeat.end + 1}.`);
+            }}>Add first/second endings</button>
+          </>}
+          <button type="button" onClick={() => previewRepeatRemoval(selectedRepeat)}>Clear selected repeat/ending…</button>
+        </>}
+      </>}
+    </dialog>
+    <dialog ref={repeatRemovalDialog} className="duplicate-dialog" aria-label="Clear repeat and endings" onCancel={event => { event.preventDefault(); setRepeatRemoval(null); }}>
+      <h2>Clear repeat in measures {repeatRemoval ? `${repeatRemoval.region.start + 1}–${repeatRemoval.region.end + 1}` : ''}?</h2>
+      {repeatRemoval?.endings ? <p>This also removes dependent first ending in measures {repeatRemoval.endings.firstStart + 1}–{repeatRemoval.endings.firstEnd + 1} and second ending in measures {repeatRemoval.endings.secondStart + 1}–{repeatRemoval.endings.secondEnd + 1}. Notes and rests remain.</p>
+        : <p>The repeat markers will be removed. Notes and rests remain.</p>}
+      {repeatApplyError && <p className="alert" role="alert">{repeatApplyError}</p>}
+      <div className="duplicate-dialog-actions"><button type="button" data-repeat-remove-cancel onClick={() => setRepeatRemoval(null)}>Cancel</button>
+        <button type="button" onClick={confirmRepeatRemoval}>Clear repeat and endings</button></div>
     </dialog>
     <dialog ref={pickupDialog} className="duplicate-dialog" aria-label="Pickup" onCancel={event => { event.preventDefault(); setPickupTarget(null); }}>
       <h2>Pickup length</h2>
