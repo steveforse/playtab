@@ -80,7 +80,7 @@ test('ED-12 keeps original and copied note targets distinct after duplication', 
   await page.getByRole('button', { name: '＋ Save to library' }).click();
   await expect.poll(() => savedSource).not.toBe('');
   const measures = Array.from(new DOMParser().parseFromString(savedSource, 'application/xml').getElementsByTagName('measure'));
-  const fourthStringFrets = (measure: Element) => Array.from(measure.getElementsByTagName('technical'))
+  const fourthStringFrets = (measure: (typeof measures)[number]) => Array.from(measure.getElementsByTagName('technical'))
     .filter(item => item.getElementsByTagName('string')[0]?.textContent === '4')
     .map(item => item.getElementsByTagName('fret')[0]?.textContent);
   expect(fourthStringFrets(measures[1])).toContain('7');
