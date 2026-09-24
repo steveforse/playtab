@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
+import { midi, Settings } from '@coderline/alphatab';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+import { addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+  inspectMusicXmlRepeats,
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
 
@@ -416,5 +418,87 @@ describe('ED-14 tie endpoint foundation', () => {
     const xml = new DOMParser().parseFromString(changed, 'application/xml');
     expect(xml.getElementsByTagName('tie')).toHaveLength(4);
     expect(xml.getElementsByTagName('tied')).toHaveLength(4);
+  });
+});
+
+describe('ED-15 repeat authoring foundation', () => {
+  const source = (() => {
+    const document = new DOMParser().parseFromString(fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8'), 'application/xml');
+    const part = document.getElementsByTagName('part')[0];
+    const first = document.getElementsByTagName('measure')[0];
+    part.removeChild(document.getElementsByTagName('measure')[1]);
+    const pitches = [
+      ['D', '', '3'], ['D', '1', '3'], ['E', '', '3'], ['F', '', '3'], ['F', '1', '3'],
+    ];
+    for (let index = 0; index < 5; index++) {
+      const measure = index === 0 ? first : first.cloneNode(true) as typeof first;
+      measure.setAttribute('number', String(index + 1));
+      const pitch = measure.getElementsByTagName('pitch')[0];
+      pitch.getElementsByTagName('step')[0].textContent = pitches[index][0];
+      pitch.getElementsByTagName('octave')[0].textContent = pitches[index][2];
+      if (pitches[index][1]) {
+        const alter = document.createElement('alter'); alter.textContent = pitches[index][1];
+        pitch.insertBefore(alter, pitch.getElementsByTagName('octave')[0]);
+      }
+      measure.getElementsByTagName('fret')[0].textContent = String(index);
+      if (index) part.appendChild(measure);
+    }
+    return new XMLSerializer().serializeToString(document);
+  })();
+
+  it('plays a 2–4 repeat twice in written order', () => {
+    const original = readMusicXml(source, 'repeat.musicxml');
+    const repeated = addMusicXmlRepeat(source, original.score, 1, 3, 2);
+    const after = readMusicXml(repeated, 'repeat.musicxml');
+    expect(after.score.masterBars[1].isRepeatStart).toBe(true);
+    expect(after.score.masterBars[3].repeatCount).toBe(2);
+    const file = new midi.MidiFile();
+    new midi.MidiFileGenerator(after.score, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
+    expect(file.events.filter((event): event is midi.NoteOnEvent => event instanceof midi.NoteOnEvent)
+      .map(event => event.noteKey)).toEqual([50, 51, 52, 53, 51, 52, 53, 54]);
+  });
+
+  it('rejects overlapping and nested repeats while allowing disjoint regions', () => {
+    const original = readMusicXml(source, 'repeat.musicxml');
+    const first = addMusicXmlRepeat(source, original.score, 0, 1, 2);
+    expect(() => addMusicXmlRepeat(first, readMusicXml(first, 'repeat.musicxml').score, 1, 3, 2))
+      .toThrow('overlapping repeat regions');
+    const separate = addMusicXmlRepeat(first, readMusicXml(first, 'repeat.musicxml').score, 2, 4, 2);
+    expect(readMusicXml(separate, 'repeat.musicxml').score.masterBars[2].isRepeatStart).toBe(true);
+    expect(() => addMusicXmlRepeat(source, original.score, 3, 1, 2)).toThrow('start before its end');
+    expect(() => addMusicXmlRepeat(source, original.score, 1, 3, 9)).toThrow('from 2 to 8');
+  });
+
+  it('reports existing regions and refuses imported endings or unsafe repeat maps', () => {
+    const original = readMusicXml(source, 'repeat.musicxml');
+    expect(() => inspectMusicXmlRepeats('<score-partwise version="4.0"/>')).toThrow('no music part');
+    expect(() => addMusicXmlRepeat('<score-partwise version="4.0"/>', original.score, 0, 1, 2))
+      .toThrow('do not match the rendered score');
+    expect(() => addMusicXmlRepeat(source, readMusicXml(fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8'), 'tie.musicxml').score, 0, 1, 2))
+      .toThrow('do not match the rendered score');
+    const repeated = addMusicXmlRepeat(source, original.score, 0, 1, 2);
+    expect(inspectMusicXmlRepeats(repeated)).toEqual([{ start: 0, end: 1, count: 2 }]);
+    const withMarker = (input: string, measureIndex: number, direction: string, times?: string) => {
+      const document = new DOMParser().parseFromString(input, 'application/xml');
+      const measure = document.getElementsByTagName('measure')[measureIndex];
+      const barline = document.createElement('barline');
+      const repeat = document.createElement('repeat');
+      repeat.setAttribute('direction', direction);
+      if (times) repeat.setAttribute('times', times);
+      barline.appendChild(repeat); measure.appendChild(barline);
+      return new XMLSerializer().serializeToString(document);
+    };
+    expect(() => inspectMusicXmlRepeats(withMarker(source, 2, 'backward'))).toThrow('no explicit start');
+    expect(() => inspectMusicXmlRepeats(withMarker(source, 0, 'forward'))).toThrow('has no end');
+    expect(() => inspectMusicXmlRepeats(withMarker(repeated, 0, 'forward'))).toThrow('Nested or overlapping');
+    expect(() => inspectMusicXmlRepeats(withMarker(source, 0, 'sideways'))).toThrow('unsupported direction');
+    expect(() => inspectMusicXmlRepeats(withMarker(withMarker(source, 0, 'forward'), 2, 'backward', '1')))
+      .toThrow('unsupported play count');
+    const huge = withMarker(withMarker(source, 0, 'forward'), 1, 'backward', '5000');
+    expect(() => addMusicXmlRepeat(huge, original.score, 2, 4, 2)).toThrow('exceed 4096');
+    const document = new DOMParser().parseFromString(source, 'application/xml');
+    document.getElementsByTagName('measure')[0].appendChild(document.createElement('ending'));
+    expect(() => addMusicXmlRepeat(new XMLSerializer().serializeToString(document), original.score, 1, 3, 2))
+      .toThrow('Existing repeat endings');
   });
 });
