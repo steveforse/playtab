@@ -1539,3 +1539,111 @@ export function duplicateMusicXmlMeasure(source: string, score: model.Score, mea
   if (sequential) directMeasures(part).forEach((measure, index) => measure.setAttribute('number', String(index + 1)));
   return { source: new XMLSerializer().serializeToString(document), excluded: [...excluded] };
 }
+
+function effectiveAttributes(measures: Element[], throughIndex: number): Element {
+  const document = measures[0].ownerDocument!;
+  const effective = new Map<string, Element>();
+  const allowed = new Set(['divisions', 'key', 'time', 'staves', 'clef', 'staff-details']);
+  for (const measure of measures.slice(0, throughIndex + 1)) {
+    const attributes = children(measure).filter(item => item.localName === 'attributes');
+    if (attributes.length > 1) throw new Error('Multiple attributes blocks in one measure cannot be inherited safely.');
+    for (const update of attributes.flatMap(item => children(item))) {
+      if (!allowed.has(update.localName)) throw new Error(`Cannot safely inherit unsupported ${update.localName} attributes.`);
+      const number = update.getAttribute('number') || '1';
+      const key = ['key', 'clef', 'staff-details'].includes(update.localName) ? `${update.localName}:${number}` : update.localName;
+      if (update.localName !== 'staff-details' || !effective.has(key)) {
+        effective.set(key, update.cloneNode(true) as Element);
+        continue;
+      }
+      const prior = effective.get(key)!;
+      for (const detail of children(update)) {
+        if (!['staff-lines', 'staff-tuning'].includes(detail.localName)) {
+          throw new Error(`Cannot safely inherit unsupported ${detail.localName} staff detail.`);
+        }
+        const line = detail.getAttribute('line') || '';
+        const replaced = children(prior).find(item => item.localName === detail.localName
+          && (item.getAttribute('line') || '') === line);
+        if (replaced) prior.replaceChild(detail.cloneNode(true), replaced);
+        else prior.appendChild(detail.cloneNode(true));
+      }
+    }
+  }
+  if (!effective.has('divisions') || !effective.has('time')) {
+    throw new Error('The effective timing attributes cannot be reconstructed safely.');
+  }
+  const attributes = document.createElement('attributes');
+  const order = ['divisions', 'key', 'time', 'staves', 'clef', 'staff-details'];
+  for (const name of order) for (const [key, value] of effective) {
+    if (key === name || key.startsWith(`${name}:`)) attributes.appendChild(value.cloneNode(true));
+  }
+  return attributes;
+}
+
+function inheritedTempo(measures: Element[], throughIndex: number): string | null {
+  let tempo: string | null = null;
+  for (const measure of measures.slice(0, throughIndex + 1)) {
+    for (const sound of descendants(measure, 'sound')) {
+      const value = sound.getAttribute('tempo');
+      if (value !== null) tempo = value;
+    }
+  }
+  return tempo;
+}
+
+export type MeasureDeletion = { source: string; noteCount: number; restCount: number; labelCount: number };
+
+export function deleteMusicXmlMeasure(source: string, score: model.Score, measureIndex: number): MeasureDeletion {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measures = part ? directMeasures(part) : [];
+  const selected = measures[measureIndex];
+  if (!part || !selected || !score.masterBars[measureIndex] || measures.length !== score.masterBars.length) {
+    throw new Error('The selected source measure cannot be identified safely.');
+  }
+  if (measures.length === 1) throw new Error('The last remaining measure cannot be deleted.');
+  const structural = [
+    ...(descendants(selected, 'repeat').length ? ['repeat endpoint'] : []),
+    ...(descendants(selected, 'ending').length ? ['ending endpoint'] : []),
+  ];
+  if (structural.length) throw new Error(`This measure is a ${structural.join(' and ')}. Remove or redefine it first.`);
+  const spans = excludedCopySpans(selected, selected.cloneNode(true) as Element);
+  if (spans.excluded.length) throw new Error(`This measure touches a ${spans.excluded.join(' and ')}. Remove that span first.`);
+  if (descendants(selected, 'wedge').length || descendants(selected, 'dashes').length
+    || descendants(selected, 'pedal').length || descendants(selected, 'octave-shift').length
+    || descendants(selected, 'bracket').length) {
+    throw new Error('This measure touches a cross-measure direction span. Remove that span first.');
+  }
+  const next = measures[measureIndex + 1];
+  if (next) {
+    const changesAttributes = measureIndex === 0 || children(selected).some(item => item.localName === 'attributes');
+    if (changesAttributes) {
+      const snapshot = effectiveAttributes(measures, measureIndex + 1);
+      const existing = children(next).find(item => item.localName === 'attributes');
+      if (existing) next.replaceChild(snapshot, existing);
+      else next.insertBefore(snapshot, next.firstChild);
+    }
+    if (measureIndex === 0 || children(selected).some(item => item.localName === 'direction' && descendants(item, 'sound').some(sound => sound.hasAttribute('tempo')))) {
+      const tempo = inheritedTempo(measures, measureIndex);
+      const entries = children(next);
+      const firstNote = entries.findIndex(item => item.localName === 'note');
+      const hasOpeningTempo = entries.slice(0, firstNote < 0 ? entries.length : firstNote)
+        .some(item => item.localName === 'direction' && descendants(item, 'sound').some(sound => sound.hasAttribute('tempo')));
+      if (tempo && !hasOpeningTempo) {
+        const direction = document.createElement('direction');
+        const sound = document.createElement('sound');
+        sound.setAttribute('tempo', tempo);
+        direction.appendChild(sound);
+        next.insertBefore(direction, children(next).find(item => item.localName === 'note') ?? null);
+      }
+    }
+  }
+  const notes = children(selected).filter(item => item.localName === 'note');
+  const noteCount = notes.filter(note => !child(note, 'rest')).length;
+  const restCount = notes.length - noteCount;
+  const labelCount = descendants(selected, 'harmony').length + descendants(selected, 'words').length
+    + descendants(selected, 'lyric').length;
+  const sequential = measures.every((measure, index) => measure.getAttribute('number') === String(index + 1));
+  part.removeChild(selected);
+  if (sequential) directMeasures(part).forEach((measure, index) => measure.setAttribute('number', String(index + 1)));
+  return { source: new XMLSerializer().serializeToString(document), noteCount, restCount, labelCount };
+}
