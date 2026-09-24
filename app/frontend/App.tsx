@@ -4,7 +4,9 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, insertMusicXmlEvent, inspectMusicXmlDuration, musicXmlEditorState, removeMusicXmlNotes, type InsertEventOptions } from './music/musicxml-editor';
+import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, createMusicXmlTriplet, insertMusicXmlEvent,
+  inspectMusicXmlDuration, inspectMusicXmlTriplet, musicXmlEditorState, removeMusicXmlNotes, removeMusicXmlTriplet,
+  type InsertEventOptions } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -413,6 +415,27 @@ export function App() {
       setPreview(nextPreview); setSelection(after); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
+  function changeSelectedTriplet(remove: boolean) {
+    if (!selection) return;
+    if (pendingFret) { setError('Apply the pending fret before changing this event.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const position = { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 };
+      const nextSource = remove ? removeMusicXmlTriplet(base.source, base.score, position)
+        : createMusicXmlTriplet(base.source, base.score, position);
+      const firstEvent = remove ? inspectMusicXmlTriplet(base.source, position).start ?? position.beat : position.beat;
+      const eventId = base.sourceEventIdByAddress?.get(`${position.measure}:${selection.voice}:${firstEvent}`)
+        ?? (firstEvent === position.beat ? selection.sourceEventId : undefined);
+      const carries: IdentityCarry[] = [...structuralCarries(base, selection, false),
+        ...(eventId ? [{ kind: 'event' as const, id: eventId, address: `${position.measure}:${selection.voice}:${firstEvent}` }] : [])];
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries } : undefined), base.score.title);
+      const after = selectionAtPosition(selection, score, nextPreview, { event: firstEvent + 1 });
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
+        sourceIdentity: nextPreview.sourceIdentity }, remove ? 'Remove triplet' : 'Create triplet');
+      setPreview(nextPreview); setSelection(after); setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
   function openInsertEvent(opener: HTMLElement) {
     if (!selection) return;
     if (pendingFret) { setError('Apply the pending fret before inserting an event.'); return; }
@@ -709,6 +732,9 @@ export function App() {
       voice: selection.voice - 1 })
     : { denominator: score.measures[selection.measure - 1]?.beats[selection.event - 1]?.duration ?? null,
       dots: 0, rest: selection.kind === 'rest', reason: undefined } : null;
+  const selectedTriplet = selection && preview ? inspectMusicXmlTriplet(preview.source,
+    { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 }) : null;
+  const selectedTupletLocked = Boolean(selectedTriplet?.triplet || selectedTriplet?.reason);
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
       <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
@@ -756,14 +782,21 @@ export function App() {
               <div className="editor-duration-buttons">{DURATION_DENOMINATORS.map(value => <button key={value} type="button"
                 aria-label={value === 1 ? 'Whole note duration' : `1/${value} duration`}
                 aria-pressed={selectedRhythm.denominator === value && selectedRhythm.dots === 0}
+                disabled={selectedTupletLocked}
                 onClick={() => changeSelectedDuration(value, false)}>{value === 1 ? '1' : `1/${value}`}</button>)}</div>
               <button type="button" className="editor-dotted-button" aria-pressed={selectedRhythm.dots === 1}
-                disabled={selectedRhythm.denominator === null}
+                disabled={selectedRhythm.denominator === null || selectedTupletLocked}
                 onClick={() => changeSelectedDuration(selectedRhythm.denominator!, selectedRhythm.dots !== 1)}>Dotted</button>
-              <button type="button" className="editor-split-rest" disabled={!selectedRhythm.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0}
+              <button type="button" className="editor-split-rest" disabled={!selectedRhythm.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0 || selectedTupletLocked}
                 onClick={() => changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false)}>Split rest</button>
               <button type="button" className="editor-insert-event" onClick={event => openInsertEvent(event.currentTarget)}>Insert event…</button>
+              <button type="button" className="editor-triplet-button" disabled={selectedTupletLocked || selectedRhythm.denominator === null
+                || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0}
+                onClick={() => changeSelectedTriplet(false)}>Triplet</button>
+              {selectedTriplet?.triplet && <button type="button" className="editor-remove-triplet" disabled={!selectedTriplet.canRemove}
+                onClick={() => changeSelectedTriplet(true)}>Remove triplet</button>}
               {selectedRhythm.reason && <p className="editor-rhythm-reason">{selectedRhythm.reason}</p>}
+              {selectedTriplet?.reason && selectedTriplet.reason !== selectedRhythm.reason && <p className="editor-rhythm-reason">{selectedTriplet.reason}</p>}
             </div>}
             <details className="editor-passage-tools"><summary>Select passage</summary>
               <button type="button" onClick={() => setPassage({ start: selection, end: selection })}>Set range start</button>

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { changeMusicXmlDuration, insertMusicXmlEvent, inspectMusicXmlDuration, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
+import { addMusicXmlNote, changeMusicXmlDuration, createMusicXmlTriplet, insertMusicXmlEvent, inspectMusicXmlDuration, inspectMusicXmlTriplet,
+  musicXmlEditorState, removeMusicXmlTriplet } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -145,5 +146,58 @@ describe('ED-10 insert event', () => {
     expect(() => insertMusicXmlEvent(paired, original.score, { ...base, fret: 37 })).toThrow('valid string and fret');
     expect(() => insertMusicXmlEvent(paired, original.score, { ...base, denominator: 3 as never })).toThrow('Unsupported note duration');
     expect(() => insertMusicXmlEvent(paired, original.score, { ...base, placement: 'middle' as never })).toThrow('Invalid event insertion choice');
+  });
+});
+
+describe('ED-11 triplets', () => {
+  it('turns a paired quarter chord into three eighth triplet children without moving the next onset', () => {
+    const original = readMusicXml(paired, 'paired.musicxml');
+    const source = createMusicXmlTriplet(paired, original.score, { measure: 0, beat: 0, voice: 1 });
+    const children = tab(source);
+    expect(children.slice(0, 3).map(beat => beat.playbackStart)).toEqual([0, 320, 640]);
+    expect(children.slice(0, 3).map(beat => beat.playbackDuration)).toEqual([320, 320, 320]);
+    expect(children[0].notes).toHaveLength(2);
+    expect(children[1].isRest).toBe(true);
+    expect(children[2].isRest).toBe(true);
+    expect(children[3].playbackStart).toBe(960);
+    expect(source.match(/<actual-notes>3<\/actual-notes>/g)).toHaveLength(8);
+    expect(inspectMusicXmlTriplet(source, { measure: 0, beat: 1, voice: 1 })).toMatchObject({ triplet: true, canRemove: true, start: 0 });
+    const restored = removeMusicXmlTriplet(source, readMusicXml(source, 'paired.musicxml').score,
+      { measure: 0, beat: 1, voice: 1 });
+    expect(tab(restored).map(beat => beat.playbackStart)).toEqual(tab(paired).map(beat => beat.playbackStart));
+    expect(tab(restored)[0].notes).toHaveLength(2);
+  });
+
+  it('makes three rests from a rest and rejects children below 1/64', () => {
+    const original = readMusicXml(paired, 'paired.musicxml');
+    const source = createMusicXmlTriplet(paired, original.score, { measure: 0, beat: 2, voice: 1 });
+    expect(tab(source).slice(2, 5).every(beat => beat.isRest)).toBe(true);
+    expect(tab(source).slice(2, 5).map(beat => beat.playbackDuration)).toEqual([640, 640, 640]);
+    const shortened = changeMusicXmlDuration(paired, original.score, { measure: 0, beat: 0, voice: 1 }, 64);
+    expect(() => createMusicXmlTriplet(shortened, readMusicXml(shortened, 'paired.musicxml').score,
+      { measure: 0, beat: 0, voice: 1 })).toThrow('shorter than 1/64');
+  });
+
+  it('retains tuplets through a child fret edit and blocks removal of sounding children', () => {
+    const original = readMusicXml(paired, 'paired.musicxml');
+    const source = createMusicXmlTriplet(paired, original.score, { measure: 0, beat: 0, voice: 1 });
+    const preview = readMusicXml(source, 'paired.musicxml');
+    const changed = addMusicXmlNote(source, preview.score,
+      { measure: 0, beat: 1, voice: 1, string: 2, fret: 3 });
+    expect(tab(changed).slice(0, 3).map(beat => beat.playbackDuration)).toEqual([320, 320, 320]);
+    expect(inspectMusicXmlTriplet(changed, { measure: 0, beat: 0, voice: 1 })).toMatchObject({ triplet: true, canRemove: false });
+    expect(() => removeMusicXmlTriplet(changed, readMusicXml(changed, 'paired.musicxml').score,
+      { measure: 0, beat: 1, voice: 1 })).toThrow('Remove the last two notes');
+  });
+
+  it('recognizes a 3:2 group without explicit brackets and leaves a 5:4 ratio read-only', () => {
+    const original = readMusicXml(paired, 'paired.musicxml');
+    const created = createMusicXmlTriplet(paired, original.score, { measure: 0, beat: 0, voice: 1 });
+    const unbracketed = created.replace(/<tuplet number="1" type="(?:start|stop)"\/>/g, '');
+    expect(inspectMusicXmlTriplet(unbracketed, { measure: 0, beat: 2, voice: 1 })).toMatchObject({ triplet: true, canRemove: true });
+    const unsupported = created.replaceAll('<actual-notes>3</actual-notes>', '<actual-notes>5</actual-notes>')
+      .replaceAll('<normal-notes>2</normal-notes>', '<normal-notes>4</normal-notes>');
+    expect(inspectMusicXmlTriplet(unsupported, { measure: 0, beat: 0, voice: 1 })).toMatchObject({ triplet: false, canRemove: false,
+      reason: expect.stringContaining('preserved') });
   });
 });

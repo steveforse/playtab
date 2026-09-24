@@ -871,7 +871,8 @@ export function inspectMusicXmlDuration(source: string, position: RhythmPosition
   const note = group[0];
   const rest = Boolean(child(note, 'rest'));
   if (group.some(item => child(item, 'grace'))) return { denominator: null, dots: 0, rest, reason: 'Grace durations are edited with their group.' };
-  if (group.some(item => child(item, 'time-modification'))) return { denominator: null, dots: 0, rest, reason: 'Edit this tuplet as a group.' };
+  if (group.some(item => child(item, 'time-modification'))) return { denominator: null, dots: 0, rest,
+    reason: isThreeTwo(group) ? 'Edit this triplet as a group.' : 'This imported tuplet ratio is preserved; timing editing is unavailable.' };
   const byType: Record<string, DurationDenominator> = { whole: 1, half: 2, quarter: 4, eighth: 8,
     '16th': 16, '32nd': 32, '64th': 64 };
   const denominator = byType[text(child(note, 'type'))] ?? null;
@@ -1182,6 +1183,200 @@ export function insertMusicXmlEvent(source: string, score: model.Score, options:
     tail.flatMap(index => lane.groups[index]).forEach(note => note.parentNode?.removeChild(note));
     for (const value of replacementRests) measure.insertBefore(makeRest(document, lane.voice, lane.staff,
       value, ticks(durationTime(value))), trailing);
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+const durationTypes: Record<string, DurationDenominator> = { whole: 1, half: 2, quarter: 4, eighth: 8,
+  '16th': 16, '32nd': 32, '64th': 64 };
+
+function setTripletRatio(note: Element, childDenominator: DurationDenominator) {
+  let modification = child(note, 'time-modification');
+  if (!modification) {
+    modification = note.ownerDocument!.createElement('time-modification');
+    note.insertBefore(modification, child(note, 'staff') ?? child(note, 'notations') ?? null);
+  }
+  setText(modification, 'actual-notes', '3');
+  setText(modification, 'normal-notes', '2');
+  setText(modification, 'normal-type', ({ 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth',
+    16: '16th', 32: '32nd', 64: '64th' } as Record<number, string>)[childDenominator]);
+}
+
+function setTupletMarker(note: Element, type: 'start' | 'stop') {
+  const notations = ensure(note, 'notations');
+  const tuplet = note.ownerDocument!.createElement('tuplet');
+  tuplet.setAttribute('number', '1');
+  tuplet.setAttribute('type', type);
+  notations.appendChild(tuplet);
+}
+
+export function createMusicXmlTriplet(source: string, score: model.Score, position: RhythmPosition): string {
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!rendered || rendered.graceType) throw new Error('Select an ordinary event to make a triplet.');
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
+  const tabStaff = sourceTabStaff(document);
+  const lanes = rhythmLanes(document, measure, tabStaff, String(position.voice + 1), position.beat);
+  const target = lanes[0].groups[position.beat];
+  const boundary = timingBoundary(document, position.measure, tabStaff, String(position.voice + 1), target);
+  if (boundary) throw new Error(boundary);
+  const sourceMembers = target.filter(note => !child(note, 'rest')).map(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
+  }).sort();
+  if (sourceMembers.join('|') !== rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort().join('|')
+    || Boolean(child(target[0], 'rest')) !== Boolean(rendered.isRest)) {
+    throw new Error('The selected source event does not match the rendered score.');
+  }
+  if (target.some(note => child(note, 'grace') || child(note, 'time-modification'))) {
+    throw new Error('Edit this triplet or grace group as a group.');
+  }
+  const denominator = durationTypes[text(child(target[0], 'type'))];
+  if (!denominator || target.some(note => children(note).some(item => item.localName === 'dot'))
+    || target.some(note => child(note, 'duration') === undefined)) {
+    throw new Error('Triplet requires an undotted ordinary event with a supported duration.');
+  }
+  if (denominator === 64) throw new Error('Triplet children cannot be shorter than 1/64.');
+  const childDenominator = (denominator * 2) as DurationDenominator;
+  const oldDivisions = sourceDivisions(part, position.measure);
+  const parentTime = eventTime(target, oldDivisions);
+  if (compareTime(parentTime, durationTime(denominator)) !== 0) throw new Error('The selected source duration does not match its notation.');
+  for (const lane of lanes) {
+    const group = lane.groups[position.beat];
+    if (compareTime(eventTime(group, oldDivisions), parentTime) !== 0
+      || Boolean(child(group[0], 'rest')) !== Boolean(child(target[0], 'rest'))
+      || group.some(note => child(note, 'grace') || child(note, 'time-modification') || children(note).some(item => item.localName === 'dot'))) {
+      throw new Error('The paired notation event cannot be converted to the same triplet.');
+    }
+  }
+  const childTime = rationalTime(parentTime[0], parentTime[1] * 3n);
+  const gcd = (a: bigint, b: bigint): bigint => b ? gcd(b, a % b) : a;
+  const newDivisions = oldDivisions / gcd(oldDivisions, childTime[1]) * childTime[1];
+  rescaleDivisions(part, position.measure, oldDivisions, newDivisions);
+  const ticks = childTime[0] * newDivisions / childTime[1];
+  for (const lane of lanes) {
+    const group = lane.groups[position.beat];
+    const reference = group.at(-1)!.nextSibling;
+    writeDuration(group, childDenominator, false, ticks);
+    group.forEach(note => setTripletRatio(note, childDenominator));
+    setTupletMarker(group[0], 'start');
+    for (let childIndex = 1; childIndex <= 2; childIndex++) {
+      const rest = makeRest(document, lane.voice, lane.staff, childDenominator, ticks);
+      setTripletRatio(rest, childDenominator);
+      if (childIndex === 2) setTupletMarker(rest, 'stop');
+      measure.insertBefore(rest, reference);
+    }
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+function isThreeTwo(group: Element[]) {
+  return group.length > 0 && group.every(note => {
+    const modification = child(note, 'time-modification');
+    return modification && text(child(modification, 'actual-notes')) === '3'
+      && text(child(modification, 'normal-notes')) === '2';
+  });
+}
+
+function tripletStart(groups: Element[][], selected: number): number | null {
+  if (!isThreeTwo(groups[selected] ?? [])) return null;
+  for (let index = selected; index >= Math.max(0, selected - 2); index--) {
+    if (groups[index].some(note => descendants(note, 'tuplet').some(marker => marker.getAttribute('type') === 'start'))) {
+      return groups.slice(index, index + 3).every(isThreeTwo) && selected < index + 3 ? index : null;
+    }
+  }
+  let runStart = selected;
+  while (runStart > 0 && isThreeTwo(groups[runStart - 1])) runStart--;
+  const start = runStart + Math.floor((selected - runStart) / 3) * 3;
+  return groups.slice(start, start + 3).length === 3 && groups.slice(start, start + 3).every(isThreeTwo) ? start : null;
+}
+
+function removableTripletRest(group: Element[]): boolean {
+  if (group.length !== 1 || !child(group[0], 'rest') || !isThreeTwo(group)) return false;
+  const note = group[0];
+  if (children(note).some(item => !['rest', 'duration', 'voice', 'type', 'time-modification', 'staff', 'notations'].includes(item.localName))) return false;
+  const notations = child(note, 'notations');
+  return !notations || children(notations).every(item => item.localName === 'tuplet');
+}
+
+export type MusicXmlTripletInfo = { triplet: boolean; canRemove: boolean; start?: number; reason?: string };
+
+export function inspectMusicXmlTriplet(source: string, position: RhythmPosition): MusicXmlTripletInfo {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const groups = measure ? sourceBeatGroups(measure, sourceTabStaff(document), String(position.voice + 1)) : [];
+  const selected = groups[position.beat];
+  if (!selected) return { triplet: false, canRemove: false, reason: 'Select an ordinary event.' };
+  if (selected.some(note => child(note, 'time-modification')) && !isThreeTwo(selected)) {
+    return { triplet: false, canRemove: false, reason: 'This imported tuplet ratio is preserved; timing editing is unavailable.' };
+  }
+  const start = tripletStart(groups, position.beat);
+  if (start === null) return { triplet: false, canRemove: false };
+  if (!removableTripletRest(groups[start + 1]) || !removableTripletRest(groups[start + 2])) {
+    return { triplet: true, canRemove: false, start,
+      reason: 'Remove the last two notes or protected attachments before removing this triplet.' };
+  }
+  return { triplet: true, canRemove: true, start };
+}
+
+export function removeMusicXmlTriplet(source: string, score: model.Score, position: RhythmPosition): string {
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!rendered || rendered.graceType) throw new Error('Select a triplet child to remove its group.');
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
+  const tabStaff = sourceTabStaff(document);
+  const lanes = rhythmLanes(document, measure, tabStaff, String(position.voice + 1), position.beat);
+  const selected = lanes[0].groups[position.beat];
+  const selectedMembers = selected.filter(note => !child(note, 'rest')).map(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
+  }).sort();
+  if (selectedMembers.join('|') !== rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort().join('|')
+    || Boolean(child(selected[0], 'rest')) !== Boolean(rendered.isRest)) {
+    throw new Error('The selected source triplet child does not match the rendered score.');
+  }
+  const start = tripletStart(lanes[0].groups, position.beat);
+  if (start === null) throw new Error('This is not a supported 3:2 triplet group.');
+  const boundary = timingBoundary(document, position.measure, tabStaff, String(position.voice + 1), lanes[0].groups[start]);
+  if (boundary) throw new Error(boundary);
+  const childDenominator = durationTypes[text(child(lanes[0].groups[start][0], 'type'))];
+  if (!childDenominator || childDenominator === 1) throw new Error('This triplet has an unsupported child duration.');
+  const parentDenominator = (childDenominator / 2) as DurationDenominator;
+  const divisions = sourceDivisions(part, position.measure);
+  const childTime = eventTime(lanes[0].groups[start], divisions);
+  const parentTime = rationalTime(childTime[0] * 3n, childTime[1]);
+  if (compareTime(parentTime, durationTime(parentDenominator)) !== 0) {
+    throw new Error('This triplet has an unsupported source duration.');
+  }
+  for (const lane of lanes) {
+    if (tripletStart(lane.groups, position.beat) !== start
+      || !removableTripletRest(lane.groups[start + 1]) || !removableTripletRest(lane.groups[start + 2])) {
+      throw new Error('Remove the last two notes or protected attachments before removing this triplet.');
+    }
+    for (let index = start; index < start + 3; index++) {
+      if (compareTime(eventTime(lane.groups[index], divisions), childTime) !== 0) {
+        throw new Error('The paired triplet children do not have matching durations.');
+      }
+    }
+  }
+  const parentTicks = parentTime[0] * divisions / parentTime[1];
+  for (const lane of lanes) {
+    const first = lane.groups[start];
+    writeDuration(first, parentDenominator, false, parentTicks);
+    first.forEach(note => {
+      removeChildren(note, 'time-modification');
+      const notations = child(note, 'notations');
+      if (notations) {
+        removeChildren(notations, 'tuplet');
+        if (!children(notations).length) note.removeChild(notations);
+      }
+    });
+    lane.groups.slice(start + 1, start + 3).flat().forEach(note => note.parentNode?.removeChild(note));
   }
   return new XMLSerializer().serializeToString(document);
 }
