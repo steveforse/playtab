@@ -515,6 +515,9 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, n
     const paired = linkedNotes(note);
     if (edit.deleted) { pairedDeletions.push(...paired); return; }
     if (!before || edit.string !== before.string || edit.fret !== before.fret) {
+      if ([note, ...paired].some(item => descendants(item, 'tie').length || descendants(item, 'tied').length)) {
+        throw new Error('This note is tied. Remove the tie before changing its pitch or string.');
+      }
       const notations = child(note, 'notations') ?? (() => { const created = document.createElement('notations'); note.appendChild(created); return created; })();
       const technical = child(notations, 'technical') ?? (() => { const created = document.createElement('technical'); notations.appendChild(created); return created; })();
       setText(technical, 'string', String(edit.string));
@@ -1831,5 +1834,114 @@ export function changeMusicXmlPickup(source: string, score: model.Score, numerat
   const oldLength = first.getAttribute('implicit') === 'yes' ? firstLaneLength(first, sourceDivisions(part, 0)) : nominal;
   resizeMeterBar(document, part, 0, oldLength, actual);
   first.setAttribute('implicit', 'yes');
+  return new XMLSerializer().serializeToString(document);
+}
+
+export type TiePosition = { measure: number; beat: number; voice: number; string: number; fret: number };
+
+function tieSourceRecords(document: Document, score: model.Score) {
+  const part = descendants(document.documentElement, 'part')[0];
+  if (!part || directMeasures(part).length !== score.masterBars.length) {
+    throw new Error('The tie source measure count does not match the rendered score.');
+  }
+  return sourceTabNoteRecords(document).filter(record => !record.grace);
+}
+
+function tieRecord(records: ReturnType<typeof tieSourceRecords>, position: TiePosition) {
+  const matches = records.filter(record => record.measure === position.measure && record.beat === position.beat
+    && record.voice === String(position.voice) && record.string === position.string && record.fret === position.fret);
+  if (matches.length !== 1) throw new Error('The selected tie endpoint cannot be uniquely identified in the source.');
+  return matches[0];
+}
+
+function samePitch(left: Element, right: Element) {
+  const pitch = (note: Element) => {
+    const value = child(note, 'pitch');
+    return value ? `${text(child(value, 'step'))}:${text(child(value, 'alter'))}:${text(child(value, 'octave'))}` : null;
+  };
+  return pitch(left) !== null && pitch(left) === pitch(right);
+}
+
+function transitionMarkers(note: Element) {
+  return ['tie', 'tied', 'hammer-on', 'pull-off', 'slide', 'glissando'].flatMap(name => descendants(note, name));
+}
+
+function addTieMarker(note: Element, type: 'start' | 'stop') {
+  const document = note.ownerDocument!;
+  const tie = document.createElement('tie');
+  tie.setAttribute('type', type);
+  const next = children(note).find(item => ['voice', 'type', 'dot', 'staff', 'notations'].includes(item.localName));
+  note.insertBefore(tie, next ?? null);
+  const notations = ensure(note, 'notations');
+  const tied = document.createElement('tied');
+  tied.setAttribute('type', type);
+  notations.insertBefore(tied, notations.firstChild);
+}
+
+function removeTieMarker(note: Element, type: 'start' | 'stop') {
+  for (const name of ['tie', 'tied']) for (const marker of descendants(note, name)) {
+    if (marker.getAttribute('type') === type) marker.parentNode?.removeChild(marker);
+  }
+  const notations = child(note, 'notations');
+  if (notations && !children(notations).length) note.removeChild(notations);
+}
+
+export function inspectMusicXmlTie(source: string, score: model.Score, position: TiePosition) {
+  const document = parseDocument(source);
+  const record = tieRecord(tieSourceRecords(document, score), position);
+  return { canRemove: descendants(record.note, 'tie').length > 0 };
+}
+
+export function connectMusicXmlTie(source: string, score: model.Score, origin: TiePosition, destination: TiePosition): string {
+  if (origin.voice !== destination.voice) throw new Error('Tie endpoints must be in the same voice.');
+  if (origin.string !== destination.string) throw new Error('Tie endpoints must be on the same string.');
+  const document = parseDocument(source);
+  const records = tieSourceRecords(document, score);
+  const from = tieRecord(records, origin);
+  const to = tieRecord(records, destination);
+  const sameLane = records.filter(record => record.voice === from.voice && record.string === from.string);
+  const fromIndex = sameLane.indexOf(from);
+  const toIndex = sameLane.indexOf(to);
+  if (toIndex <= fromIndex) throw new Error('Tie destination must follow the selected origin.');
+  const part = descendants(document.documentElement, 'part')[0]!;
+  const voiceEvents = directMeasures(part).flatMap(measure => sourceBeatGroups(measure, sourceTabStaff(document), from.voice)
+    .filter(group => !child(group[0], 'grace')));
+  const originEvent = voiceEvents.findIndex(group => group.includes(from.note));
+  const destinationEvent = voiceEvents.findIndex(group => group.includes(to.note));
+  if (toIndex !== fromIndex + 1 || destinationEvent !== originEvent + 1) {
+    throw new Error('Another event or rest occurs before this tie destination.');
+  }
+  if (!samePitch(from.note, to.note)) throw new Error('Tie endpoints must have the same pitch.');
+  const linked = linkedStaffNotes(document);
+  const origins = [from.note, ...linked(from.note)];
+  const destinations = [to.note, ...linked(to.note)];
+  if (origins.length !== destinations.length || origins.some((note, index) => !samePitch(note, destinations[index]))) {
+    throw new Error('Paired notation tie endpoints cannot be matched safely.');
+  }
+  if ([...origins, ...destinations].some(note => transitionMarkers(note).length)) {
+    throw new Error('A tie endpoint already has a tie or competing transition. Remove it first.');
+  }
+  origins.forEach(note => addTieMarker(note, 'start'));
+  destinations.forEach(note => addTieMarker(note, 'stop'));
+  return new XMLSerializer().serializeToString(document);
+}
+
+export function removeMusicXmlTie(source: string, score: model.Score, position: TiePosition): string {
+  const document = parseDocument(source);
+  const records = tieSourceRecords(document, score);
+  const selected = tieRecord(records, position);
+  const lane = records.filter(record => record.voice === selected.voice && record.string === selected.string);
+  const selectedIndex = lane.indexOf(selected);
+  const outgoing = descendants(selected.note, 'tie').some(marker => marker.getAttribute('type') === 'start');
+  const incoming = descendants(selected.note, 'tie').some(marker => marker.getAttribute('type') === 'stop');
+  if (!outgoing && !incoming) throw new Error('The selected note has no tie to remove.');
+  const other = lane[selectedIndex + (outgoing ? 1 : -1)];
+  if (!other || !samePitch(selected.note, other.note)
+    || !descendants(other.note, 'tie').some(marker => marker.getAttribute('type') === (outgoing ? 'stop' : 'start'))) {
+    throw new Error('The other tie endpoint cannot be identified safely.');
+  }
+  const linked = linkedStaffNotes(document);
+  for (const note of [selected.note, ...linked(selected.note)]) removeTieMarker(note, outgoing ? 'start' : 'stop');
+  for (const note of [other.note, ...linked(other.note)]) removeTieMarker(note, outgoing ? 'stop' : 'start');
   return new XMLSerializer().serializeToString(document);
 }
