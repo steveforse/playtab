@@ -1380,3 +1380,73 @@ export function removeMusicXmlTriplet(source: string, score: model.Score, positi
   }
   return new XMLSerializer().serializeToString(document);
 }
+
+export function insertMusicXmlMeasure(source: string, score: model.Score, measureIndex: number,
+  placement: 'before' | 'after'): string {
+  if (placement !== 'before' && placement !== 'after') throw new Error('Invalid measure insertion position.');
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measures = part ? directMeasures(part) : [];
+  if (!part || !measures[measureIndex] || !score.masterBars[measureIndex]) throw new Error('The selected measure cannot be identified safely.');
+  if (measures.length >= 256) throw new Error('A score cannot contain more than 256 measures.');
+  if (measures.length !== score.masterBars.length) throw new Error('The source measure count does not match the rendered score.');
+  const insertAt = measureIndex + (placement === 'after' ? 1 : 0);
+  const contextIndex = placement === 'before' && measureIndex > 0 ? measureIndex - 1 : measureIndex;
+  const master = score.masterBars[contextIndex];
+  const numerator = master.timeSignatureNumerator;
+  const denominator = master.timeSignatureDenominator;
+  if (!Number.isInteger(numerator) || numerator < 1 || !Number.isInteger(denominator) || denominator < 1) {
+    throw new Error('The inherited time signature cannot be used for measure insertion.');
+  }
+  const capacity = rationalTime(BigInt(numerator) * 4n, BigInt(denominator));
+  const restValues = fillRestTime(capacity);
+  if (!restValues.length) throw new Error('The inherited measure has no positive duration.');
+  const oldDivisions = sourceDivisions(part, contextIndex);
+  const gcd = (a: bigint, b: bigint): bigint => b ? gcd(b, a % b) : a;
+  const newDivisions = restValues.reduce((value, rest) => {
+    const fraction = durationTime(rest);
+    return value / gcd(value, fraction[1]) * fraction[1];
+  }, oldDivisions);
+  if (newDivisions > 1_000_000n || newDivisions % oldDivisions !== 0n) {
+    throw new Error('This measure needs unsupported MusicXML timing precision.');
+  }
+  const templates = [measures[contextIndex], measures[measureIndex]];
+  const lanes = new Map<string, { staff: number; voice: string }>();
+  for (const template of templates) for (const note of children(template).filter(item => item.localName === 'note')) {
+    const staff = Number(text(child(note, 'staff')) || '1');
+    const voice = text(child(note, 'voice')) || '1';
+    if (!Number.isInteger(staff) || staff < 1) throw new Error('This source has an unsupported staff number.');
+    lanes.set(`${staff}:${voice}`, { staff, voice });
+  }
+  if (!lanes.size) throw new Error('The source has no existing voices to fill.');
+  const created = document.createElement('measure');
+  created.setAttribute('number', String(insertAt + 1));
+  if (insertAt === 0) {
+    const initial = children(measures[0]).find(item => item.localName === 'attributes');
+    if (!initial) throw new Error('The first measure has no source attributes to inherit.');
+    created.appendChild(initial.cloneNode(true));
+  }
+  if (newDivisions !== oldDivisions) setMeasureDivisions(created, newDivisions);
+  const ticks = (time: RationalTime) => time[0] * newDivisions / time[1];
+  [...lanes.values()].forEach((lane, laneIndex) => {
+    if (laneIndex > 0) {
+      const backup = document.createElement('backup');
+      const duration = document.createElement('duration');
+      duration.textContent = String(ticks(capacity));
+      backup.appendChild(duration);
+      created.appendChild(backup);
+    }
+    for (const value of restValues) created.appendChild(makeRest(document, lane.voice, lane.staff,
+      value, ticks(durationTime(value))));
+  });
+  const sequential = measures.every((measure, index) => measure.getAttribute('number') === String(index + 1));
+  part.insertBefore(created, measures[insertAt] ?? null);
+  if (newDivisions !== oldDivisions) {
+    const next = directMeasures(part)[insertAt + 1];
+    if (next && !children(next).some(item => item.localName === 'attributes' && child(item, 'divisions'))) {
+      setMeasureDivisions(next, oldDivisions);
+    }
+  }
+  if (sequential) directMeasures(part).forEach((measure, index) => measure.setAttribute('number', String(index + 1)));
+  return new XMLSerializer().serializeToString(document);
+}

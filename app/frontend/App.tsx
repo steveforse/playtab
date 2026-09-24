@@ -5,7 +5,7 @@ import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, createMusicXmlTriplet, insertMusicXmlEvent,
-  inspectMusicXmlDuration, inspectMusicXmlTriplet, musicXmlEditorState, removeMusicXmlNotes, removeMusicXmlTriplet,
+  inspectMusicXmlDuration, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState, removeMusicXmlNotes, removeMusicXmlTriplet,
   type InsertEventOptions } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
@@ -467,6 +467,33 @@ export function App() {
       setPreview(nextPreview); setSelection(after); setInsertOpen(false); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
+  function insertSelectedMeasure(placement: 'before' | 'after') {
+    if (!selection) return;
+    if (pendingFret) { setError('Apply the pending fret before inserting a measure.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const selectedIndex = selection.measure - 1;
+      const nextSource = insertMusicXmlMeasure(base.source, base.score, selectedIndex, placement);
+      const shiftedIndex = selectedIndex + (placement === 'before' ? 1 : 0);
+      const measureId = selection.sourceMeasureId ?? base.sourceIdentity?.measureIds[selectedIndex];
+      const eventId = selection.sourceEventId ?? base.sourceEventIdByAddress?.get(`${selectedIndex}:${selection.voice}:${selection.event - 1}`);
+      const carries: IdentityCarry[] = [
+        ...(measureId ? [{ kind: 'measure' as const, id: measureId, address: String(shiftedIndex) }] : []),
+        ...(eventId ? [{ kind: 'event' as const, id: eventId,
+          address: `${shiftedIndex}:${selection.voice}:${selection.event - 1}` }] : []),
+      ];
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries } : undefined), base.score.title);
+      const insertedMeasure = selectedIndex + (placement === 'after' ? 2 : 1);
+      const after = selectionAtPosition(selection, score, nextPreview,
+        { measure: insertedMeasure, event: 1 });
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
+        sourceIdentity: nextPreview.sourceIdentity }, `Insert measure ${placement} selected`);
+      setPreview(nextPreview); setSelection(after);
+      if (passage) { setPassage(null); setMessage('Playback selection cleared after inserting a measure.'); }
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
   function moveSelectedString() {
     if (!selection || selection.kind !== 'note' || selection.string === null) return;
     const destination = Number(moveString);
@@ -806,6 +833,10 @@ export function App() {
                 setPassage(first ? { start: passage.start, end: selection } : { start: selection, end: passage.start });
               }}>Set range end</button>
               <button type="button" disabled={!passage} onClick={() => setPassage(null)}>Clear passage</button>
+            </details>
+            <details className="editor-measure-tools"><summary>Measure</summary>
+              <button type="button" onClick={() => insertSelectedMeasure('before')}>Insert measure before</button>
+              <button type="button" onClick={() => insertSelectedMeasure('after')}>Insert measure after</button>
             </details>
           </>}
         </div>
