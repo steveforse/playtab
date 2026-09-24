@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { changeMusicXmlMeter, changeMusicXmlPickup, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
-  inspectMusicXmlMeterRange } from '../../app/frontend/music/musicxml-editor';
+import { applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+  inspectMusicXmlTie, removeMusicXmlTie,
+  inspectMusicXmlMeterRange, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -343,5 +344,77 @@ describe('ED-13 pickup length', () => {
     const original = readMusicXml(rich, 'rich.musicxml');
     expect(() => changeMusicXmlPickup(rich, original.score, 0, 8)).toThrow('positive pickup length');
     expect(() => changeMusicXmlPickup('<score-partwise/>', original.score, 1, 8)).toThrow('first source measure');
+  });
+});
+
+describe('ED-14 tie endpoint foundation', () => {
+  const untied = rich.replace(/<(?:tie|tied) type="(?:start|stop)"\/>/g, '');
+  const origin = { measure: 0, beat: 4, voice: 2, string: 4, fret: 4 };
+  const destination = { measure: 1, beat: 0, voice: 2, string: 4, fret: 4 };
+
+  it('writes both endpoints to TAB and paired notation, then removes only the named tie', () => {
+    const score = readMusicXml(untied, 'rich.musicxml').score;
+    const tied = connectMusicXmlTie(untied, score, origin, destination);
+    const xml = new DOMParser().parseFromString(tied, 'application/xml');
+    const measures = Array.from(xml.getElementsByTagName('measure'));
+    expect(measures[0].getElementsByTagName('tie')).toHaveLength(2);
+    expect(measures[1].getElementsByTagName('tie')).toHaveLength(2);
+    expect(measures[0].getElementsByTagName('tied')).toHaveLength(2);
+    expect(measures[1].getElementsByTagName('tied')).toHaveLength(2);
+    expect(inspectMusicXmlTie(tied, readMusicXml(tied, 'rich.musicxml').score, origin).canRemove).toBe(true);
+    const removed = removeMusicXmlTie(tied, readMusicXml(tied, 'rich.musicxml').score, destination);
+    expect(new DOMParser().parseFromString(removed, 'application/xml').getElementsByTagName('tie')).toHaveLength(0);
+    expect(removed).toContain('<hammer-on');
+    expect(removed).toContain('<slide');
+  });
+
+  it('rejects wrong string, voice, direction, skipped same-string note, changed pitch, and competing marks', () => {
+    const score = readMusicXml(untied, 'rich.musicxml').score;
+    expect(() => connectMusicXmlTie(untied, score, origin, { ...destination, string: 3 })).toThrow('same string');
+    expect(() => connectMusicXmlTie(untied, score, origin, { ...destination, voice: 1 })).toThrow('same voice');
+    expect(() => connectMusicXmlTie(untied, score, destination, origin)).toThrow('must follow');
+    expect(() => connectMusicXmlTie(untied, score, { measure: 0, beat: 1, voice: 2, string: 4, fret: 0 }, destination))
+      .toThrow('Another event or rest');
+    expect(() => connectMusicXmlTie(untied, score, { measure: 0, beat: 2, voice: 2, string: 4, fret: 2 },
+      { measure: 0, beat: 3, voice: 2, string: 4, fret: 4 })).toThrow('same pitch');
+    const withTie = connectMusicXmlTie(untied, score, origin, destination);
+    expect(() => connectMusicXmlTie(withTie, readMusicXml(withTie, 'rich.musicxml').score, origin, destination))
+      .toThrow('competing transition');
+  });
+
+  it('does not connect notes separated by an ordinary rest across a barline', () => {
+    const fixture = fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8');
+    const withGap = fixture.replace('<duration>4</duration><voice>1</voice><type>whole</type>',
+      '<duration>1</duration><voice>1</voice><type>quarter</type>')
+      .replace('</notations></note>', '</notations></note><note><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/><staff>1</staff></note>');
+    const score = readMusicXml(withGap, 'gap.musicxml').score;
+    expect(() => connectMusicXmlTie(withGap, score,
+      { measure: 0, beat: 0, voice: 1, string: 4, fret: 0 },
+      { measure: 1, beat: 0, voice: 1, string: 4, fret: 0 })).toThrow('Another event or rest');
+  });
+
+  it('removes an imported outgoing tie without disturbing other effects and blocks tied pitch correction', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    expect(inspectMusicXmlTie(untied, readMusicXml(untied, 'rich.musicxml').score, origin).canRemove).toBe(false);
+    expect(() => removeMusicXmlTie(untied, original.score, origin)).toThrow('no tie to remove');
+    const removed = removeMusicXmlTie(rich, original.score, origin);
+    expect(new DOMParser().parseFromString(removed, 'application/xml').getElementsByTagName('tie')).toHaveLength(0);
+    expect(removed).toContain('<hammer-on');
+    expect(removed).toContain('<slide');
+    const state = musicXmlEditorState(rich, original.score);
+    const note = state.notes.find(item => item.measure === 0 && item.beat === 4 && item.string === 4 && item.fret === 4)!;
+    note.fret = 5;
+    expect(() => applyMusicXmlEdits(rich, state, [note.index])).toThrow('This note is tied');
+  });
+
+  it('retains both tie endpoints through an unrelated isolated fret correction', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    const state = musicXmlEditorState(rich, original.score);
+    const unrelated = state.notes.find(item => item.measure === 1 && item.beat === 1 && item.string === 4 && item.fret === 2)!;
+    unrelated.fret = 3;
+    const changed = applyMusicXmlEdits(rich, state, [unrelated.index]);
+    const xml = new DOMParser().parseFromString(changed, 'application/xml');
+    expect(xml.getElementsByTagName('tie')).toHaveLength(4);
+    expect(xml.getElementsByTagName('tied')).toHaveLength(4);
   });
 });

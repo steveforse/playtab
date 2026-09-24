@@ -6,12 +6,13 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), changeMusicXmlMeter: vi.fn(), changeMusicXmlPickup: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), inspectMusicXmlMeterRange: vi.fn(() => ({ firstMeasure: 1, lastMeasure: 2 })), insertMusicXmlEvent: vi.fn(), createMusicXmlTriplet: vi.fn(), removeMusicXmlTriplet: vi.fn(), inspectMusicXmlTriplet: vi.fn(() => ({ triplet: false, canRemove: false })), insertMusicXmlMeasure: vi.fn(), duplicateMusicXmlMeasure: vi.fn(), deleteMusicXmlMeasure: vi.fn(), sourceTabNoteRecords: vi.fn(() => []) }));
+const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), changeMusicXmlMeter: vi.fn(), changeMusicXmlPickup: vi.fn(), connectMusicXmlTie: vi.fn(), inspectMusicXmlTie: vi.fn(() => ({ canRemove: false })), removeMusicXmlTie: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), inspectMusicXmlMeterRange: vi.fn(() => ({ firstMeasure: 1, lastMeasure: 2 })), insertMusicXmlEvent: vi.fn(), createMusicXmlTriplet: vi.fn(), removeMusicXmlTriplet: vi.fn(), inspectMusicXmlTriplet: vi.fn(() => ({ triplet: false, canRemove: false })), insertMusicXmlMeasure: vi.fn(), duplicateMusicXmlMeasure: vi.fn(), deleteMusicXmlMeasure: vi.fn(), sourceTabNoteRecords: vi.fn(() => []) }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
     {editing && <>
       <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>
+      <button type="button" data-testid="choose-next-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 2, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 2, graceIndex: null, graceGroupId: null })}>Choose next note</button>
       <button type="button" data-testid="choose-empty" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Choose empty</button>
       <button type="button" data-testid="delete-empty" onClick={() => onSelectionDelete?.({ track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 2, fret: null, kind: 'empty', noteId: null, graceIndex: null, graceGroupId: null })}>Delete empty</button>
     </>}
@@ -29,7 +30,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -60,7 +61,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); changeMusicXmlMeter.mockReset(); changeMusicXmlPickup.mockReset(); inspectMusicXmlDuration.mockReset(); inspectMusicXmlMeterRange.mockReset(); insertMusicXmlEvent.mockReset(); createMusicXmlTriplet.mockReset(); removeMusicXmlTriplet.mockReset(); inspectMusicXmlTriplet.mockReset(); insertMusicXmlMeasure.mockReset(); duplicateMusicXmlMeasure.mockReset(); deleteMusicXmlMeasure.mockReset(); sourceTabNoteRecords.mockReset(); sourceTabNoteRecords.mockReturnValue([]); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); inspectMusicXmlMeterRange.mockReturnValue({ firstMeasure: 1, lastMeasure: 2 }); inspectMusicXmlTriplet.mockReturnValue({ triplet: false, canRemove: false }); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); changeMusicXmlMeter.mockReset(); changeMusicXmlPickup.mockReset(); connectMusicXmlTie.mockReset(); inspectMusicXmlTie.mockReset(); removeMusicXmlTie.mockReset(); inspectMusicXmlDuration.mockReset(); inspectMusicXmlMeterRange.mockReset(); insertMusicXmlEvent.mockReset(); createMusicXmlTriplet.mockReset(); removeMusicXmlTriplet.mockReset(); inspectMusicXmlTriplet.mockReset(); insertMusicXmlMeasure.mockReset(); duplicateMusicXmlMeasure.mockReset(); deleteMusicXmlMeasure.mockReset(); sourceTabNoteRecords.mockReset(); sourceTabNoteRecords.mockReturnValue([]); inspectMusicXmlTie.mockReturnValue({ canRemove: false }); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); inspectMusicXmlMeterRange.mockReturnValue({ firstMeasure: 1, lastMeasure: 2 }); inspectMusicXmlTriplet.mockReturnValue({ triplet: false, canRemove: false }); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -480,6 +481,61 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Pickup…' }));
     expect(screen.getByText('Apply the pending fret before changing the pickup.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('connects a pointer-chosen tie endpoint and removes it as separate undoable edits', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    promoteNativeScore.mockReturnValue('<score-partwise/>');
+    connectMusicXmlTie.mockReturnValue('<score-partwise><tie type="start"/></score-partwise>');
+    removeMusicXmlTie.mockReturnValue('<score-partwise><removed-tie/></score-partwise>');
+    readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename,
+      score: { title: score.title, masterBars: [{}, {}], tracks: [{ staves: [{ bars: [1, 2].map(id => ({
+        voices: [{ beats: [{ notes: [{ id, string: 3, fret: 0 }] }] }],
+      })) }] }] } }));
+    inspectMusicXmlTie.mockImplementation((source: string) => ({ canRemove: source.includes('<tie type="start"') }));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Techniques', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tie', exact: true }));
+    expect(screen.getByText(/Origin: measure 1, event 1, string 3, fret 0/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId('choose-next-note'));
+    expect(connectMusicXmlTie).toHaveBeenCalledWith('<score-partwise/>', expect.anything(),
+      { measure: 0, beat: 0, voice: 1, string: 3, fret: 0 },
+      { measure: 1, beat: 0, voice: 1, string: 3, fret: 0 });
+    expect(screen.getByText('Tie added between the selected notes.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove tie' }));
+    expect(removeMusicXmlTie).toHaveBeenCalledWith('<score-partwise><tie type="start"/></score-partwise>',
+      expect.anything(), { measure: 1, beat: 0, voice: 1, string: 3, fret: 0 });
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByRole('button', { name: 'Remove tie' })).toBeTruthy();
+  });
+
+  it('keeps pending tie mode after an invalid endpoint and allows cancellation without history', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    promoteNativeScore.mockReturnValue('<score-partwise/>');
+    readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename,
+      score: { title: score.title, masterBars: [{}, {}] } }));
+    connectMusicXmlTie.mockImplementation(() => { throw new Error('Tie endpoints must have the same pitch.'); });
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Techniques', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tie', exact: true }));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    expect(screen.getByText('Tie destination must be a pitched note. Choose another note or cancel.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Use selected note' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByTestId('choose-next-note'));
+    expect(screen.getByText('Tie endpoints must have the same pitch.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel tie' }));
+    expect(screen.getByText('Tie cancelled.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Tie', exact: true }));
+    expect(screen.getByText('Apply the pending fret before starting a tie.')).toBeTruthy();
   });
 
   it('updates the same record with a revision and keeps a newer edit unsaved while the request finishes', async () => {
