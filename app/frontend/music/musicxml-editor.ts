@@ -1450,3 +1450,92 @@ export function insertMusicXmlMeasure(source: string, score: model.Score, measur
   if (sequential) directMeasures(part).forEach((measure, index) => measure.setAttribute('number', String(index + 1)));
   return new XMLSerializer().serializeToString(document);
 }
+
+export type MeasureDuplication = { source: string; excluded: string[] };
+
+function spanMarkerKey(marker: Element, note: Element): string {
+  const voice = text(child(note, 'voice')) || '1';
+  const staff = text(child(note, 'staff')) || '1';
+  const technical = child(child(note, 'notations') ?? note, 'technical');
+  const string = text(child(technical ?? note, 'string'));
+  const pitch = child(note, 'pitch');
+  const pitchKey = pitch ? `${text(child(pitch, 'step'))}:${text(child(pitch, 'alter'))}:${text(child(pitch, 'octave'))}` : '';
+  const identity = marker.localName === 'tie' || marker.localName === 'tied' ? string || pitchKey : string;
+  return `${marker.localName}:${marker.getAttribute('number') || '1'}:${staff}:${voice}:${identity}`;
+}
+
+function excludedCopySpans(original: Element, copy: Element): { excluded: string[]; outgoing: string[] } {
+  const sourceNotes = children(original).filter(item => item.localName === 'note');
+  const copiedNotes = children(copy).filter(item => item.localName === 'note');
+  const markerNames = new Set(['tie', 'tied', 'slide', 'glissando', 'hammer-on', 'pull-off']);
+  const grouped = new Map<string, { markers: { marker: Element; noteIndex: number }[]; balance: number; crossing: boolean }>();
+  sourceNotes.forEach((note, noteIndex) => {
+    Array.from(note.getElementsByTagName('*')).filter(marker => markerNames.has(marker.localName)).forEach(marker => {
+      const type = marker.getAttribute('type');
+      if (type !== 'start' && type !== 'stop') return;
+      const key = spanMarkerKey(marker, note);
+      const entry = grouped.get(key) ?? { markers: [], balance: 0, crossing: false };
+      entry.markers.push({ marker, noteIndex });
+      if (type === 'start') entry.balance++;
+      else if (entry.balance === 0) entry.crossing = true;
+      else entry.balance--;
+      grouped.set(key, entry);
+    });
+  });
+  const excluded = new Set<string>();
+  const outgoing = new Set<string>();
+  grouped.forEach((entry, key) => {
+    if (!entry.crossing && entry.balance === 0) return;
+    const name = key.split(':')[0];
+    const label = name === 'tie' || name === 'tied' ? 'cross-measure tie'
+      : name === 'hammer-on' || name === 'pull-off' ? 'cross-measure hammer-on/pull-off'
+        : 'cross-measure slide';
+    excluded.add(label);
+    if (entry.balance > 0) outgoing.add(label);
+    entry.markers.forEach(({ marker, noteIndex }) => {
+      const candidate = Array.from(copiedNotes[noteIndex].getElementsByTagName('*')).find(item => item.localName === marker.localName
+        && item.getAttribute('type') === marker.getAttribute('type')
+        && (item.getAttribute('number') || '1') === (marker.getAttribute('number') || '1'));
+      candidate?.parentNode?.removeChild(candidate);
+    });
+  });
+  return { excluded: [...excluded], outgoing: [...outgoing] };
+}
+
+export function duplicateMusicXmlMeasure(source: string, score: model.Score, measureIndex: number): MeasureDuplication {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measures = part ? directMeasures(part) : [];
+  const selected = measures[measureIndex];
+  if (!part || !selected || !score.masterBars[measureIndex] || measures.length !== score.masterBars.length) {
+    throw new Error('The selected source measure cannot be identified safely.');
+  }
+  if (measures.length >= 256) throw new Error('A score cannot contain more than 256 measures.');
+  const copy = selected.cloneNode(true) as Element;
+  const spans = excludedCopySpans(selected, copy);
+  if (spans.outgoing.length) throw new Error(`Duplicating this measure would split a ${spans.outgoing.join(' and ')}. Remove that span first.`);
+  const excluded = new Set(spans.excluded);
+  for (const barline of children(copy).filter(item => item.localName === 'barline')) {
+    for (const marker of children(barline).filter(item => item.localName === 'repeat' || item.localName === 'ending')) {
+      excluded.add(marker.localName === 'repeat' ? 'repeat marker' : 'repeat ending');
+      barline.removeChild(marker);
+    }
+    if (!children(barline).length) copy.removeChild(barline);
+  }
+  const structuralDirectionNames = new Set(['wedge', 'dashes', 'pedal', 'octave-shift', 'bracket']);
+  for (const direction of children(copy).filter(item => item.localName === 'direction')) {
+    for (const directionType of children(direction).filter(item => item.localName === 'direction-type')) {
+      for (const marker of children(directionType).filter(item => structuralDirectionNames.has(item.localName))) {
+        excluded.add('cross-measure direction span');
+        directionType.removeChild(marker);
+      }
+      if (!children(directionType).length) direction.removeChild(directionType);
+    }
+    if (!children(direction).length) copy.removeChild(direction);
+  }
+  const sequential = measures.every((measure, index) => measure.getAttribute('number') === String(index + 1));
+  copy.setAttribute('number', String(measureIndex + 2));
+  part.insertBefore(copy, measures[measureIndex + 1] ?? null);
+  if (sequential) directMeasures(part).forEach((measure, index) => measure.setAttribute('number', String(index + 1)));
+  return { source: new XMLSerializer().serializeToString(document), excluded: [...excluded] };
+}

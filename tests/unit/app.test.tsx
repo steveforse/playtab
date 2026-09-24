@@ -6,7 +6,7 @@ import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
-const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), insertMusicXmlEvent: vi.fn(), createMusicXmlTriplet: vi.fn(), removeMusicXmlTriplet: vi.fn(), inspectMusicXmlTriplet: vi.fn(() => ({ triplet: false, canRemove: false })), insertMusicXmlMeasure: vi.fn() }));
+const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, sourceTabNoteRecords } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), insertMusicXmlEvent: vi.fn(), createMusicXmlTriplet: vi.fn(), removeMusicXmlTriplet: vi.fn(), inspectMusicXmlTriplet: vi.fn(() => ({ triplet: false, canRemove: false })), insertMusicXmlMeasure: vi.fn(), duplicateMusicXmlMeasure: vi.fn(), sourceTabNoteRecords: vi.fn(() => []) }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
@@ -29,7 +29,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, removeMusicXmlNotes, changeMusicXmlDuration, inspectMusicXmlDuration, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, sourceTabNoteRecords }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -60,7 +60,7 @@ describe('workspace application', () => {
     Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value() { this.open = false; } });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
-  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); inspectMusicXmlDuration.mockReset(); insertMusicXmlEvent.mockReset(); createMusicXmlTriplet.mockReset(); removeMusicXmlTriplet.mockReset(); inspectMusicXmlTriplet.mockReset(); insertMusicXmlMeasure.mockReset(); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); inspectMusicXmlTriplet.mockReturnValue({ triplet: false, canRemove: false }); });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); inspectMusicXmlDuration.mockReset(); insertMusicXmlEvent.mockReset(); createMusicXmlTriplet.mockReset(); removeMusicXmlTriplet.mockReset(); inspectMusicXmlTriplet.mockReset(); insertMusicXmlMeasure.mockReset(); duplicateMusicXmlMeasure.mockReset(); sourceTabNoteRecords.mockReset(); sourceTabNoteRecords.mockReturnValue([]); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); inspectMusicXmlTriplet.mockReturnValue({ triplet: false, canRemove: false }); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -236,6 +236,63 @@ describe('workspace application', () => {
     expect(screen.getByText('Playback selection cleared after inserting a measure.')).toBeTruthy();
   });
 
+  it('previews exclusions, cancels safely, and confirms duplication as one history step', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    promoteNativeScore.mockReturnValue('<score-partwise/>');
+    duplicateMusicXmlMeasure.mockReturnValue({ source: '<score-partwise><copied/></score-partwise>',
+      excluded: ['cross-measure tie', 'repeat marker'] });
+    readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename,
+      score: { title: score.title, masterBars: [{}, {}] } }));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Measure', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate measure…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Duplicate measure' });
+    expect(within(dialog).getByText('cross-measure tie')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate measure…' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Duplicate measure', exact: true }));
+    expect(duplicateMusicXmlMeasure).toHaveBeenCalledWith('<score-partwise/>', expect.anything(), 0);
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('carries original measure, event, and note IDs past a duplicated bar', async () => {
+    const source = '<score-partwise><part><measure number="1"><note><rest/></note></measure><measure number="2"><note><rest/></note></measure></part></score-partwise>';
+    const copied = source.replace('</part>', '<measure number="3"><note><rest/></note></measure></part>');
+    const identity = { nextId: 3, noteIds: ['n1', 'n2'], nextMeasureId: 3, measureIds: ['m1', 'm2'],
+      nextEventId: 3, eventIds: ['e1', 'e2'] };
+    readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, sourceIdentity: identity,
+      sourceEventIdByAddress: new Map([['0:1:0', 'e1'], ['1:1:0', 'e2']]),
+      score: { title: 'Imported tune', masterBars: value === copied ? [{}, {}, {}] : [{}, {}] } }));
+    sourceTabNoteRecords.mockReturnValue([
+      { id: '0:1:0:main:main:3', measure: 0 }, { id: '1:1:0:main:main:3', measure: 1 },
+    ]);
+    duplicateMusicXmlMeasure.mockReturnValue({ source: copied, excluded: [] });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    openImport(); selectFile('import.musicxml', source);
+    await screen.findByRole('heading', { name: 'Imported tune' });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Measure', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate measure…' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Duplicate measure' }))
+      .getByRole('button', { name: 'Duplicate measure', exact: true }));
+    const carries = readMusicXml.mock.calls.at(-1)?.[3]?.carries;
+    expect(carries).toEqual(expect.arrayContaining([
+      { kind: 'measure', id: 'm1', address: '0' }, { kind: 'measure', id: 'm2', address: '2' },
+      { kind: 'event', id: 'e1', address: '0:1:0' }, { kind: 'event', id: 'e2', address: '2:1:0' },
+      { kind: 'note', id: 'n1', address: '0:1:0:main:main:3' },
+      { kind: 'note', id: 'n2', address: '2:1:0:main:main:3' },
+    ]));
+  });
+
   it('updates the same record with a revision and keeps a newer edit unsaved while the request finishes', async () => {
     let finishSave!: (value: ReturnType<typeof response>) => void;
     const pendingSave = new Promise<ReturnType<typeof response>>(resolve => { finishSave = resolve; });
@@ -385,7 +442,7 @@ describe('workspace application', () => {
     expect(JSON.parse(fetchMock.mock.calls[2][1].body).score.measures[0].beats[0].notes[0].fret).toBe(4);
     fireEvent.click(screen.getByRole('button', { name: 'Save and continue' }));
     await waitFor(() => expect(screen.getByText('Not saved to library')).toBeTruthy());
-    expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).toBeNull());
   });
 
   it('does not continue when a second edit lands during the guarded save', async () => {

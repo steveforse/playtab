@@ -5,7 +5,8 @@ import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { addMusicXmlNote, applyMusicXmlEdits, changeMusicXmlDuration, createMusicXmlTriplet, insertMusicXmlEvent,
-  inspectMusicXmlDuration, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState, removeMusicXmlNotes, removeMusicXmlTriplet,
+  duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
+  removeMusicXmlNotes, removeMusicXmlTriplet, sourceTabNoteRecords,
   type InsertEventOptions } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
@@ -14,6 +15,8 @@ import { sourceEventCount, type IdentityCarry, type SourceIdentityMap } from './
 
 type LibraryItem = { id: number; title: string; revision?: number };
 type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: 'note' | 'rest'; dependencies: string[] };
+type PendingDuplication = { originalKey: string; base: MusicXmlPreview; source: string; measureIndex: number;
+  excluded: string[]; noteCount: number; restCount: number };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
@@ -34,6 +37,20 @@ function structuralCarries(preview: MusicXmlPreview, selection: ScoreSelection, 
     ...(measureId ? [{ kind: 'measure' as const, id: measureId, address: String(measure) }] : []),
     ...(carryEvent && eventId ? [{ kind: 'event' as const, id: eventId, address }] : []),
   ];
+}
+function shiftedMeasureCarries(preview: MusicXmlPreview, insertionIndex: number): IdentityCarry[] {
+  if (!preview.sourceIdentity) return [];
+  const shift = (measure: number) => measure >= insertionIndex ? measure + 1 : measure;
+  const measures: IdentityCarry[] = preview.sourceIdentity.measureIds.map((id, index) =>
+    ({ kind: 'measure', id, address: String(shift(index)) }));
+  const events: IdentityCarry[] = [...(preview.sourceEventIdByAddress ?? new Map<string, string>())].map(([address, id]) => {
+    const separator = address.indexOf(':');
+    return { kind: 'event', id, address: `${shift(Number(address.slice(0, separator)))}${address.slice(separator)}` };
+  });
+  const notes = sourceTabNoteRecords(new DOMParser().parseFromString(preview.source, 'application/xml'));
+  const noteCarries: IdentityCarry[] = notes.map((record, index) => ({ kind: 'note', id: preview.sourceIdentity!.noteIds[index],
+    address: record.id.replace(/^\d+:/, `${shift(record.measure)}:`) }));
+  return [...measures, ...events, ...noteCarries];
 }
 function refreshStructuralSelection(selection: ScoreSelection, preview: MusicXmlPreview) {
   selection.sourceMeasureId = preview.sourceIdentity?.measureIds[selection.measure - 1];
@@ -100,6 +117,9 @@ export function App() {
   const [fretDraft, setFretDraft] = useState('');
   const [moveString, setMoveString] = useState('');
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
+  const [pendingDuplication, setPendingDuplication] = useState<PendingDuplication | null>(null);
+  const duplicateDialog = useRef<HTMLDialogElement>(null);
+  const duplicateOpener = useRef<HTMLElement | null>(null);
   const [insertOpen, setInsertOpen] = useState(false);
   const [insertDraft, setInsertDraft] = useState<Pick<InsertEventOptions, 'placement' | 'kind' | 'denominator' | 'dotted' | 'string' | 'fret'>>({
     placement: 'after', kind: 'rest', denominator: 4, dotted: false, string: 1, fret: 0,
@@ -199,6 +219,15 @@ export function App() {
       if (insertOpener.current?.isConnected) insertOpener.current.focus({ preventScroll: true });
     }
   }, [insertOpen]);
+  useEffect(() => {
+    const dialog = duplicateDialog.current;
+    if (!dialog) return;
+    if (pendingDuplication && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-duplicate-cancel]')?.focus(); }
+    else if (!pendingDuplication && dialog.open) {
+      dialog.close();
+      if (duplicateOpener.current?.isConnected) duplicateOpener.current.focus({ preventScroll: true });
+    }
+  }, [pendingDuplication]);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
     session.current++;
     const snapshot = { document: next, original, diagnostics, id, revision };
@@ -474,14 +503,7 @@ export function App() {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
       const selectedIndex = selection.measure - 1;
       const nextSource = insertMusicXmlMeasure(base.source, base.score, selectedIndex, placement);
-      const shiftedIndex = selectedIndex + (placement === 'before' ? 1 : 0);
-      const measureId = selection.sourceMeasureId ?? base.sourceIdentity?.measureIds[selectedIndex];
-      const eventId = selection.sourceEventId ?? base.sourceEventIdByAddress?.get(`${selectedIndex}:${selection.voice}:${selection.event - 1}`);
-      const carries: IdentityCarry[] = [
-        ...(measureId ? [{ kind: 'measure' as const, id: measureId, address: String(shiftedIndex) }] : []),
-        ...(eventId ? [{ kind: 'event' as const, id: eventId,
-          address: `${shiftedIndex}:${selection.voice}:${selection.event - 1}` }] : []),
-      ];
+      const carries = shiftedMeasureCarries(base, selectedIndex + (placement === 'after' ? 1 : 0));
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries } : undefined), base.score.title);
       const insertedMeasure = selectedIndex + (placement === 'after' ? 2 : 1);
@@ -491,6 +513,43 @@ export function App() {
         sourceIdentity: nextPreview.sourceIdentity }, `Insert measure ${placement} selected`);
       setPreview(nextPreview); setSelection(after);
       if (passage) { setPassage(null); setMessage('Playback selection cleared after inserting a measure.'); }
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function previewDuplicateMeasure(opener: HTMLElement) {
+    if (!selection) return;
+    if (pendingFret) { setError('Apply the pending fret before duplicating a measure.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const measureIndex = selection.measure - 1;
+      const candidate = duplicateMusicXmlMeasure(base.source, base.score, measureIndex);
+      const parsed = new DOMParser().parseFromString(base.source, 'application/xml');
+      const part = Array.from(parsed.getElementsByTagName('*')).find(element => element.localName === 'part');
+      const measure = part && Array.from(part.children).filter(element => element.localName === 'measure')[measureIndex];
+      const notes = measure ? Array.from(measure.children).filter(element => element.localName === 'note') : [];
+      duplicateOpener.current = opener;
+      setPendingDuplication({ originalKey: documentKey(currentDocument), base, source: candidate.source,
+        measureIndex, excluded: candidate.excluded,
+        noteCount: notes.filter(note => !Array.from(note.children).some(element => element.localName === 'rest')).length,
+        restCount: notes.filter(note => Array.from(note.children).some(element => element.localName === 'rest')).length });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function confirmDuplicateMeasure() {
+    if (!pendingDuplication || !selection) return;
+    if (pendingDuplication.originalKey !== documentKey(currentDocument)) {
+      setPendingDuplication(null); setError('The score changed since this duplication preview. Open it again.'); return;
+    }
+    try {
+      const { base, source: nextSource, measureIndex } = pendingDuplication;
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity,
+          carries: shiftedMeasureCarries(base, measureIndex + 1) } : undefined), base.score.title);
+      const after = selectionAtPosition(selection, score, nextPreview, { measure: measureIndex + 2, event: 1 });
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
+        sourceIdentity: nextPreview.sourceIdentity }, `Duplicate measure ${measureIndex + 1}`);
+      setPreview(nextPreview); setSelection(after); setPendingDuplication(null);
+      if (passage) { setPassage(null); setMessage('Playback selection cleared after duplicating a measure.'); }
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
@@ -837,6 +896,7 @@ export function App() {
             <details className="editor-measure-tools"><summary>Measure</summary>
               <button type="button" onClick={() => insertSelectedMeasure('before')}>Insert measure before</button>
               <button type="button" onClick={() => insertSelectedMeasure('after')}>Insert measure after</button>
+              <button type="button" onClick={event => previewDuplicateMeasure(event.currentTarget)}>Duplicate measure…</button>
             </details>
           </>}
         </div>
@@ -878,6 +938,14 @@ export function App() {
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
     </main>
+    <dialog ref={duplicateDialog} className="duplicate-dialog" aria-label="Duplicate measure" onCancel={event => { event.preventDefault(); setPendingDuplication(null); }}>
+      <h2>Duplicate measure {pendingDuplication ? pendingDuplication.measureIndex + 1 : ''}?</h2>
+      <p>The copy will include {pendingDuplication?.noteCount ?? 0} note{pendingDuplication?.noteCount === 1 ? '' : 's'} and {pendingDuplication?.restCount ?? 0} rest{pendingDuplication?.restCount === 1 ? '' : 's'}, plus local labels and contained techniques.</p>
+      <p>The copy will exclude:</p>
+      {pendingDuplication?.excluded.length ? <ul>{pendingDuplication.excluded.map(item => <li key={item}>{item}</li>)}</ul>
+        : <p>No external spans or repeat markers.</p>}
+      <div className="duplicate-dialog-actions"><button type="button" data-duplicate-cancel onClick={() => setPendingDuplication(null)}>Cancel</button><button type="button" onClick={confirmDuplicateMeasure}>Duplicate measure</button></div>
+    </dialog>
     <dialog ref={insertDialog} className="insert-dialog" aria-label="Insert event" onCancel={event => { event.preventDefault(); setInsertOpen(false); }}>
       <h2>Insert event</h2>
       <p>Following events move within this voice and measure. Trailing rests make room.</p>

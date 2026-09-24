@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { insertMusicXmlMeasure } from '../../app/frontend/music/musicxml-editor';
+import { duplicateMusicXmlMeasure, insertMusicXmlMeasure } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -78,5 +78,52 @@ describe('ED-12 measure insertion', () => {
     const score = Object.assign(Object.create(Object.getPrototypeOf(original.score)), original.score,
       { masterBars: Array(256).fill(original.score.masterBars[1]) });
     expect(() => insertMusicXmlMeasure(full, score, 0, 'after')).toThrow('256 measures');
+  });
+});
+
+describe('ED-12 measure duplication', () => {
+  it('copies local music and labels, while excluding incoming ties and repeat endings', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    const result = duplicateMusicXmlMeasure(rich, original.score, 1);
+    expect(result.excluded).toEqual(expect.arrayContaining(['cross-measure tie', 'repeat marker', 'repeat ending']));
+    const after = readMusicXml(result.source, 'rich.musicxml');
+    expect(after.score.masterBars).toHaveLength(3);
+    expect(after.score.masterBars[2].timeSignatureNumerator).toBe(3);
+    expect(after.score.tracks[0].staves[0].bars[2].voices[1].beats[0].notes[0].fret)
+      .toBe(original.score.tracks[0].staves[0].bars[1].voices[1].beats[0].notes[0].fret);
+    const xml = new DOMParser().parseFromString(result.source, 'application/xml');
+    const measures = Array.from(xml.getElementsByTagName('measure'));
+    expect(measures[2].getElementsByTagName('words')[0].textContent).toBe('Section B');
+    expect(measures[2].getElementsByTagName('tie')).toHaveLength(0);
+    expect(measures[2].getElementsByTagName('repeat')).toHaveLength(0);
+    expect(measures[1].getElementsByTagName('repeat')).toHaveLength(1);
+  });
+
+  it('blocks duplication that would split an outgoing cross-bar tie', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    expect(() => duplicateMusicXmlMeasure(rich, original.score, 0)).toThrow('split a cross-measure tie');
+    expect(() => duplicateMusicXmlMeasure(rich, original.score, -1)).toThrow('cannot be identified safely');
+  });
+
+  it('retains contained hammer/slide technique pairs and local section words', () => {
+    const untied = rich.replace(/<tie type="(?:start|stop)"\/>/g, '')
+      .replace(/<tied type="(?:start|stop)"\/>/g, '');
+    const original = readMusicXml(untied, 'rich.musicxml');
+    const result = duplicateMusicXmlMeasure(untied, original.score, 0);
+    const xml = new DOMParser().parseFromString(result.source, 'application/xml');
+    const copy = Array.from(xml.getElementsByTagName('measure'))[1];
+    expect(copy.getElementsByTagName('hammer-on')).toHaveLength(4);
+    expect(copy.getElementsByTagName('slide')).toHaveLength(4);
+    expect(copy.getElementsByTagName('words')[0].textContent).toBe('Section A');
+    expect(result.excluded).toContain('repeat marker');
+  });
+
+  it('excludes a cross-measure direction marker from the copy', () => {
+    const withWedge = rich.replace('<measure number="2">', '<measure number="2"><direction><direction-type><wedge number="1" type="crescendo"/></direction-type></direction>');
+    const original = readMusicXml(withWedge, 'rich.musicxml');
+    const result = duplicateMusicXmlMeasure(withWedge, original.score, 1);
+    expect(result.excluded).toContain('cross-measure direction span');
+    const xml = new DOMParser().parseFromString(result.source, 'application/xml');
+    expect(Array.from(xml.getElementsByTagName('measure'))[2].getElementsByTagName('wedge')).toHaveLength(0);
   });
 });
