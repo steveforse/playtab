@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { DOMParser } from '@xmldom/xmldom';
+import fs from 'node:fs';
 
 test('ED-12 inserts an inherited-meter rest measure and undoes it', async ({ page }) => {
   await page.goto('/');
@@ -86,4 +87,31 @@ test('ED-12 keeps original and copied note targets distinct after duplication', 
   expect(fourthStringFrets(measures[1])).toContain('7');
   expect(fourthStringFrets(measures[2])).toContain('9');
   expect(fourthStringFrets(measures[1])).not.toContain('9');
+});
+
+test('ED-12 confirms a safe deletion, clears the target, and restores it with Undo', async ({ page }) => {
+  const source = fs.readFileSync('tests/fixtures/editor-rich.musicxml', 'utf8')
+    .replace(/<(?:tie|tied|repeat|ending)[^>]*\/>/g, '');
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'delete-test.musicxml',
+    mimeType: 'application/vnd.recordare.musicxml+xml', buffer: Buffer.from(source) });
+  const firstFret = page.getByTestId('notation').locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(firstFret).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const box = (await firstFret.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByText('Measure', { exact: true }).last().click();
+  await page.getByRole('button', { name: 'Delete measure…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete measure' });
+  await expect(dialog).toContainText('local label');
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('combobox', { name: 'Selection measure' }).locator('option')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Delete measure…' }).click();
+  await dialog.getByRole('button', { name: 'Delete measure', exact: true }).click();
+  await expect(page.getByText('Measure deleted. Edit selection cleared.')).toBeVisible();
+  await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^0$/ }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByLabel('Selection inspector')).toContainText('Measure 1');
+  await expect(page.getByRole('combobox', { name: 'Selection measure' }).locator('option')).toHaveCount(2);
 });

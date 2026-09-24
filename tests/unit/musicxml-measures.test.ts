@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { duplicateMusicXmlMeasure, insertMusicXmlMeasure } from '../../app/frontend/music/musicxml-editor';
+import { deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -125,5 +125,68 @@ describe('ED-12 measure duplication', () => {
     expect(result.excluded).toContain('cross-measure direction span');
     const xml = new DOMParser().parseFromString(result.source, 'application/xml');
     expect(Array.from(xml.getElementsByTagName('measure'))[2].getElementsByTagName('wedge')).toHaveLength(0);
+  });
+});
+
+describe('ED-12 measure deletion', () => {
+  it('removes a safe first bar and preserves the later bar’s effective attributes', () => {
+    const source = rich.replace(/<(?:tie|tied|repeat|ending)[^>]*\/>/g, '');
+    const original = readMusicXml(source, 'rich.musicxml');
+    const result = deleteMusicXmlMeasure(source, original.score, 0);
+    expect(result.noteCount).toBeGreaterThan(0);
+    expect(result.labelCount).toBeGreaterThan(0);
+    const after = readMusicXml(result.source, 'rich.musicxml');
+    expect(after.score.masterBars).toHaveLength(1);
+    expect(after.score.masterBars[0].timeSignatureNumerator).toBe(3);
+    const xml = new DOMParser().parseFromString(result.source, 'application/xml');
+    const remaining = xml.getElementsByTagName('measure')[0];
+    expect(remaining.getAttribute('number')).toBe('1');
+    expect(remaining.getElementsByTagName('staff-tuning')).toHaveLength(5);
+  });
+
+  it('can delete a safe final bar and rejects unsupported inherited attributes', () => {
+    const source = rich.replace(/<(?:tie|tied|repeat|ending)[^>]*\/>/g, '');
+    const original = readMusicXml(source, 'rich.musicxml');
+    const result = deleteMusicXmlMeasure(source, original.score, 1);
+    expect(readMusicXml(result.source, 'rich.musicxml').score.masterBars).toHaveLength(1);
+    const unsupported = source.replace('<attributes><divisions>1</divisions>',
+      '<attributes><transpose><diatonic>0</diatonic><chromatic>2</chromatic></transpose><divisions>1</divisions>');
+    expect(() => deleteMusicXmlMeasure(unsupported, original.score, 0))
+      .toThrow('unsupported transpose');
+  });
+
+  it('blocks the only bar and names repeat, ending, and cross-measure tie dependencies', () => {
+    const single = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
+    expect(() => deleteMusicXmlMeasure(single, readMusicXml(single, 'single.musicxml').score, 0)).toThrow('last remaining measure');
+    const original = readMusicXml(rich, 'rich.musicxml');
+    expect(() => deleteMusicXmlMeasure(rich, original.score, 0)).toThrow('repeat endpoint');
+    expect(() => deleteMusicXmlMeasure(rich, original.score, 1)).toThrow('ending endpoint');
+    const withoutRepeat = rich.replace(/<repeat[^>]*\/>/g, '').replace(/<ending[^>]*\/>/g, '');
+    expect(() => deleteMusicXmlMeasure(withoutRepeat, readMusicXml(withoutRepeat, 'rich.musicxml').score, 0))
+      .toThrow('cross-measure tie');
+  });
+
+  it('materializes inherited 3/4 meter, tuning, and tempo on the next survivor', () => {
+    const untied = rich.replace(/<(?:tie|tied|repeat|ending)[^>]*\/>/g, '');
+    const third = `<measure number="3">
+      <note><rest/><duration>3</duration><voice>1</voice><type>half</type><dot/><staff>1</staff></note>
+      <backup><duration>3</duration></backup><note><rest/><duration>3</duration><voice>3</voice><type>half</type><dot/><staff>1</staff></note>
+      <backup><duration>3</duration></backup><note><rest/><duration>3</duration><voice>2</voice><type>half</type><dot/><staff>2</staff></note>
+      <backup><duration>3</duration></backup><note><rest/><duration>3</duration><voice>4</voice><type>half</type><dot/><staff>2</staff></note>
+    </measure>`;
+    const source = untied.replace('</part>', `${third}</part>`);
+    const original = readMusicXml(source, 'rich.musicxml');
+    const beforeTuning = [...original.score.tracks[0].staves[0].tuning];
+    const result = deleteMusicXmlMeasure(source, original.score, 1);
+    expect(result).toMatchObject({ noteCount: expect.any(Number), restCount: expect.any(Number) });
+    const after = readMusicXml(result.source, 'rich.musicxml');
+    expect(after.score.masterBars).toHaveLength(2);
+    expect(after.score.masterBars[1].timeSignatureNumerator).toBe(3);
+    expect(after.score.tracks[0].staves[0].tuning).toEqual(beforeTuning);
+    const xml = new DOMParser().parseFromString(result.source, 'application/xml');
+    const next = Array.from(xml.getElementsByTagName('measure'))[1];
+    expect(next.getElementsByTagName('time')[0].getElementsByTagName('beats')[0].textContent).toBe('3');
+    expect(next.getElementsByTagName('sound')[0].getAttribute('tempo')).toBe('108');
+    expect(next.getElementsByTagName('staff-tuning')).toHaveLength(5);
   });
 });
