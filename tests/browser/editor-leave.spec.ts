@@ -25,12 +25,14 @@ test('ED-08 guards leaving an edited score and saves the final draft before cont
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('4');
   await page.getByRole('button', { name: '＋ New score' }).click();
+  await page.getByRole('dialog', { name: 'New score' }).getByRole('button', { name: 'Create score' }).click();
   await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('unsaved-navigation.png') });
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByRole('button', { name: '＋ New score' })).toBeFocused();
   await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^4$/ })).toHaveCount(1);
   await page.getByRole('button', { name: '＋ New score' }).click();
+  await page.getByRole('dialog', { name: 'New score' }).getByRole('button', { name: 'Create score' }).click();
   await page.getByRole('button', { name: 'Save and continue' }).click();
   await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toHaveCount(0);
   await expect(page.getByText('Not saved to library')).toBeVisible();

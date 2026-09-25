@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSelection } from './Player';
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
-import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
+import { createBlankMusicXml, OPEN_G_TUNING, promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
@@ -198,6 +198,11 @@ export function App() {
   const [standaloneError, setStandaloneError] = useState('');
   const standaloneDialog = useRef<HTMLDialogElement>(null);
   const textOpener = useRef<HTMLElement | null>(null);
+  const [newScoreOpen, setNewScoreOpen] = useState(false);
+  const [newScoreDraft, setNewScoreDraft] = useState({ title: 'Untitled', tempo: '96', numerator: '4', denominator: '4', measures: '8', tuningPreset: 'open-g', tuning: OPEN_G_TUNING.map(String) });
+  const [newScoreError, setNewScoreError] = useState('');
+  const newScoreDialog = useRef<HTMLDialogElement>(null);
+  const newScoreOpener = useRef<HTMLElement | null>(null);
   const [clipboard, setClipboard] = useState<MeasureClipboard | null>(null);
   const [pasteTarget, setPasteTarget] = useState<PasteTarget | null>(null);
   const [pasteMode, setPasteMode] = useState<TuningMode>('frets');
@@ -391,6 +396,12 @@ export function App() {
       else if (!open && dialog.open) { dialog.close(); if (textOpener.current?.isConnected) textOpener.current.focus({ preventScroll: true }); }
     }
   }, [lyricTarget, standaloneTarget, settingsTarget, tempoTarget, pasteTarget, cutTarget]);
+  useEffect(() => {
+    const dialog = newScoreDialog.current;
+    if (!dialog) return;
+    if (newScoreOpen && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLInputElement>('[data-new-first]')?.select(); }
+    else if (!newScoreOpen && dialog.open) { dialog.close(); if (newScoreOpener.current?.isConnected) newScoreOpener.current.focus({ preventScroll: true }); }
+  }, [newScoreOpen]);
   useEffect(() => {
     const dialog = bendDialog.current;
     if (!dialog) return;
@@ -1203,6 +1214,31 @@ export function App() {
         : `Pasted ${plural} before measure ${measure}; they are now measures ${measure}–${measure + count - 1}.`);
     } catch (failure) { setPasteError((failure as Error).message); }
   }
+  function openNewScoreDialog(opener: HTMLElement) {
+    newScoreOpener.current = opener;
+    setNewScoreDraft({ title: 'Untitled', tempo: '96', numerator: '4', denominator: '4', measures: '8', tuningPreset: 'open-g', tuning: OPEN_G_TUNING.map(String) });
+    setNewScoreError(''); setNewScoreOpen(true);
+  }
+  function createNewScore() {
+    let source: string;
+    const title = newScoreDraft.title.trim();
+    try {
+      source = createBlankMusicXml({ title, tempo: Number(newScoreDraft.tempo), numerator: Number(newScoreDraft.numerator),
+        denominator: Number(newScoreDraft.denominator), measures: Number(newScoreDraft.measures),
+        tuning: newScoreDraft.tuningPreset === 'open-g' ? OPEN_G_TUNING : newScoreDraft.tuning.map(Number) });
+    } catch (failure) { setNewScoreError((failure as Error).message); return; }
+    setNewScoreOpen(false);
+    requestLeave(() => {
+      try {
+        const created = withPreviewTitle(readMusicXml(source, `${title.slice(0, 148)}.musicxml`, 'musicxml'), title);
+        loadPreview(created, [], null, null, source);
+        setEditMode(true);
+        setSelection(selectionAtPosition({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 1, kind: 'empty', noteId: null, fret: null,
+          graceIndex: null, graceGroupId: null }, demo, created, {}));
+        setMessage(`New score “${title}” created. It is not saved until you choose Save to library.`);
+      } catch (failure) { setError((failure as Error).message); }
+    }, newScoreOpener.current);
+  }
   function openPickupDialog(opener: HTMLElement) {
     if (!selection || selection.measure !== 1) return;
     if (pendingFret) { setError('Apply the pending fret before changing the pickup.'); return; }
@@ -1671,7 +1707,7 @@ export function App() {
     <aside className="sidebar">
       <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
       <div className="sidebar-section">YOUR WORKSPACE</div>
-      <button type="button" className="nav-item" onClick={event => requestLeave(() => load(demo, null), event.currentTarget)}>＋ <span>New score</span></button>
+      <button type="button" className="nav-item" onClick={event => openNewScoreDialog(event.currentTarget)}>＋ <span>New score</span></button>
       <button className="nav-item active" aria-expanded={!libraryCollapsed} onClick={() => { if (editMode) setLibraryCollapsed(current => !current); else document.getElementById('library-list')?.scrollIntoView(); }}>▤ <span>My library</span><span className="count">{library.length}</span></button>
       {!libraryCollapsed && <div className="library-list" id="library-list">
         {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={event => requestLeave(() => load(demo, null), event.currentTarget)}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => void openSong(item.id)}>{item.title}</button>)}
@@ -2104,6 +2140,37 @@ export function App() {
           <button type="button" data-text-first="" onClick={() => setCutTarget(null)}>Cancel</button>
           <button type="button" onClick={confirmCut}>Cut</button>
         </div>
+      </>}
+    </dialog>
+    <dialog ref={newScoreDialog} className="duplicate-dialog settings-dialog" aria-label="New score" onCancel={event => { event.preventDefault(); setNewScoreOpen(false); }}>
+      {newScoreOpen && <>
+      <h2>New score</h2>
+      <label className="anchor-text">Title<input aria-label="New score title" data-new-first="" maxLength={160} value={newScoreDraft.title}
+        onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, title: event.target.value })); }} /></label>
+      <div className="insert-dialog-fields">
+        <label>Tempo (BPM)<input aria-label="New score tempo" type="number" inputMode="numeric" min={30} max={240} value={newScoreDraft.tempo}
+          onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, tempo: event.target.value })); }} /></label>
+        <label>Measures<input aria-label="New score measures" type="number" inputMode="numeric" min={1} max={256} value={newScoreDraft.measures}
+          onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, measures: event.target.value })); }} /></label>
+        <label>Beats<select aria-label="New score beats" value={newScoreDraft.numerator} onChange={event => setNewScoreDraft(draft => ({ ...draft, numerator: event.target.value }))}>
+          {Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
+        <label>Beat unit<select aria-label="New score beat unit" value={newScoreDraft.denominator} onChange={event => setNewScoreDraft(draft => ({ ...draft, denominator: event.target.value }))}>
+          {[2, 4, 8, 16].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+      </div>
+      <fieldset className="settings-mode"><legend>Tuning</legend>
+        <label><input type="radio" name="new-tuning" checked={newScoreDraft.tuningPreset === 'open-g'} onChange={() => setNewScoreDraft(draft => ({ ...draft, tuningPreset: 'open-g' }))} />Open G (gDGBD)</label>
+        <label><input type="radio" name="new-tuning" checked={newScoreDraft.tuningPreset === 'custom'} onChange={() => setNewScoreDraft(draft => ({ ...draft, tuningPreset: 'custom' }))} />Custom</label>
+      </fieldset>
+      {newScoreDraft.tuningPreset === 'custom' && <fieldset className="settings-tuning"><legend>Open-string MIDI pitch</legend>
+        {newScoreDraft.tuning.map((value, index) => <label key={index}>String {index + 1}<input aria-label={`New score string ${index + 1} pitch`} type="number" inputMode="numeric" min={36} max={96}
+          value={value} onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, tuning: draft.tuning.map((item, at) => at === index ? event.target.value : item) })); }} />
+          <span>{midiName(Number(value))}</span></label>)}
+      </fieldset>}
+      {newScoreError && <p className="alert" role="alert">{newScoreError}</p>}
+      <div className="duplicate-dialog-actions">
+        <button type="button" onClick={() => setNewScoreOpen(false)}>Cancel</button>
+        <button type="button" onClick={createNewScore}>Create score</button>
+      </div>
       </>}
     </dialog>
     <dialog ref={settingsDialog} className="duplicate-dialog settings-dialog" aria-label="Score settings" onCancel={event => { event.preventDefault(); setSettingsTarget(null); }}>
