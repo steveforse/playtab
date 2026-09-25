@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type ContextMenuRequest, type PlayerC
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { createBlankMusicXml, OPEN_G_TUNING, promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
-  deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
+import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+  deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type PickingHand, type GraceEventSpec, type GraceTransition, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -61,13 +61,15 @@ import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
 import { TempoDialog } from './editor/dialogs/TempoDialog';
 import { CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
 import { SelectionInspector } from './editor/sidebar/SelectionInspector';
+import { inspectSelection, tiePosition } from './editor/selectionInfo';
+import { useEditorShortcuts } from './editor/useEditorShortcuts';
 import { ContextMenu, type MenuEntry } from './editor/ContextMenu';
 import { EditorToolbar } from './editor/EditorToolbar';
 import { DURATION_COMMANDS, RhythmTools } from './editor/sidebar/RhythmTools';
 import { TechniqueTools, TRANSITION_COMMANDS } from './editor/sidebar/TechniqueTools';
 import { InsertEventDialog, type InsertEventDraft } from './editor/dialogs/InsertEventDialog';
 import { ConflictDialog, DiscardDialog, LeaveDialog, RemovalDialog, SaveCopyDialog } from './editor/dialogs/SessionDialogs';
-import { ANCHOR_NAMES, BEND_LABELS, capitalized, CHORD_QUALITIES, CHORD_STEPS, DEFAULT_CHORD, midiName, TRANSITION_NAMES } from './editor/labels';
+import { ANCHOR_NAMES, BEND_LABELS, capitalized, CHORD_QUALITIES, CHORD_STEPS, DEFAULT_CHORD, TRANSITION_NAMES } from './editor/labels';
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
 const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
@@ -112,10 +114,6 @@ function shiftedMeasureCarries(preview: MusicXmlPreview, insertionIndex: number)
 }
 function deletedMeasureCarries(preview: MusicXmlPreview, deletedIndex: number): IdentityCarry[] {
   return readdressMeasureCarries(preview, index => index === deletedIndex ? null : index > deletedIndex ? index - 1 : index);
-}
-function tiePosition(selection: ScoreSelection): TiePosition {
-  return { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice,
-    string: selection.string!, fret: selection.fret! };
 }
 function refreshStructuralSelection(selection: ScoreSelection, preview: MusicXmlPreview) {
   selection.sourceMeasureId = preview.sourceIdentity?.measureIds[selection.measure - 1];
@@ -409,52 +407,21 @@ export function App() {
     });
   }
   function documentRefocus() { document.querySelector<HTMLElement>('[data-testid="notation"]')?.focus({ preventScroll: true }); }
-  const historyAction = useRef(moveHistory);
-  historyAction.current = moveHistory;
   // Ctrl/Cmd+C, X and V act on the editing range and Playtab's measure
   // clipboard; without a range they leave the browser's own behaviour alone.
-  const clipboardAction = useRef<(key: 'c' | 'x' | 'v') => boolean>(() => false);
-  clipboardAction.current = key => {
-    const active = document.activeElement;
-    const opener = (active instanceof HTMLElement && active !== document.body ? active : document.querySelector<HTMLElement>('[data-testid="notation"]')) ?? document.body;
-    if (key === 'c') { if (!passage) return false; copyPassage(); return true; }
-    if (key === 'x') { if (!passage) return false; openCutDialog(opener); return true; }
-    if (!clipboard || !selection) return false;
-    openPasteDialog(opener);
-    return true;
-  };
-  const saveShortcut = useRef<() => void>(() => undefined);
-  saveShortcut.current = () => { void saveCurrent(); };
-  useEffect(() => {
-    // Ctrl/Cmd+S saves the workspace draft (committing a valid pending fret)
-    // instead of opening the browser's save-page dialog.
-    const keydown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return;
-      event.preventDefault();
-      saveShortcut.current();
-    };
-    document.addEventListener('keydown', keydown, true);
-    return () => document.removeEventListener('keydown', keydown, true);
-  }, []);
-  useEffect(() => {
-    if (!editMode) return;
-    const keydown = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (target instanceof HTMLElement && (target.closest('input, textarea, select, [contenteditable="true"]'))) return;
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-      const key = event.key.toLowerCase();
-      if ((key === 'c' || key === 'x' || key === 'v') && !event.shiftKey) {
-        if (target instanceof HTMLElement && target.closest('dialog')) return;
-        if (clipboardAction.current(key)) event.preventDefault();
-        return;
-      }
-      if (key !== 'z' && key !== 'y') return;
-      event.preventDefault();
-      historyAction.current(key === 'y' || event.shiftKey ? 'redo' : 'undo');
-    };
-    document.addEventListener('keydown', keydown, true);
-    return () => document.removeEventListener('keydown', keydown, true);
-  }, [editMode]);
+  useEditorShortcuts(editMode, {
+    save: () => { void saveCurrent(); },
+    history: moveHistory,
+    clipboard: key => {
+      const active = document.activeElement;
+      const opener = (active instanceof HTMLElement && active !== document.body ? active : document.querySelector<HTMLElement>('[data-testid="notation"]')) ?? document.body;
+      if (key === 'c') { if (!passage) return false; copyPassage(); return true; }
+      if (key === 'x') { if (!passage) return false; openCutDialog(opener); return true; }
+      if (!clipboard || !selection) return false;
+      openPasteDialog(opener);
+      return true;
+    },
+  });
   function updateSelectedScore(selectionToEdit: ScoreSelection, editNative: (notes: { string: number; fret: number }[]) => void, editImported: (note: ReturnType<typeof musicXmlEditorState>['notes'][number]) => void, afterSelection: ScoreSelection, description: string, group?: string, movedToString?: number) {
     if (preview) {
       if (selectionToEdit.string === null) return false;
@@ -1590,83 +1557,8 @@ export function App() {
   }
   // Read-only facts about the selected location: exact offset from the bar
   // start, sounding pitch, grace-group navigation, and string-move outcome.
-  const selectedBeats = selection ? preview?.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats : undefined;
-  const selectedDetails = (() => {
-    if (!selection) return null;
-    const gcd = (left: number, right: number): number => right ? gcd(right, left % right) : left;
-    let numerator = 0; let denominator = 1; let pitch: number | null = null; const tuning = preview ? preview.score.tracks?.[0]?.staves?.[0]?.tuning ?? [] : score.tuning;
-    if (preview) {
-      const beat = selectedBeats?.[selection.event - 1];
-      if (!beat) return null;
-      const ticks = Math.round(beat.playbackStart);
-      const divisor = gcd(ticks, 960) || 960;
-      numerator = ticks / divisor; denominator = 960 / divisor;
-      const note = beat.notes.find(item => selection.string !== null && 6 - item.string === selection.string);
-      pitch = note ? note.realValue : null;
-    } else {
-      const beats = score.measures[selection.measure - 1]?.beats ?? [];
-      const sixteenths = beats.slice(0, selection.event - 1).reduce((sum, beat) => sum + 16 / beat.duration, 0);
-      const divisor = gcd(sixteenths, 4) || 4;
-      numerator = sixteenths / divisor; denominator = 4 / divisor;
-      const note = beats[selection.event - 1]?.notes.find(item => item.string === selection.string);
-      pitch = note ? tuning[note.string - 1] + note.fret : null;
-    }
-    const offset = numerator === 0 ? 'Offset 0' : `Offset ${denominator === 1 ? numerator : `${numerator}/${denominator}`} quarter note${numerator / denominator > 1 ? 's' : ''}`;
-    let grace: { options: { label: string; event: number }[] } | null = null;
-    if (selectedBeats) {
-      const index = selection.event - 1;
-      let destination = index;
-      while (selectedBeats[destination]?.graceType) destination++;
-      let start = destination;
-      while (start > 0 && selectedBeats[start - 1]?.graceType) start--;
-      if (start < destination && selectedBeats[destination]) {
-        grace = { options: [...Array.from({ length: destination - start }, (_, at) => ({ label: `Grace ${at + 1}`, event: start + at + 1 })), { label: 'Main', event: destination + 1 }] };
-      }
-    }
-    return { offset, pitch: pitch === null ? 'Rest / empty string' : midiName(pitch), pitchValue: pitch, tuning, grace };
-  })();
-  const moveOutcome = (() => {
-    if (!selection || selection.kind !== 'note' || selection.fret === null || !selectedDetails || selectedDetails.pitchValue === null) return null;
-    const destination = Number(moveString);
-    if (!Number.isInteger(destination) || destination === selection.string) return null;
-    const fret = moveMode === 'fret' ? selection.fret : selectedDetails.pitchValue - selectedDetails.tuning[destination - 1];
-    const occupied = preview ? selectedBeats?.[selection.event - 1]?.notes.some(note => 6 - note.string === destination)
-      : score.measures[selection.measure - 1]?.beats[selection.event - 1]?.notes.some(note => note.string === destination);
-    const reason = occupied ? `String ${destination} already has a note in this event.`
-      : !Number.isInteger(fret) || fret < 0 || fret > 36 ? `Keeping the pitch would need fret ${fret} on string ${destination}, outside 0–36.` : null;
-    return { destination, fret, pitch: midiName(selectedDetails.tuning[destination - 1] + fret), reason };
-  })();
-  const selectedEventCount = selection ? (preview
-    ? preview.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats.length ?? 1
-    : score.measures[selection.measure - 1]?.beats.length ?? 1) : 1;
-  const selectedRhythm = selection ? preview
-    ? inspectMusicXmlDuration(preview.source, { measure: selection.measure - 1, beat: selection.event - 1,
-      voice: selection.voice - 1 })
-    : { denominator: score.measures[selection.measure - 1]?.beats[selection.event - 1]?.duration ?? null,
-      dots: 0, rest: selection.kind === 'rest', reason: undefined } : null;
-  const selectedTriplet = selection && preview ? inspectMusicXmlTriplet(preview.source,
-    { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 }) : null;
-  const selectedTupletLocked = Boolean(selectedTriplet?.triplet || selectedTriplet?.reason);
-  const selectedTransitions: NoteTransition[] = (() => {
-    if (!selection || !preview || selection.kind !== 'note' || selection.string === null || selection.fret === null) return [];
-    try { return inspectMusicXmlTransitions(preview.source, preview.score, tiePosition(selection)).filter(item => item.kind !== 'tie'); }
-    catch { return []; }
-  })();
-  const selectedTie = (() => {
-    if (!selection || !preview || selection.kind !== 'note' || selection.string === null || selection.fret === null) return false;
-    try { return inspectMusicXmlTie(preview.source, preview.score, tiePosition(selection)).canRemove; }
-    catch { return false; }
-  })();
-  const selectedTechniques: NoteTechniqueInfo | null = (() => {
-    if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) return null;
-    if (!preview) return { picking: 'none', fretting: 'none', bend: 'none' };
-    try { return inspectMusicXmlNoteTechniques(preview.source, preview.score, tiePosition(selection)); }
-    catch (failure) {
-      const reason = (failure as Error).message;
-      return { picking: null, pickingReason: reason, fretting: null, frettingReason: reason, bend: null, bendReason: reason };
-    }
-  })();
-  const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || selectedBeats?.[selection.event - 2]?.graceType));
+  const { selectedBeats, selectedDetails, moveOutcome, selectedEventCount, selectedRhythm, selectedTriplet, selectedTupletLocked,
+    selectedTransitions, selectedTie, selectedTechniques, selectedHasGrace } = inspectSelection(selection, preview, score, moveString, moveMode);
   const measureCount = preview?.score.masterBars.length ?? score.measures.length;
   const onSelection = (run: (current: ScoreSelection) => void) => (_opener: HTMLElement) => { if (selection) run(selection); };
   const noteSelected = selection?.kind === 'note';
