@@ -27,7 +27,7 @@ vi.mock('../../app/frontend/Player', () => ({
     <button type="button" data-testid="choose-range" onClick={() => onPassageChange?.({
       start: { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null },
       end: { track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 2, graceIndex: null, graceGroupId: null } })}>Choose range</button>
-    {['1', '2', '3', '4', '0', 'Enter', 'Escape', 'Backspace', 'Tab'].map(key => <button key={key} type="button" data-testid={`key-${key}`} onClick={() => { if (!onFretKey?.(selection, key) && key === 'Backspace') onSelectionDelete?.(selection); }}>{`Key ${key}`}</button>)}
+    {['1', '2', '3', '4', '5', '9', '0', 'Enter', 'Escape', 'Backspace', 'Tab'].map(key => <button key={key} type="button" data-testid={`key-${key}`} onClick={() => { if (!onFretKey?.(selection, key) && key === 'Backspace') onSelectionDelete?.(selection); }}>{`Key ${key}`}</button>)}
     <button type="button" data-testid="navigate" onClick={() => onBeforeNavigate?.()}>Navigate</button>
     <button type="button" data-testid="render-ok" onClick={() => onRenderResult?.({ ok: true })}>Rendered</button>
     <button type="button" data-testid="render-fail" onClick={() => onRenderResult?.({ ok: false, message: 'Layout failed.' })}>Render failed</button>
@@ -2042,48 +2042,36 @@ describe('workspace application', () => {
     expect(screen.getByText('Fret 0')).toBeTruthy();
   });
 
-  it('buffers typed frets until Enter and commits them once before moving elsewhere', async () => {
+  it('applies typed frets live, joins a quick second digit into one undo step and ignores other keys', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
     render(<App />);
     await screen.findByRole('button', { name: /Practice demo/ });
     fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
     fireEvent.click(screen.getByTestId('choose-note'));
     fireEvent.click(screen.getByTestId('key-1'));
+    expect(screen.getByText('Fret 1')).toBeTruthy();
+    expect(screen.getByLabelText('Fret entry').className).toContain('typing');
     fireEvent.click(screen.getByTestId('key-2'));
-    expect(screen.getByText('Fret 12 typed — press Enter to apply or Escape to cancel.')).toBeTruthy();
-    expect(screen.getByText('Fret 0')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
-    fireEvent.click(screen.getByTestId('key-3'));
-    expect(screen.getByText('Use a fret from 0 to 36.')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('key-Backspace'));
-    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('1');
-    fireEvent.click(screen.getByTestId('key-2'));
-    fireEvent.click(screen.getByTestId('key-Enter'));
     expect(screen.getByText('Fret 12')).toBeTruthy();
+    expect(screen.getByLabelText('Fret entry').textContent).toBe('12');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(screen.getByText('Fret 0')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
-    fireEvent.click(screen.getByTestId('key-4'));
-    fireEvent.click(screen.getByTestId('key-Escape'));
-    expect(screen.getByText('Fret entry cancelled.')).toBeTruthy();
-    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('0');
-    fireEvent.click(screen.getByTestId('key-Backspace'));
-    fireEvent.click(screen.getByTestId('choose-note'));
-    fireEvent.click(screen.getByTestId('key-4'));
-    fireEvent.click(screen.getByTestId('key-Backspace'));
-    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('0');
+    // 3 then 7 would be fret 37, so the 7 starts a new fret.
     fireEvent.click(screen.getByTestId('key-3'));
+    fireEvent.click(screen.getByTestId('key-Escape'));
+    fireEvent.click(screen.getByTestId('key-1'));
+    fireEvent.click(screen.getByTestId('key-9'));
+    expect(screen.getByText('Fret 19')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('key-Backspace'));
+    expect(screen.getByText('Fret 1')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('key-Enter'));
+    fireEvent.click(screen.getByTestId('key-Tab'));
     fireEvent.click(screen.getByTestId('choose-next-note'));
     expect(screen.getByText('Measure 2')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(screen.getByText('Fret 0')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('key-4'));
-    fireEvent.click(screen.getByTestId('key-0'));
-    fireEvent.click(screen.getByTestId('key-Enter'));
-    expect(screen.getByRole('alert').textContent).toContain('Frets must be whole numbers from 0 to 36.');
-    fireEvent.click(screen.getByTestId('choose-next-note'));
-    expect(screen.getAllByText('Measure 1').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByTestId('key-Tab'));
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.click(screen.getByTestId('key-5'));
+    expect(screen.getByText('Fret 5')).toBeTruthy();
   });
 
   it('shows offset and pitch, moves notes keeping fret or pitch, and lists keyboard shortcuts', async () => {

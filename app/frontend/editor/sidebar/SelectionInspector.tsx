@@ -8,10 +8,10 @@ type Navigation = Partial<Pick<ScoreSelection, 'measure' | 'event' | 'voice' | '
 
 // Where the selection is, how to move it, and the fret and string edits
 // for the selected position.
-export function SelectionInspector({ selection, details, measureCount, eventCount, onNavigate, fretDraft, onFretDraft, fretBuffered,
+export function SelectionInspector({ selection, details, measureCount, eventCount, onNavigate, fretDraft, onFretDraft,
   moveString, onMoveString, moveMode, onMoveMode, moveOutcome, commands }: {
   selection: ScoreSelection; details: SelectionDetails | null; measureCount: number; eventCount: number; onNavigate: (changes: Navigation) => void;
-  fretDraft: string; onFretDraft: (value: string) => void; fretBuffered: boolean;
+  fretDraft: string; onFretDraft: (value: string) => void;
   moveString: string; onMoveString: (value: string) => void; moveMode: 'fret' | 'pitch'; onMoveMode: (value: 'fret' | 'pitch') => void;
   moveOutcome: MoveOutcome | null; commands: EditorCommands;
 }) {
@@ -47,7 +47,6 @@ export function SelectionInspector({ selection, details, measureCount, eventCoun
         <CommandButton id="fret-higher" command={commands['fret-higher']} />
       </span></div>
       <CommandButton id="apply-fret" command={commands['apply-fret']} />
-      {fretBuffered && <p className="editor-fret-buffer" role="status">Fret {fretDraft} typed — press Enter to apply or Escape to cancel.</p>}
       {selection.kind === 'note' && <>
         <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => onMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
         <label>When moving<select aria-label="Move keeps" value={moveMode} onChange={event => onMoveMode(event.target.value as 'fret' | 'pitch')}>
