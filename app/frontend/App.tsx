@@ -7,7 +7,7 @@ import { createBlankMusicXml, OPEN_G_TUNING, promoteNativeScore, readMusicXml, t
 import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -52,6 +52,8 @@ import { CutDialog } from './editor/dialogs/CutDialog';
 import { KeyboardHelpDialog } from './editor/dialogs/KeyboardHelpDialog';
 import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
 import { TempoDialog } from './editor/dialogs/TempoDialog';
+import { InsertEventDialog, type InsertEventDraft } from './editor/dialogs/InsertEventDialog';
+import { ConflictDialog, DiscardDialog, LeaveDialog, RemovalDialog, SaveCopyDialog } from './editor/dialogs/SessionDialogs';
 import { ANCHOR_NAMES, BEND_LABELS, capitalized, CHORD_QUALITIES, CHORD_STEPS, DEFAULT_CHORD, midiName, TRANSITION_NAMES } from './editor/labels';
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
@@ -157,6 +159,7 @@ export function App() {
   const [conflicted, setConflicted] = useState(false);
   const [failedCopyName, setFailedCopyName] = useState<string | null>(null);
   const [copyTitle, setCopyTitle] = useState('');
+  const [copyOpen, setCopyOpen] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [showWarnings, setShowWarnings] = useState(false);
   const [showPracticeTip, setShowPracticeTip] = useState(true);
@@ -217,16 +220,7 @@ export function App() {
   const duplicateOpener = useRef<HTMLElement | null>(null);
   const deleteMeasureOpener = useRef<HTMLElement | null>(null);
   const [insertOpen, setInsertOpen] = useState(false);
-  const [insertDraft, setInsertDraft] = useState<Pick<InsertEventOptions, 'placement' | 'kind' | 'denominator' | 'dotted' | 'string' | 'fret'>>({
-    placement: 'after', kind: 'rest', denominator: 4, dotted: false, string: 1, fret: 0,
-  });
-  const insertDialog = useRef<HTMLDialogElement>(null);
   const insertOpener = useRef<HTMLElement | null>(null);
-  const removalDialog = useRef<HTMLDialogElement>(null);
-  const copyDialog = useRef<HTMLDialogElement>(null);
-  const leaveDialog = useRef<HTMLDialogElement>(null);
-  const discardDialog = useRef<HTMLDialogElement>(null);
-  const conflictDialog = useRef<HTMLDialogElement>(null);
   const leaveAction = useRef<(() => void | Promise<void>) | null>(null);
   const leaveOpener = useRef<HTMLElement | null>(null);
   const discardAction = useRef<(() => void | Promise<void>) | null>(null);
@@ -277,45 +271,6 @@ export function App() {
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, []);
-  useEffect(() => {
-    const element = leaveDialog.current;
-    if (!element) return;
-    if (leaveOpen && !element.open) { element.showModal(); element.querySelector<HTMLElement>('[data-leave-cancel]')?.focus(); }
-    else if (!leaveOpen && element.open) element.close();
-  }, [leaveOpen]);
-  useEffect(() => {
-    const element = discardDialog.current;
-    if (!element) return;
-    if (discardOpen && !element.open) { element.showModal(); element.querySelector<HTMLElement>('[data-discard-cancel]')?.focus(); }
-    else if (!discardOpen && element.open) element.close();
-  }, [discardOpen]);
-  useEffect(() => {
-    const element = conflictDialog.current;
-    if (!element) return;
-    if (conflictOpen && !element.open) { element.showModal(); element.querySelector<HTMLElement>('[data-conflict-keep]')?.focus(); }
-    else if (!conflictOpen && element.open) element.close();
-  }, [conflictOpen]);
-  useEffect(() => {
-    const dialog = removalDialog.current;
-    if (!dialog) return;
-    if (pendingRemoval) {
-      if (!dialog.open) dialog.showModal();
-      dialog.querySelector<HTMLElement>('[data-removal-cancel]')?.focus();
-    } else if (dialog.open) {
-      dialog.close();
-      if (removalOpener.current?.isConnected) removalOpener.current.focus({ preventScroll: true });
-      else documentRefocus();
-    }
-  }, [pendingRemoval]);
-  useEffect(() => {
-    const dialog = insertDialog.current;
-    if (!dialog) return;
-    if (insertOpen && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-insert-first]')?.focus(); }
-    else if (!insertOpen && dialog.open) {
-      dialog.close();
-      if (insertOpener.current?.isConnected) insertOpener.current.focus({ preventScroll: true });
-    }
-  }, [insertOpen]);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
     session.current++;
     const snapshot = { document: next, original, diagnostics, id, revision };
@@ -623,11 +578,9 @@ export function App() {
     if (pendingFret) { setError('Apply the pending fret before inserting an event.'); return; }
     insertOpener.current = opener;
     setError('');
-    setInsertDraft({ placement: 'after', kind: 'rest', denominator: 4, dotted: false,
-      string: selection.string ?? 1, fret: 0 });
     setInsertOpen(true);
   }
-  function confirmInsertEvent() {
+  function confirmInsertEvent(insertDraft: InsertEventDraft) {
     if (!selection) return;
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
@@ -1516,7 +1469,7 @@ export function App() {
   function openCopyDialog() {
     const name = (preview?.score.title ?? score.title).trim();
     setCopyTitle(`${name.slice(0, 153)} — copy`.slice(0, 160));
-    copyDialog.current?.showModal();
+    setCopyOpen(true);
   }
   async function readFile(file?: File) {
     if (!file) return;
@@ -1851,67 +1804,24 @@ export function App() {
     <BendDialog target={bendTarget} onApply={applyBend} onClose={() => setBendTarget(null)} returnFocus={bendOpener} />
     <PickupDialog target={pickupTarget} onApply={confirmPickupChange} onClose={() => setPickupTarget(null)} returnFocus={pickupOpener} />
     <DuplicateMeasureDialog pending={pendingDuplication} onConfirm={confirmDuplicateMeasure} onClose={() => setPendingDuplication(null)} returnFocus={duplicateOpener} />
-    <dialog ref={insertDialog} className="insert-dialog" aria-label="Insert event" onCancel={event => { event.preventDefault(); setInsertOpen(false); }}>
-      <h2>Insert event</h2>
-      <p>Following events move within this voice and measure. Trailing rests make room.</p>
-      {insertOpen && error && <p className="alert" role="alert">{error}</p>}
-      <div className="insert-dialog-fields">
-        <label>Position<select data-insert-first value={insertDraft.placement} onChange={event => setInsertDraft(current => ({ ...current, placement: event.target.value as 'before' | 'after' }))}><option value="before">Before</option><option value="after">After</option></select></label>
-        <label>Type<select value={insertDraft.kind} onChange={event => setInsertDraft(current => ({ ...current, kind: event.target.value as 'note' | 'rest' }))}><option value="note">Note</option><option value="rest">Rest</option></select></label>
-        <label>Duration<select value={insertDraft.denominator} onChange={event => setInsertDraft(current => ({ ...current, denominator: Number(event.target.value) as DurationDenominator }))}>{DURATION_DENOMINATORS.map(value => <option key={value} value={value}>{value === 1 ? '1' : `1/${value}`}</option>)}</select></label>
-        <label className="insert-dialog-check"><input type="checkbox" checked={insertDraft.dotted} onChange={event => setInsertDraft(current => ({ ...current, dotted: event.target.checked }))} />Dotted</label>
-        {insertDraft.kind === 'note' && <>
-          <label>String<select value={insertDraft.string} onChange={event => setInsertDraft(current => ({ ...current, string: Number(event.target.value) }))}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-          <label>Fret<input type="number" inputMode="numeric" min={0} max={36} step={1} value={insertDraft.fret} onChange={event => setInsertDraft(current => ({ ...current, fret: Number(event.target.value) }))} /></label>
-        </>}
-      </div>
-      <div className="insert-dialog-actions"><button type="button" onClick={() => setInsertOpen(false)}>Cancel</button><button type="button" onClick={confirmInsertEvent}>Insert</button></div>
-    </dialog>
-    <dialog ref={removalDialog} className="removal-dialog" aria-label="Confirm note removal" onCancel={event => { event.preventDefault(); setPendingRemoval(null); }}>
-      <h2>Remove connected music?</h2>
-      <p>This edit also removes or disconnects:</p>
-      <ul>{pendingRemoval?.dependencies.map(dependency => <li key={dependency}>{dependency}</li>)}</ul>
-      <div className="removal-dialog-actions">
-        <button type="button" data-removal-cancel onClick={() => setPendingRemoval(null)}>Cancel</button>
-        <button type="button" onClick={confirmRemoval}>{pendingRemoval?.mode === 'rest' ? 'Make rest' : pendingRemoval?.mode === 'grace' ? 'Remove grace' : 'Remove note'}</button>
-      </div>
-    </dialog>
-    <dialog ref={copyDialog} className="copy-dialog" aria-label="Save a copy">
-      <h2>Save a copy</h2>
-      <label>Copy title<input aria-label="Copy title" value={copyTitle} maxLength={160} onChange={event => setCopyTitle(event.target.value)} /></label>
-      <div className="copy-dialog-actions"><button type="button" onClick={() => copyDialog.current?.close()}>Cancel</button><button type="button" disabled={saving || !copyTitle.trim()} onClick={() => {
-        if (!commitPendingFret()) {
-          copyDialog.current?.close();
-          requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Fret"]')?.focus({ preventScroll: true }));
-          return;
-        }
-        copyDialog.current?.close(); void save(copyTitle.trim());
-      }}>Save copy</button></div>
-    </dialog>
-    <dialog ref={leaveDialog} className="guard-dialog" aria-label="Unsaved changes" onCancel={event => { event.preventDefault(); cancelLeave(); }}>
-      <h2>Save changes before leaving this score?</h2>
-      <p>Your unsaved edits will be lost if you discard them.</p>
-      {guardError && <p className="alert" role="alert">{guardError}</p>}
-      <div className="guard-dialog-actions">
-        <button type="button" data-leave-cancel onClick={cancelLeave}>Cancel</button>
-        <button type="button" disabled={saving} onClick={() => { const action = leaveAction.current; leaveAction.current = null; setLeaveOpen(false); if (action) void action(); }}>Discard</button>
-        <button type="button" disabled={saving} onClick={() => void saveAndContinue()}>Save and continue</button>
-      </div>
-    </dialog>
-    <dialog ref={discardDialog} className="guard-dialog" aria-label="Discard unsaved changes" onCancel={event => { event.preventDefault(); setDiscardOpen(false); }}>
-      <h2>Discard unsaved changes?</h2>
-      <p>This restores the last saved version, or the score as you first opened it.</p>
-      <div className="guard-dialog-actions"><button type="button" data-discard-cancel onClick={() => setDiscardOpen(false)}>Cancel</button><button type="button" onClick={() => void confirmDiscard()}>Discard changes</button></div>
-    </dialog>
-    <dialog ref={conflictDialog} className="guard-dialog" aria-label="Score changed in another tab" onCancel={event => { event.preventDefault(); setConflictOpen(false); }}>
-      <h2>This score changed in another tab.</h2>
-      <p>Your draft is still here. Choose how to continue; Playtab will not overwrite the newer saved version.</p>
-      <div className="guard-dialog-actions">
-        <button type="button" data-conflict-keep onClick={() => setConflictOpen(false)}>Keep editing</button>
-        <button type="button" onClick={() => { setConflictOpen(false); requestAnimationFrame(openCopyDialog); }}>Save as copy…</button>
-        <button type="button" onClick={() => { setConflictOpen(false); askDiscard(() => reloadSavedVersion()); }}>Reload saved version…</button>
-      </div>
-    </dialog>
+    <InsertEventDialog open={insertOpen} initialString={selection?.string ?? 1} error={error} onInsert={confirmInsertEvent}
+      onClose={() => setInsertOpen(false)} returnFocus={insertOpener} />
+    <RemovalDialog pending={pendingRemoval} onConfirm={confirmRemoval} onClose={() => setPendingRemoval(null)} returnFocus={removalOpener} onFocusFallback={documentRefocus} />
+    <SaveCopyDialog open={copyOpen} initialTitle={copyTitle} saving={saving} onClose={() => setCopyOpen(false)} onSave={title => {
+      setCopyOpen(false);
+      if (!commitPendingFret()) {
+        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[aria-label="Fret"]')?.focus({ preventScroll: true }));
+        return;
+      }
+      void save(title);
+    }} />
+    <LeaveDialog open={leaveOpen} error={guardError} saving={saving} onCancel={cancelLeave}
+      onDiscard={() => { const action = leaveAction.current; leaveAction.current = null; setLeaveOpen(false); if (action) void action(); }}
+      onSaveAndContinue={() => void saveAndContinue()} />
+    <DiscardDialog open={discardOpen} onCancel={() => setDiscardOpen(false)} onDiscard={() => void confirmDiscard()} />
+    <ConflictDialog open={conflictOpen} onKeep={() => setConflictOpen(false)}
+      onSaveCopy={() => { setConflictOpen(false); requestAnimationFrame(openCopyDialog); }}
+      onReload={() => { setConflictOpen(false); askDiscard(() => reloadSavedVersion()); }} />
     <dialog ref={dialog} className="import-dialog">
       <div className="dialog-heading"><div><div className="eyebrow">BRING YOUR OWN MUSIC</div><h2>Import a tab</h2></div><button className="icon-button" aria-label="Close import" onClick={() => dialog.current?.close()}>×</button></div>
       <p>Open a TEF or PDF to convert and play it, or preview uncompressed MusicXML. You can also paste simple five-string tablature below.</p>
