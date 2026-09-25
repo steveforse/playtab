@@ -26,10 +26,10 @@ export function TechniqueTools({ selection, techniques, onHand, transitions, onR
         {techniques.fretting === null && <option value="">Kept as written</option>}
         <option value="none">None</option>{['1', '2', '3', '4'].map(value => <option key={value} value={value}>{value}</option>)}<option value="T">Thumb</option></select></label>
       {techniques.frettingReason && <p className="editor-rhythm-reason">{techniques.frettingReason}</p>}
-      <CommandButton command={commands.bend} />
+      <CommandButton id="bend" command={commands.bend} />
     </div>}
     <div className="editor-transition-buttons"><CommandButtons commands={commands} ids={TRANSITION_COMMANDS} /></div>
-    <CommandButton command={commands['remove-tie']} />
+    <CommandButton id="remove-tie" command={commands['remove-tie']} />
     {transitions.map(item => <button key={`${item.kind}:${item.direction}`} type="button" onClick={() => onRemoveTransition(item)}>
       Remove {TRANSITION_NAMES[item.kind]} {item.direction === 'outgoing' ? 'to' : 'from'} {item.other ? `m${item.other.measure} e${item.other.event}` : 'its other note'}</button>)}
     {pendingTransition && <div className="editor-tie-pending" role="status">
