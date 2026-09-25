@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -32,7 +32,7 @@ type LyricTarget = { originalKey: string; base: MusicXmlPreview; selection: Scor
 type StandaloneTarget = { originalKey: string; base: MusicXmlPreview };
 type SettingsTarget = { originalKey: string; base: MusicXmlPreview; info: ScoreSettingsInfo };
 type TempoTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; info: LocalTempoInfo };
-type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection };
+type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection; kind: TransitionKind };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 const BEND_LABELS: Record<BendAmount, string> = { 1: '1/2 step', 2: 'Whole step', 3: '1½ steps', 4: '2 steps' };
 const ANCHOR_NAMES: Record<AnchorKind, { title: string; item: string }> = {
@@ -43,6 +43,8 @@ const CHORD_STEPS: ChordRoot['step'][] = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const DEFAULT_CHORD: ChordSpelling = { step: 'C', alter: 0, quality: 'major', bass: null };
 const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const midiName = (midi: number) => Number.isInteger(midi) ? `${NOTE_NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}` : '—';
+const TRANSITION_NAMES: Record<TransitionKind, string> = { tie: 'tie', 'hammer-on': 'hammer-on', 'pull-off': 'pull-off', slide: 'slide' };
+const capitalized = (value: string) => `${value[0].toUpperCase()}${value.slice(1)}`;
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
 const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
@@ -1129,38 +1131,58 @@ export function App() {
       setMessage('Pickup length changed. Edit and playback selections cleared.'); setError('');
     } catch (failure) { setPickupApplyError((failure as Error).message); }
   }
-  function beginTie() {
+  function beginTransition(kind: TransitionKind) {
+    const name = TRANSITION_NAMES[kind];
     if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) {
-      setError('Select a pitched note as the tie origin.'); return;
+      setError(`Select a pitched note as the ${name} origin.`); return;
     }
-    if (pendingFret) { setError('Apply the pending fret before starting a tie.'); return; }
+    if (pendingFret) { setError(`Apply the pending fret before starting a ${name}.`); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
-      if (inspectMusicXmlTie(base.source, base.score, tiePosition(selection)).canRemove) {
+      if (kind === 'tie' && inspectMusicXmlTie(base.source, base.score, tiePosition(selection)).canRemove) {
         throw new Error('This note already has a tie. Remove it before starting another.');
       }
-      setPendingTie({ originalKey: documentKey(currentDocument), base, origin: selection });
-      setMessage('Choose the following same-string, same-pitch note, or navigate and use selected note.'); setError('');
+      if (kind !== 'tie' && inspectMusicXmlTransitions(base.source, base.score, tiePosition(selection)).some(item => item.direction === 'outgoing')) {
+        throw new Error(`This note already starts a tie or transition. Remove it before starting a ${name}.`);
+      }
+      setPendingTie({ originalKey: documentKey(currentDocument), base, origin: selection, kind });
+      setMessage(kind === 'tie' ? 'Choose the following same-string, same-pitch note, or navigate and use selected note.'
+        : `Choose the next note on string ${selection.string}, or navigate and use selected note.`); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function completeTie(destination: ScoreSelection) {
+  function completeTransition(destination: ScoreSelection) {
     if (!pendingTie) return;
+    const name = TRANSITION_NAMES[pendingTie.kind];
     if (destination.kind !== 'note' || destination.string === null || destination.fret === null) {
-      setError('Tie destination must be a pitched note. Choose another note or cancel.'); return;
+      setError(`${capitalized(name)} destination must be a pitched note. Choose another note or cancel.`); return;
     }
     if (pendingTie.originalKey !== documentKey(currentDocument)) {
-      setPendingTie(null); setError('The score changed since the tie origin was selected. Start again.'); return;
+      setPendingTie(null); setError(`The score changed since the ${name} origin was selected. Start again.`); return;
     }
     try {
-      const { base, origin } = pendingTie;
-      const nextSource = connectMusicXmlTie(base.source, base.score, tiePosition(origin), tiePosition(destination));
+      const { base, origin, kind } = pendingTie;
+      const nextSource = connectMusicXmlTransition(base.source, base.score, kind, tiePosition(origin), tiePosition(destination));
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
       const after = selectionAtPosition(destination, score, nextPreview, {});
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
-        sourceIdentity: nextPreview.sourceIdentity }, 'Add tie');
+        sourceIdentity: nextPreview.sourceIdentity }, `Add ${name}`);
       setPreview(nextPreview); setSelection(after); setPendingTie(null); setPassage(null);
-      setMessage('Tie added between the selected notes.'); setError('');
+      setMessage(`${capitalized(name)} added between the selected notes.`); setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function removeTransition(transition: NoteTransition) {
+    if (!preview || !selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) return;
+    const name = TRANSITION_NAMES[transition.kind];
+    if (pendingFret) { setError(`Apply the pending fret before removing a ${name}.`); return; }
+    try {
+      const nextSource = removeMusicXmlTransition(preview.source, preview.score, tiePosition(selection), transition.kind, transition.direction);
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
+        preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity } : undefined), preview.score.title);
+      const after = selectionAtPosition(selection, score, nextPreview, {});
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
+        sourceIdentity: nextPreview.sourceIdentity }, `Remove ${name}`);
+      setPreview(nextPreview); setSelection(after); setPassage(null); setMessage(`${capitalized(name)} removed.`); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
   function removeSelectedTie() {
@@ -1477,6 +1499,11 @@ export function App() {
   const selectedTriplet = selection && preview ? inspectMusicXmlTriplet(preview.source,
     { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 }) : null;
   const selectedTupletLocked = Boolean(selectedTriplet?.triplet || selectedTriplet?.reason);
+  const selectedTransitions: NoteTransition[] = (() => {
+    if (!selection || !preview || selection.kind !== 'note' || selection.string === null || selection.fret === null) return [];
+    try { return inspectMusicXmlTransitions(preview.source, preview.score, tiePosition(selection)).filter(item => item.kind !== 'tie'); }
+    catch { return []; }
+  })();
   const selectedTie = (() => {
     if (!selection || !preview || selection.kind !== 'note' || selection.string === null || selection.fret === null) return false;
     try { return inspectMusicXmlTie(preview.source, preview.score, tiePosition(selection)).canRemove; }
@@ -1622,12 +1649,15 @@ export function App() {
                 {selectedTechniques.frettingReason && <p className="editor-rhythm-reason">{selectedTechniques.frettingReason}</p>}
                 <button type="button" onClick={event => openBendDialog(event.currentTarget)}>Bend…</button>
               </div>}
-              <button type="button" disabled={selection.kind !== 'note' || pendingTie !== null} onClick={beginTie}>Tie</button>
+              <div className="editor-transition-buttons">{(['hammer-on', 'pull-off', 'slide', 'tie'] as TransitionKind[]).map(kind =>
+                <button key={kind} type="button" disabled={selection.kind !== 'note' || pendingTie !== null} onClick={() => beginTransition(kind)}>{capitalized(TRANSITION_NAMES[kind])}</button>)}</div>
               {selectedTie && <button type="button" onClick={removeSelectedTie}>Remove tie</button>}
+              {selectedTransitions.map(item => <button key={`${item.kind}:${item.direction}`} type="button" onClick={() => removeTransition(item)}>
+                Remove {TRANSITION_NAMES[item.kind]} {item.direction === 'outgoing' ? 'to' : 'from'} {item.other ? `m${item.other.measure} e${item.other.event}` : 'its other note'}</button>)}
               {pendingTie && <div className="editor-tie-pending" role="status">
-                <p>Origin: measure {pendingTie.origin.measure}, event {pendingTie.origin.event}, string {pendingTie.origin.string}, fret {pendingTie.origin.fret}. Select the destination note.</p>
-                <button type="button" disabled={selection.kind !== 'note'} onClick={() => completeTie(selection)}>Use selected note</button>
-                <button type="button" onClick={() => { setPendingTie(null); setError(''); setMessage('Tie cancelled.'); }}>Cancel tie</button>
+                <p>{pendingTie.kind === 'tie' ? 'Origin' : `${capitalized(TRANSITION_NAMES[pendingTie.kind])} origin`}: measure {pendingTie.origin.measure}, event {pendingTie.origin.event}, string {pendingTie.origin.string}, fret {pendingTie.origin.fret}. Select the destination note.</p>
+                <button type="button" disabled={selection.kind !== 'note'} onClick={() => completeTransition(selection)}>Use selected note</button>
+                <button type="button" onClick={() => { const name = TRANSITION_NAMES[pendingTie.kind]; setPendingTie(null); setError(''); setMessage(`${capitalized(name)} cancelled.`); }}>Cancel {TRANSITION_NAMES[pendingTie.kind]}</button>
               </div>}
             </details>
             <details className="editor-text-tools"><summary>Text</summary>
@@ -1693,7 +1723,7 @@ export function App() {
               sourceEventId: preview?.sourceEventIdByAddress?.get(`${next.measure - 1}:${next.voice}:${next.event - 1}`),
             } : null;
             setSelection(addressed);
-            if (pendingTie && addressed) completeTie(addressed);
+            if (pendingTie && addressed) completeTransition(addressed);
           }}
           onPassageChange={setPassage}
           onFretInput={updateSelectionFret}
