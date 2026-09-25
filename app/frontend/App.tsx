@@ -26,7 +26,7 @@ type PickupTarget = { originalKey: string; base: MusicXmlPreview };
 type RepeatTarget = { originalKey: string; base: MusicXmlPreview };
 type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndings | null };
 type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; destination: number; first: number;
-  existing: boolean; readOnly: string[]; connections: string[] };
+  existing: boolean; readOnly: string[]; connections: string[]; initialEvents: GraceEventSpec[] };
 type BendTarget = { originalKey: string; selection: ScoreSelection; existing: NoteBend | 'none' | null; reason?: string };
 type AnchorTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; kind: AnchorKind; items: AnchorItem[] };
 type LyricTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; lyrics: EventLyric[] };
@@ -37,7 +37,13 @@ type PasteTarget = { originalKey: string; base: MusicXmlPreview; measure: number
 type CutTarget = { originalKey: string; base: MusicXmlPreview; first: number; last: number; cut: MeasureCut };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection; kind: TransitionKind };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
+import { AnchorDialog } from './editor/dialogs/AnchorDialog';
+import { GraceDialog } from './editor/dialogs/GraceDialog';
+import { NewScoreDialog, type NewScoreDraft } from './editor/dialogs/NewScoreDialog';
+import { PasteDialog } from './editor/dialogs/PasteDialog';
+import { SettingsDialog, type SettingsDraft } from './editor/dialogs/SettingsDialog';
 import { BendDialog } from './editor/dialogs/BendDialog';
+import { LyricDialog } from './editor/dialogs/LyricDialog';
 import { CutDialog } from './editor/dialogs/CutDialog';
 import { KeyboardHelpDialog } from './editor/dialogs/KeyboardHelpDialog';
 import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
@@ -187,24 +193,12 @@ export function App() {
   const repeatRemovalDialog = useRef<HTMLDialogElement>(null);
   const repeatOpener = useRef<HTMLElement | null>(null);
   const [graceTarget, setGraceTarget] = useState<GraceTarget | null>(null);
-  const [graceEvents, setGraceEvents] = useState<GraceEventSpec[]>([]);
   const [anchorTarget, setAnchorTarget] = useState<AnchorTarget | null>(null);
-  const [anchorChoice, setAnchorChoice] = useState<number | 'new'>('new');
-  const [anchorText, setAnchorText] = useState('');
-  const [anchorChord, setAnchorChord] = useState<ChordSpelling>(DEFAULT_CHORD);
-  const [anchorError, setAnchorError] = useState('');
-  const anchorDialog = useRef<HTMLDialogElement>(null);
   const anchorOpener = useRef<HTMLElement | null>(null);
   const [lyricTarget, setLyricTarget] = useState<LyricTarget | null>(null);
-  const [lyricDraft, setLyricDraft] = useState<{ verse: number; text: string; syllabic: LyricSyllabic }>({ verse: 1, text: '', syllabic: 'single' });
-  const [lyricError, setLyricError] = useState('');
-  const lyricDialog = useRef<HTMLDialogElement>(null);
   const [standaloneTarget, setStandaloneTarget] = useState<StandaloneTarget | null>(null);
   const textOpener = useRef<HTMLElement | null>(null);
   const [newScoreOpen, setNewScoreOpen] = useState(false);
-  const [newScoreDraft, setNewScoreDraft] = useState({ title: 'Untitled', tempo: '96', numerator: '4', denominator: '4', measures: '8', tuningPreset: 'open-g', tuning: OPEN_G_TUNING.map(String) });
-  const [newScoreError, setNewScoreError] = useState('');
-  const newScoreDialog = useRef<HTMLDialogElement>(null);
   const newScoreOpener = useRef<HTMLElement | null>(null);
   const [narrow, setNarrow] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -218,20 +212,11 @@ export function App() {
   }, []);
   const [clipboard, setClipboard] = useState<MeasureClipboard | null>(null);
   const [pasteTarget, setPasteTarget] = useState<PasteTarget | null>(null);
-  const [pasteMode, setPasteMode] = useState<TuningMode>('frets');
-  const [pastePlacement, setPastePlacement] = useState<PasteMode>('insert');
   const [cutTarget, setCutTarget] = useState<CutTarget | null>(null);
-  const [pasteError, setPasteError] = useState('');
-  const pasteDialog = useRef<HTMLDialogElement>(null);
   const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState<{ title: string; tempo: string; tuning: string[]; mode: TuningMode }>({ title: '', tempo: '', tuning: [], mode: 'frets' });
-  const [settingsError, setSettingsError] = useState('');
-  const settingsDialog = useRef<HTMLDialogElement>(null);
   const [tempoTarget, setTempoTarget] = useState<TempoTarget | null>(null);
   const [bendTarget, setBendTarget] = useState<BendTarget | null>(null);
   const bendOpener = useRef<HTMLElement | null>(null);
-  const [graceError, setGraceError] = useState('');
-  const graceDialog = useRef<HTMLDialogElement>(null);
   const graceOpener = useRef<HTMLElement | null>(null);
   const [pickupTarget, setPickupTarget] = useState<PickupTarget | null>(null);
   const [pendingTie, setPendingTie] = useState<PendingTie | null>(null);
@@ -387,36 +372,6 @@ export function App() {
     if (repeatRemoval && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-repeat-remove-cancel]')?.focus(); }
     else if (!repeatRemoval && dialog.open) dialog.close();
   }, [repeatRemoval]);
-  useEffect(() => {
-    const dialog = anchorDialog.current;
-    if (!dialog) return;
-    if (anchorTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-anchor-first]')?.focus(); }
-    else if (!anchorTarget && dialog.open) {
-      dialog.close(); if (anchorOpener.current?.isConnected) anchorOpener.current.focus({ preventScroll: true });
-    }
-  }, [anchorTarget]);
-  useEffect(() => {
-    for (const [dialog, open] of [[lyricDialog.current, lyricTarget !== null],
-      [settingsDialog.current, settingsTarget !== null], [pasteDialog.current, pasteTarget !== null]] as const) {
-      if (!dialog) continue;
-      if (open && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-text-first]')?.focus(); }
-      else if (!open && dialog.open) { dialog.close(); if (textOpener.current?.isConnected) textOpener.current.focus({ preventScroll: true }); }
-    }
-  }, [lyricTarget, settingsTarget, pasteTarget]);
-  useEffect(() => {
-    const dialog = newScoreDialog.current;
-    if (!dialog) return;
-    if (newScoreOpen && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLInputElement>('[data-new-first]')?.select(); }
-    else if (!newScoreOpen && dialog.open) { dialog.close(); if (newScoreOpener.current?.isConnected) newScoreOpener.current.focus({ preventScroll: true }); }
-  }, [newScoreOpen]);
-  useEffect(() => {
-    const dialog = graceDialog.current;
-    if (!dialog) return;
-    if (graceTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-grace-first]')?.focus(); }
-    else if (!graceTarget && dialog.open) {
-      dialog.close(); if (graceOpener.current?.isConnected) graceOpener.current.focus({ preventScroll: true });
-    }
-  }, [graceTarget]);
   useEffect(() => {
     const dialog = pickupDialog.current;
     if (!dialog) return;
@@ -950,17 +905,16 @@ export function App() {
       const info = inspectMusicXmlGraceGroup(base.source, base.score, { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 });
       const existing = info.events.length > 0;
       graceOpener.current = opener;
-      setGraceEvents(existing ? info.events : [{ denominator: 16, notes: [{ string: selection.string, fret: selection.fret, transition: 'none' }] }]);
-      setGraceError('');
       setGraceTarget({ originalKey: documentKey(currentDocument), base, selection, destination: info.destination,
-        first: info.destination - info.events.length, existing, readOnly: info.readOnly, connections: info.connections });
+        first: info.destination - info.events.length, existing, readOnly: info.readOnly, connections: info.connections,
+        initialEvents: existing ? info.events : [{ denominator: 16, notes: [{ string: selection.string, fret: selection.fret, transition: 'none' }] }] });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function commitGraceSource(candidate: string, description: string, message: string, event: number, string: number | null) {
-    if (!graceTarget) return;
+  function commitGraceSource(candidate: string, description: string, message: string, event: number, string: number | null): string | null {
+    if (!graceTarget) return null;
     if (graceTarget.originalKey !== documentKey(currentDocument)) {
-      setGraceTarget(null); setError('The score changed since this grace preview. Open it again.'); return;
+      setGraceTarget(null); setError('The score changed since this grace preview. Open it again.'); return null;
     }
     try {
       const { base, selection: opened } = graceTarget;
@@ -969,26 +923,24 @@ export function App() {
       const after = selectionAtPosition(opened, score, nextPreview, { event, string });
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, description);
       setPreview(nextPreview); setSelection(after); setGraceTarget(null); setError(''); setMessage(message);
-    } catch (failure) { setGraceError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
-  function confirmGrace(candidate: string) {
-    if (!graceTarget) return;
+  function confirmGrace(candidate: string, graceEvents: GraceEventSpec[]): string | null {
+    if (!graceTarget) return null;
     const { selection: opened, first, existing } = graceTarget;
-    commitGraceSource(candidate, `${existing ? 'Edit' : 'Add'} grace group in measure ${opened.measure}`,
+    return commitGraceSource(candidate, `${existing ? 'Edit' : 'Add'} grace group in measure ${opened.measure}`,
       existing ? 'Grace group updated.' : 'Grace group added before the selected event.', first + 1, graceEvents[0].notes[0].string);
   }
-  function removeGraceGroup() {
-    if (!graceTarget) return;
+  function removeGraceGroup(): string | null {
+    if (!graceTarget) return null;
     const { base, selection: opened, first } = graceTarget;
     try {
       const removed = removeMusicXmlGraceGroup(base.source, base.score, { measure: opened.measure - 1, beat: graceTarget.destination, voice: opened.voice - 1 });
-      commitGraceSource(removed.source, `Remove grace group in measure ${opened.measure}`, 'Grace group removed.', first + 1, opened.string);
-    } catch (failure) { setGraceError((failure as Error).message); }
+      return commitGraceSource(removed.source, `Remove grace group in measure ${opened.measure}`, 'Grace group removed.', first + 1, opened.string);
+    } catch (failure) { return (failure as Error).message; }
   }
-  function updateGraceEvent(eventIndex: number, change: (event: GraceEventSpec) => GraceEventSpec) {
-    setGraceError('');
-    setGraceEvents(current => current.map((event, index) => index === eventIndex ? change(event) : event));
-  }
+
   // Hand annotations and bends are note-local source edits; a native score
   // is promoted first, exactly like other imported-only techniques.
   function changeNoteTechnique(target: ScoreSelection, change: (base: MusicXmlPreview, position: TiePosition) => string,
@@ -1031,12 +983,6 @@ export function App() {
   function anchorPosition(target: ScoreSelection) {
     return { measure: target.measure - 1, beat: target.event - 1, voice: target.voice - 1 };
   }
-  function chooseAnchorItem(choice: number | 'new', items: AnchorItem[]) {
-    setAnchorChoice(choice); setAnchorError('');
-    const item = choice === 'new' ? undefined : items[choice];
-    setAnchorText(item?.text ?? '');
-    setAnchorChord(item?.chord ?? DEFAULT_CHORD);
-  }
   function openAnchorDialog(kind: AnchorKind, opener: HTMLElement) {
     if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to anchor text to it.'); return; }
     if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
@@ -1045,17 +991,16 @@ export function App() {
       const info = inspectMusicXmlAnchor(base.source, base.score, anchorPosition(selection));
       const items = kind === 'chord' ? info.chords : kind === 'words' ? info.words : info.sections;
       anchorOpener.current = opener;
-      chooseAnchorItem(items.length ? 0 : 'new', items);
       setAnchorTarget({ originalKey: documentKey(currentDocument), base, selection, kind, items });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function applyAnchor(remove: boolean) {
-    if (!anchorTarget) return;
+  function applyAnchor(anchorChoice: number | 'new', value: ChordSpelling | string | null): string | null {
+    if (!anchorTarget) return null;
     const { base, selection: target, kind, items } = anchorTarget;
-    if (anchorTarget.originalKey !== documentKey(currentDocument)) { setAnchorTarget(null); setError('The score changed since this text was opened. Open it again.'); return; }
+    if (anchorTarget.originalKey !== documentKey(currentDocument)) { setAnchorTarget(null); setError('The score changed since this text was opened. Open it again.'); return null; }
     const name = ANCHOR_NAMES[kind].item;
-    const value = remove ? null : kind === 'chord' ? anchorChord : anchorText;
+    const remove = value === null;
     const shown = value === null ? items[anchorChoice as number].text : typeof value === 'string' ? value.trim() : chordSpellingName(value);
     const where = kind === 'section' ? `measure ${target.measure}` : `measure ${target.measure}, event ${target.event}`;
     try {
@@ -1068,7 +1013,8 @@ export function App() {
         `${verb} ${name} “${shown}” at ${where}`);
       setPreview(nextPreview); setSelection(after); setAnchorTarget(null); setError('');
       setMessage(`${name[0].toUpperCase()}${name.slice(1)} “${shown}” ${remove ? 'removed from' : anchorChoice === 'new' ? 'added at' : 'updated at'} ${where}.`);
-    } catch (failure) { setAnchorError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
   function textBase() {
     return preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
@@ -1080,11 +1026,6 @@ export function App() {
     remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, description);
     setPreview(nextPreview); setSelection(after); setError(''); setMessage(message);
   }
-  function chooseLyricVerse(verse: number, lyrics: EventLyric[]) {
-    const current = lyrics.find(lyric => lyric.verse === verse);
-    setLyricError('');
-    setLyricDraft({ verse, text: current?.text ?? '', syllabic: current?.syllabic ?? 'single' });
-  }
   function openLyricDialog(opener: HTMLElement) {
     if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to edit its lyric.'); return; }
     if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
@@ -1092,23 +1033,23 @@ export function App() {
       const base = textBase();
       const lyrics = inspectMusicXmlLyrics(base.source, base.score, anchorPosition(selection));
       textOpener.current = opener;
-      chooseLyricVerse(lyrics.find(lyric => lyric.verse > 0)?.verse ?? 1, lyrics);
       setLyricTarget({ originalKey: documentKey(currentDocument), base, selection, lyrics });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function applyLyric(remove: boolean) {
-    if (!lyricTarget) return;
+  function applyLyric(verse: number, value: { text: string; syllabic: LyricSyllabic } | null): string | null {
+    if (!lyricTarget) return null;
     const { base, selection: target } = lyricTarget;
-    if (lyricTarget.originalKey !== documentKey(currentDocument)) { setLyricTarget(null); setError('The score changed since this lyric was opened. Open it again.'); return; }
+    const remove = value === null;
+    if (lyricTarget.originalKey !== documentKey(currentDocument)) { setLyricTarget(null); setError('The score changed since this lyric was opened. Open it again.'); return null; }
     try {
-      const nextSource = setMusicXmlLyric(base.source, base.score, anchorPosition(target), lyricDraft.verse,
-        remove ? null : { text: lyricDraft.text, syllabic: lyricDraft.syllabic });
+      const nextSource = setMusicXmlLyric(base.source, base.score, anchorPosition(target), verse, value);
       const where = `measure ${target.measure}, event ${target.event}`;
-      commitText(base, target, nextSource, `${remove ? 'Remove' : 'Set'} verse ${lyricDraft.verse} lyric at ${where}`,
-        remove ? `Verse ${lyricDraft.verse} lyric removed from ${where}.` : `Verse ${lyricDraft.verse} lyric “${lyricDraft.text.trim()}” applied at ${where}.`);
+      commitText(base, target, nextSource, `${remove ? 'Remove' : 'Set'} verse ${verse} lyric at ${where}`,
+        remove ? `Verse ${verse} lyric removed from ${where}.` : `Verse ${verse} lyric “${value.text.trim()}” applied at ${where}.`);
       setLyricTarget(null);
-    } catch (failure) { setLyricError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
   function openStandaloneDialog(opener: HTMLElement) {
     if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
@@ -1139,16 +1080,14 @@ export function App() {
       const base = textBase();
       const info = inspectMusicXmlScoreSettings(base.source, base.score);
       textOpener.current = opener;
-      setSettingsDraft({ title: base.score.title, tempo: String(info.tempo), tuning: info.tuning.map(String), mode: 'frets' });
-      setSettingsError('');
       setSettingsTarget({ originalKey: documentKey(currentDocument), base, info });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function applySettings(candidate: { source: string; tuningRange: { first: number; last: number } }) {
-    if (!settingsTarget) return;
+  function applySettings(candidate: { source: string; tuningRange: { first: number; last: number } }, settingsDraft: SettingsDraft): string | null {
+    if (!settingsTarget) return null;
     const { base, info } = settingsTarget;
-    if (settingsTarget.originalKey !== documentKey(currentDocument)) { setSettingsTarget(null); setError('The score changed since settings were opened. Open them again.'); return; }
+    if (settingsTarget.originalKey !== documentKey(currentDocument)) { setSettingsTarget(null); setError('The score changed since settings were opened. Open them again.'); return null; }
     try {
       const title = settingsDraft.title.trim();
       const tuningChanged = settingsDraft.tuning.some((value, index) => Number(value) !== info.tuning[index]);
@@ -1158,7 +1097,8 @@ export function App() {
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, 'Change score settings');
       setPreview(nextPreview); setSelection(after); setSettingsTarget(null); setError('');
       setMessage(tuningChanged ? `Score settings applied. Tuning changed for measures ${candidate.tuningRange.first}–${candidate.tuningRange.last}.` : 'Score settings applied.');
-    } catch (failure) { setSettingsError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
   function openTempoDialog(opener: HTMLElement) {
     if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to set its tempo.'); return; }
@@ -1248,18 +1188,16 @@ export function App() {
     try {
       textOpener.current = opener;
       const range = wholeMeasurePassage();
-      setPasteMode('frets'); setPasteError(''); setPastePlacement('insert');
       setPasteTarget({ originalKey: documentKey(currentDocument), base: textBase(), measure: selection.measure,
         replaceFrom: range?.first ?? null, replaceCount: range ? range.last - range.first + 1 : 0 });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function applyPaste(candidate: string) {
-    if (!pasteTarget || !clipboard) return;
+  function applyPaste(candidate: string, replacing: boolean): string | null {
+    if (!pasteTarget || !clipboard) return null;
     const { base } = pasteTarget;
-    const replacing = pastePlacement === 'replace' && pasteTarget.replaceFrom !== null;
     const measure = replacing ? pasteTarget.replaceFrom! : pasteTarget.measure;
-    if (pasteTarget.originalKey !== documentKey(currentDocument)) { setPasteTarget(null); setError('The score changed since paste was opened. Open it again.'); return; }
+    if (pasteTarget.originalKey !== documentKey(currentDocument)) { setPasteTarget(null); setError('The score changed since paste was opened. Open it again.'); return null; }
     try {
       const count = clipboard.measures.length;
       const nextPreview = withPreviewTitle(readMusicXml(candidate, base.filename, base.sourceFormat,
@@ -1271,21 +1209,21 @@ export function App() {
       setPreview(nextPreview); setSelection(first); setPassage(null); setPasteTarget(null); setError('');
       setMessage(replacing ? `Replaced measures ${measure}–${measure + count - 1} with the copied ${plural}.`
         : `Pasted ${plural} before measure ${measure}; they are now measures ${measure}–${measure + count - 1}.`);
-    } catch (failure) { setPasteError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
   function openNewScoreDialog(opener: HTMLElement) {
     newScoreOpener.current = opener;
-    setNewScoreDraft({ title: 'Untitled', tempo: '96', numerator: '4', denominator: '4', measures: '8', tuningPreset: 'open-g', tuning: OPEN_G_TUNING.map(String) });
-    setNewScoreError(''); setNewScoreOpen(true);
+    setNewScoreOpen(true);
   }
-  function createNewScore() {
+  function createNewScore(newScoreDraft: NewScoreDraft): string | null {
     let source: string;
     const title = newScoreDraft.title.trim();
     try {
       source = createBlankMusicXml({ title, tempo: Number(newScoreDraft.tempo), numerator: Number(newScoreDraft.numerator),
         denominator: Number(newScoreDraft.denominator), measures: Number(newScoreDraft.measures),
         tuning: newScoreDraft.tuningPreset === 'open-g' ? OPEN_G_TUNING : newScoreDraft.tuning.map(Number) });
-    } catch (failure) { setNewScoreError((failure as Error).message); return; }
+    } catch (failure) { return (failure as Error).message; }
     setNewScoreOpen(false);
     requestLeave(() => {
       try {
@@ -1297,6 +1235,7 @@ export function App() {
         setMessage(`New score “${title}” created. It is not saved until you choose Save to library.`);
       } catch (failure) { setError((failure as Error).message); }
     }, newScoreOpener.current);
+    return null;
   }
   function openPickupDialog(opener: HTMLElement) {
     if (!selection || selection.measure !== 1) return;
@@ -1795,14 +1734,6 @@ export function App() {
       } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
     } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
   })();
-  const gracePreview = (() => {
-    if (!graceTarget || graceTarget.readOnly.length) return null;
-    try {
-      return { candidate: applyMusicXmlGraceGroup(graceTarget.base.source, graceTarget.base.score,
-        { measure: graceTarget.selection.measure - 1, beat: graceTarget.destination, voice: graceTarget.selection.voice - 1 },
-        graceEvents), error: '' };
-    } catch (failure) { return { candidate: null, error: (failure as Error).message }; }
-  })();
   const selectedTechniques: NoteTechniqueInfo | null = (() => {
     if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) return null;
     if (!preview) return { picking: 'none', fretting: 'none', bend: 'none' };
@@ -2092,237 +2023,16 @@ export function App() {
       <div className="duplicate-dialog-actions"><button type="button" data-repeat-remove-cancel onClick={() => setRepeatRemoval(null)}>Cancel</button>
         <button type="button" onClick={confirmRepeatRemoval}>Clear repeat and endings</button></div>
     </dialog>
-    <dialog ref={graceDialog} className="duplicate-dialog grace-dialog" aria-label={graceTarget?.existing ? 'Edit grace group' : 'Add grace group'}
-      onCancel={event => { event.preventDefault(); setGraceTarget(null); }}>
-      <h2>{graceTarget?.existing ? 'Edit grace group' : 'Add grace group'}</h2>
-      <p>Destination: measure {graceTarget?.selection.measure}, event {(graceTarget?.destination ?? 0) + 1}. Grace notes play before it without using measure time.</p>
-      {!graceTarget ? null : graceTarget.readOnly.length ? <div className="grace-read-only" role="note">
-        <p>This imported grace group is read-only, so Playtab keeps it exactly as written:</p>
-        <ul>{graceTarget.readOnly.map(reason => <li key={reason}>{reason}</li>)}</ul>
-        <p>Cancel keeps it unchanged. Remove grace group deletes the whole group{graceTarget.connections.length ? ` and disconnects its ${graceTarget.connections.join(', ')}` : ''}.</p>
-      </div> : <>
-        {graceEvents.map((event, eventIndex) => <fieldset key={eventIndex} className="grace-event">
-          <legend>Grace event {eventIndex + 1}</legend>
-          <label>Display duration<select aria-label={`Grace event ${eventIndex + 1} display duration`} data-grace-first={eventIndex === 0 ? '' : undefined}
-            value={event.denominator ?? ''} onChange={change => updateGraceEvent(eventIndex, current => ({ ...current,
-              denominator: change.target.value ? Number(change.target.value) as 8 | 16 : null }))}>
-            {event.denominator === null && <option value="">Source default</option>}
-            <option value={8}>1/8</option><option value={16}>1/16</option></select></label>
-          {event.notes.map((note, noteIndex) => <div key={noteIndex} className="grace-note-row">
-            <label>String<select aria-label={`Grace event ${eventIndex + 1} string ${noteIndex + 1}`} value={note.string}
-              onChange={change => updateGraceEvent(eventIndex, current => ({ ...current, notes: current.notes.map((item, at) =>
-                at === noteIndex ? { ...item, string: Number(change.target.value) } : item) }))}>
-              {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-            <label>Fret<input aria-label={`Grace event ${eventIndex + 1} fret ${noteIndex + 1}`} inputMode="numeric" type="number" min={0} max={36} value={note.fret}
-              onChange={change => updateGraceEvent(eventIndex, current => ({ ...current, notes: current.notes.map((item, at) =>
-                at === noteIndex ? { ...item, fret: Number(change.target.value) } : item) }))} /></label>
-            <label>Transition<select aria-label={`Grace event ${eventIndex + 1} transition ${noteIndex + 1}`} value={note.transition}
-              onChange={change => updateGraceEvent(eventIndex, current => ({ ...current, notes: current.notes.map((item, at) =>
-                at === noteIndex ? { ...item, transition: change.target.value as GraceTransition } : item) }))}>
-              <option value="none">None</option><option value="hammer-on">Hammer-on</option><option value="pull-off">Pull-off</option><option value="slide">Slide</option></select></label>
-            {event.notes.length > 1 && <button type="button" aria-label={`Remove grace event ${eventIndex + 1} string ${noteIndex + 1}`}
-              onClick={() => updateGraceEvent(eventIndex, current => ({ ...current, notes: current.notes.filter((_, at) => at !== noteIndex) }))}>Remove string</button>}
-          </div>)}
-          <div className="grace-event-actions">
-            <button type="button" aria-label={`Add string to grace event ${eventIndex + 1}`} disabled={event.notes.length >= 5}
-              onClick={() => updateGraceEvent(eventIndex, current => {
-                const unused = [1, 2, 3, 4, 5].find(value => !current.notes.some(item => item.string === value))!;
-                return { ...current, notes: [...current.notes, { string: unused, fret: 0, transition: 'none' }] };
-              })}>Add string</button>
-            {graceEvents.length > 1 && <button type="button" aria-label={`Remove grace event ${eventIndex + 1}`}
-              onClick={() => { setGraceError(''); setGraceEvents(current => current.filter((_, at) => at !== eventIndex)); }}>Remove event</button>}
-          </div>
-        </fieldset>)}
-        <button type="button" className="grace-add-event" disabled={graceEvents.length >= 8} onClick={() => { setGraceError('');
-          setGraceEvents(current => [...current, { denominator: 16, notes: [{ string: current.at(-1)?.notes[0].string ?? 1, fret: 0, transition: 'none' }] }]); }}>Add grace event</button>
-      </>}
-      {gracePreview?.error && <p className="alert" role="alert">{gracePreview.error}</p>}
-      {graceError && <p className="alert" role="alert">{graceError}</p>}
-      <div className="duplicate-dialog-actions">
-        <button type="button" data-grace-first={graceTarget?.readOnly.length ? '' : undefined} onClick={() => setGraceTarget(null)}>Cancel</button>
-        {graceTarget?.existing && <button type="button" onClick={removeGraceGroup}>Remove grace group</button>}
-        {!graceTarget?.readOnly.length && <button type="button" disabled={!gracePreview?.candidate}
-          onClick={() => { if (gracePreview?.candidate) confirmGrace(gracePreview.candidate); }}>Apply grace group</button>}
-      </div>
-    </dialog>
-    <dialog ref={anchorDialog} className="duplicate-dialog anchor-dialog" aria-label={anchorTarget ? ANCHOR_NAMES[anchorTarget.kind].title : 'Text'}
-      onCancel={event => { event.preventDefault(); setAnchorTarget(null); }}>
-      {anchorTarget && (() => {
-        const { kind, items, selection: target } = anchorTarget;
-        const name = ANCHOR_NAMES[kind].item;
-        const current = anchorChoice === 'new' ? undefined : items[anchorChoice];
-        const root = (label: string, value: ChordRoot, change: (next: ChordRoot) => void) => <>
-          <label>{label}<select aria-label={label} value={value.step} onChange={event => change({ ...value, step: event.target.value as ChordRoot['step'] })}>
-            {CHORD_STEPS.map(step => <option key={step} value={step}>{step}</option>)}</select></label>
-          <label>{label} accidental<select aria-label={`${label} accidental`} value={value.alter} onChange={event => change({ ...value, alter: Number(event.target.value) as ChordRoot['alter'] })}>
-            <option value={0}>Natural</option><option value={-1}>Flat ♭</option><option value={1}>Sharp ♯</option></select></label>
-        </>;
-        return <>
-          <h2>{ANCHOR_NAMES[kind].title}</h2>
-          <p>{kind === 'section' ? `Anchored at the start of measure ${target.measure}.` : `Anchored at measure ${target.measure}, event ${target.event}.`}</p>
-          {items.length > 0 && <label className="anchor-choice">Item<select aria-label="Existing item" data-anchor-first="" value={anchorChoice}
-            onChange={event => chooseAnchorItem(event.target.value === 'new' ? 'new' : Number(event.target.value), items)}>
-            {items.map((item, index) => <option key={index} value={index}>{item.text}</option>)}
-            <option value="new">Add new {name}</option></select></label>}
-          {current?.reason && <p className="grace-read-only" role="note">{current.reason}</p>}
-          {kind === 'chord' ? <div className="insert-dialog-fields">
-            {root('Root', anchorChord, next => { setAnchorError(''); setAnchorChord(chord => ({ ...chord, ...next })); })}
-            <label>Quality<select aria-label="Quality" value={anchorChord.quality} onChange={event => { setAnchorError(''); setAnchorChord(chord => ({ ...chord, quality: event.target.value as ChordQuality })); }}>
-              {CHORD_QUALITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label>Bass<select aria-label="Bass" value={anchorChord.bass?.step ?? ''} onChange={event => { setAnchorError('');
-              const step = event.target.value as ChordRoot['step'] | '';
-              setAnchorChord(chord => ({ ...chord, bass: step ? { step, alter: chord.bass?.alter ?? 0 } : null })); }}>
-              <option value="">None</option>{CHORD_STEPS.map(step => <option key={step} value={step}>{step}</option>)}</select></label>
-            {anchorChord.bass && <label>Bass accidental<select aria-label="Bass accidental" value={anchorChord.bass.alter}
-              onChange={event => { const alter = Number(event.target.value) as ChordRoot['alter']; setAnchorChord(chord => ({ ...chord, bass: chord.bass && { ...chord.bass, alter } })); }}>
-              <option value={0}>Natural</option><option value={-1}>Flat ♭</option><option value={1}>Sharp ♯</option></select></label>}
-            <p className="anchor-chord-preview">Shows as <strong>{chordSpellingName(anchorChord)}</strong></p>
-          </div> : <label className="anchor-text">Text<input aria-label="Text" data-anchor-first={items.length ? undefined : ''} maxLength={ANCHOR_TEXT_LIMIT} value={anchorText}
-            onChange={event => { setAnchorError(''); setAnchorText(event.target.value); }} /></label>}
-          {anchorError && <p className="alert" role="alert">{anchorError}</p>}
-          <div className="duplicate-dialog-actions">
-            <button type="button" data-anchor-first={kind === 'chord' && !items.length ? '' : undefined} onClick={() => setAnchorTarget(null)}>Cancel</button>
-            {current && <button type="button" onClick={() => applyAnchor(true)}>Remove {name}</button>}
-            <button type="button" disabled={kind !== 'chord' && (!anchorText.trim() || anchorText.trim().length > ANCHOR_TEXT_LIMIT)}
-              onClick={() => applyAnchor(false)}>{current?.reason ? `Replace ${name}` : `Apply ${name}`}</button>
-          </div>
-        </>;
-      })()}
-    </dialog>
-    <dialog ref={lyricDialog} className="duplicate-dialog anchor-dialog" aria-label="Lyric syllable" onCancel={event => { event.preventDefault(); setLyricTarget(null); }}>
-      {lyricTarget && (() => {
-        const current = lyricTarget.lyrics.find(lyric => lyric.verse === lyricDraft.verse);
-        const kept = lyricTarget.lyrics.filter(lyric => lyric.verse === 0);
-        return <>
-          <h2>Lyric syllable</h2>
-          <p>Measure {lyricTarget.selection.measure}, event {lyricTarget.selection.event}. Other verses and the Lyrics &amp; chords text are not changed.</p>
-          <div className="insert-dialog-fields">
-            <label>Verse<select aria-label="Verse" data-text-first="" value={lyricDraft.verse} onChange={event => chooseLyricVerse(Number(event.target.value), lyricTarget.lyrics)}>
-              {Array.from({ length: LYRIC_VERSES }, (_, index) => index + 1).map(verse => <option key={verse} value={verse}>
-                {verse}{lyricTarget.lyrics.some(lyric => lyric.verse === verse) ? ' •' : ''}</option>)}</select></label>
-            <label>Syllabic<select aria-label="Syllabic" value={lyricDraft.syllabic} onChange={event => { setLyricError(''); setLyricDraft(draft => ({ ...draft, syllabic: event.target.value as LyricSyllabic })); }}>
-              <option value="single">Single</option><option value="begin">Begin</option><option value="middle">Middle</option><option value="end">End</option></select></label>
-          </div>
-          <label className="anchor-text">Text<input aria-label="Lyric text" maxLength={ANCHOR_TEXT_LIMIT} value={lyricDraft.text}
-            onChange={event => { setLyricError(''); setLyricDraft(draft => ({ ...draft, text: event.target.value })); }} /></label>
-          {current?.reason && <p className="grace-read-only" role="note">{current.reason}</p>}
-          {kept.map(lyric => <p key={lyric.reason} className="grace-read-only" role="note">{lyric.reason}</p>)}
-          {current && !lyricDraft.text.trim() && <p className="editor-rhythm-reason">To clear verse {lyricDraft.verse}, use Remove lyric.</p>}
-          {lyricError && <p className="alert" role="alert">{lyricError}</p>}
-          <div className="duplicate-dialog-actions">
-            <button type="button" onClick={() => setLyricTarget(null)}>Cancel</button>
-            {current && <button type="button" onClick={() => applyLyric(true)}>Remove lyric</button>}
-            <button type="button" disabled={!lyricDraft.text.trim() || Boolean(current?.reason)} onClick={() => applyLyric(false)}>Apply lyric</button>
-          </div>
-        </>;
-      })()}
-    </dialog>
+    <GraceDialog target={graceTarget} onApply={confirmGrace} onRemove={removeGraceGroup} onClose={() => setGraceTarget(null)} returnFocus={graceOpener} />
+    <AnchorDialog target={anchorTarget} onApply={applyAnchor} onClose={() => setAnchorTarget(null)} returnFocus={anchorOpener} />
+    <LyricDialog target={lyricTarget} onApply={applyLyric} onClose={() => setLyricTarget(null)} returnFocus={textOpener} />
     <StandaloneTextDialog target={standaloneTarget && { initialText: standaloneTarget.base.lyricsSection ?? '' }} onApply={applyStandalone}
       onClose={() => setStandaloneTarget(null)} returnFocus={textOpener} />
-    <dialog ref={pasteDialog} className="duplicate-dialog" aria-label="Paste passage" onCancel={event => { event.preventDefault(); setPasteTarget(null); }}>
-      {pasteTarget && clipboard && (() => {
-        let candidate: string | null = null;
-        let problem = '';
-        const count = clipboard.measures.length;
-        const canReplace = pasteTarget.replaceFrom !== null && pasteTarget.replaceCount === count;
-        const replacing = pastePlacement === 'replace' && canReplace;
-        try {
-          candidate = pasteMusicXmlMeasures(pasteTarget.base.source, pasteTarget.base.score, clipboard,
-            (replacing ? pasteTarget.replaceFrom! : pasteTarget.measure) - 1, replacing ? 'replace' : 'insert', pasteMode);
-        } catch (failure) { problem = (failure as Error).message; }
-        return <>
-          <h2>Paste passage</h2>
-          <p>{replacing ? `Destination: measures ${pasteTarget.replaceFrom}–${pasteTarget.replaceFrom! + count - 1}.` : `Destination: before measure ${pasteTarget.measure}.`} Source: {count} measure{count === 1 ? '' : 's'} from “{clipboard.title}” ({clipboard.meters.join(', ')}). {replacing ? 'The bar count stays the same.' : `The score will grow by ${count} measure${count === 1 ? '' : 's'}.`}</p>
-          <fieldset className="settings-mode"><legend>Placement</legend>
-            <label><input type="radio" name="paste-placement" data-text-first="" checked={!replacing} onChange={() => setPastePlacement('insert')} />Insert measures before measure {pasteTarget.measure}</label>
-            <label><input type="radio" name="paste-placement" disabled={!canReplace} checked={replacing} onChange={() => setPastePlacement('replace')} />Replace selected measures</label>
-            {!canReplace && <p className="editor-rhythm-reason">To replace, select {count} whole measure{count === 1 ? '' : 's'} as the passage first.</p>}
-          </fieldset>
-          <fieldset className="settings-mode"><legend>If the tuning differs</legend>
-            <label><input type="radio" name="paste-mode" checked={pasteMode === 'frets'} onChange={() => setPasteMode('frets')} />Keep frets (pitches follow this score’s tuning)</label>
-            <label><input type="radio" name="paste-mode" checked={pasteMode === 'pitches'} onChange={() => setPasteMode('pitches')} />Keep pitches (frets change)</label>
-          </fieldset>
-          {clipboard.excluded.length > 0 && <p className="grace-read-only" role="note">Not pasted: {clipboard.excluded.join('; ')}.</p>}
-          {problem && <p className="alert" role="alert">{problem}</p>}
-          {pasteError && <p className="alert" role="alert">{pasteError}</p>}
-          <div className="duplicate-dialog-actions">
-            <button type="button" onClick={() => setPasteTarget(null)}>Cancel</button>
-            <button type="button" disabled={!candidate} onClick={() => { if (candidate) applyPaste(candidate); }}>Paste</button>
-          </div>
-        </>;
-      })()}
-    </dialog>
+    <PasteDialog target={pasteTarget} clipboard={clipboard} onApply={applyPaste} onClose={() => setPasteTarget(null)} returnFocus={textOpener} />
     <CutDialog target={cutTarget} onConfirm={confirmCut} onClose={() => setCutTarget(null)} returnFocus={textOpener} />
-    <dialog ref={newScoreDialog} className="duplicate-dialog settings-dialog" aria-label="New score" onCancel={event => { event.preventDefault(); setNewScoreOpen(false); }}>
-      {newScoreOpen && <>
-      <h2>New score</h2>
-      <label className="anchor-text">Title<input aria-label="New score title" data-new-first="" maxLength={160} value={newScoreDraft.title}
-        onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, title: event.target.value })); }} /></label>
-      <div className="insert-dialog-fields">
-        <label>Tempo (BPM)<input aria-label="New score tempo" type="number" inputMode="numeric" min={30} max={240} value={newScoreDraft.tempo}
-          onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, tempo: event.target.value })); }} /></label>
-        <label>Measures<input aria-label="New score measures" type="number" inputMode="numeric" min={1} max={256} value={newScoreDraft.measures}
-          onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, measures: event.target.value })); }} /></label>
-        <label>Beats<select aria-label="New score beats" value={newScoreDraft.numerator} onChange={event => setNewScoreDraft(draft => ({ ...draft, numerator: event.target.value }))}>
-          {Array.from({ length: 12 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
-        <label>Beat unit<select aria-label="New score beat unit" value={newScoreDraft.denominator} onChange={event => setNewScoreDraft(draft => ({ ...draft, denominator: event.target.value }))}>
-          {[2, 4, 8, 16].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-      </div>
-      <fieldset className="settings-mode"><legend>Tuning</legend>
-        <label><input type="radio" name="new-tuning" checked={newScoreDraft.tuningPreset === 'open-g'} onChange={() => setNewScoreDraft(draft => ({ ...draft, tuningPreset: 'open-g' }))} />Open G (gDGBD)</label>
-        <label><input type="radio" name="new-tuning" checked={newScoreDraft.tuningPreset === 'custom'} onChange={() => setNewScoreDraft(draft => ({ ...draft, tuningPreset: 'custom' }))} />Custom</label>
-      </fieldset>
-      {newScoreDraft.tuningPreset === 'custom' && <fieldset className="settings-tuning"><legend>Open-string MIDI pitch</legend>
-        {newScoreDraft.tuning.map((value, index) => <label key={index}>String {index + 1}<input aria-label={`New score string ${index + 1} pitch`} type="number" inputMode="numeric" min={36} max={96}
-          value={value} onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, tuning: draft.tuning.map((item, at) => at === index ? event.target.value : item) })); }} />
-          <span>{midiName(Number(value))}</span></label>)}
-      </fieldset>}
-      {newScoreError && <p className="alert" role="alert">{newScoreError}</p>}
-      <div className="duplicate-dialog-actions">
-        <button type="button" onClick={() => setNewScoreOpen(false)}>Cancel</button>
-        <button type="button" onClick={createNewScore}>Create score</button>
-      </div>
-      </>}
-    </dialog>
+    <NewScoreDialog open={newScoreOpen} onCreate={createNewScore} onClose={() => setNewScoreOpen(false)} returnFocus={newScoreOpener} />
     <KeyboardHelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
-    <dialog ref={settingsDialog} className="duplicate-dialog settings-dialog" aria-label="Score settings" onCancel={event => { event.preventDefault(); setSettingsTarget(null); }}>
-      {settingsTarget && (() => {
-        const { base, info } = settingsTarget;
-        const tuning = settingsDraft.tuning.map(Number);
-        const tuningChanged = tuning.some((value, index) => value !== info.tuning[index]);
-        let candidate: { source: string; tuningRange: { first: number; last: number } } | null = null;
-        let problem = '';
-        try {
-          candidate = applyMusicXmlScoreSettings(base.source, base.score, { title: settingsDraft.title, tempo: Number(settingsDraft.tempo), tuning, mode: settingsDraft.mode });
-        } catch (failure) { problem = (failure as Error).message; }
-        const last = info.tuningRange.last;
-        const measures = base.score.masterBars.length;
-        return <>
-          <h2>Score settings</h2>
-          <label className="anchor-text">Title<input aria-label="Title" data-text-first="" maxLength={ANCHOR_TEXT_LIMIT} value={settingsDraft.title}
-            onChange={event => { setSettingsError(''); setSettingsDraft(draft => ({ ...draft, title: event.target.value })); }} /></label>
-          <label className="anchor-text">Opening tempo (BPM)<input aria-label="Opening tempo" type="number" inputMode="numeric" min={TEMPO_LIMITS.min} max={TEMPO_LIMITS.max}
-            value={settingsDraft.tempo} onChange={event => { setSettingsError(''); setSettingsDraft(draft => ({ ...draft, tempo: event.target.value })); }} /></label>
-          <fieldset className="settings-tuning"><legend>Tuning (open-string MIDI pitch)</legend>
-            {settingsDraft.tuning.map((value, index) => <label key={index}>String {index + 1}<input aria-label={`String ${index + 1} pitch`} type="number" inputMode="numeric"
-              min={TUNING_LIMITS.min} max={TUNING_LIMITS.max} value={value} onChange={event => { setSettingsError('');
-                setSettingsDraft(draft => ({ ...draft, tuning: draft.tuning.map((item, at) => at === index ? event.target.value : item) })); }} />
-              <span aria-label={`String ${index + 1} note`}>{midiName(Number(value))}</span></label>)}
-          </fieldset>
-          <fieldset className="settings-mode"><legend>When tuning changes</legend>
-            <label><input type="radio" name="tuning-mode" checked={settingsDraft.mode === 'frets'} onChange={() => setSettingsDraft(draft => ({ ...draft, mode: 'frets' }))} />Keep frets (pitches change)</label>
-            <label><input type="radio" name="tuning-mode" checked={settingsDraft.mode === 'pitches'} onChange={() => setSettingsDraft(draft => ({ ...draft, mode: 'pitches' }))} />Keep pitches (frets change)</label>
-          </fieldset>
-          <p className="editor-rhythm-reason">{tuningChanged ? 'Tuning applies to' : 'A tuning change would apply to'} measures 1–{last}{last < measures ? `; measure ${last + 1} changes tuning again and is not affected` : ''}.</p>
-          {problem && <p className="alert" role="alert">{problem}</p>}
-          {settingsError && <p className="alert" role="alert">{settingsError}</p>}
-          <div className="duplicate-dialog-actions">
-            <button type="button" onClick={() => setSettingsTarget(null)}>Cancel</button>
-            <button type="button" disabled={!candidate} onClick={() => { if (candidate) applySettings(candidate); }}>Apply settings</button>
-          </div>
-        </>;
-      })()}
-    </dialog>
+    <SettingsDialog target={settingsTarget} onApply={applySettings} onClose={() => setSettingsTarget(null)} returnFocus={textOpener} />
     <TempoDialog target={tempoTarget} onApply={applyTempo} onClose={() => setTempoTarget(null)} returnFocus={textOpener} />
     <BendDialog target={bendTarget} onApply={applyBend} onClose={() => setBendTarget(null)} returnFocus={bendOpener} />
     <dialog ref={pickupDialog} className="duplicate-dialog" aria-label="Pickup" onCancel={event => { event.preventDefault(); setPickupTarget(null); }}>
