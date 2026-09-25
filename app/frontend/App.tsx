@@ -1868,6 +1868,7 @@ export function App() {
           onPassageChange={setPassage}
           onFretInput={updateSelectionFret}
           onSelectionDelete={requestRemoval}
+          exportBlockedReason={pendingFret ? 'Apply or clear the pending fret before exporting.' : null}
           historyRevision={historyRevision}
           sessionKey={session.current}
         />

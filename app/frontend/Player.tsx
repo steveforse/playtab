@@ -531,7 +531,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0 }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -542,6 +542,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   onSelectionChange?: (selection: ScoreSelection | null) => void;
   onPassageChange?: (passage: PlaybackEndpoints | null) => void;
   onFretInput?: (selection: ScoreSelection, fret: number, group?: string) => void;
+  exportBlockedReason?: string | null;
   onSelectionDelete?: (selection: ScoreSelection) => void;
   historyRevision?: number;
   sessionKey?: number;
@@ -1103,8 +1104,12 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     if (exportDialog.current && typeof exportDialog.current.close === 'function') exportDialog.current.close();
     else if (exportDialog.current) exportDialog.current.open = false;
   }
+  // Exports always come from the current rendered draft, so they wait for
+  // a finished render and for any pending input to be applied.
+  const exportBlocked = exportBlockedReason ?? (rendered ? null : 'Export is available once the score finishes rendering.');
   function confirmExport() {
     closeExportDialog();
+    if (exportBlocked) { setError(exportBlocked); return; }
     exportFile(exportFormat);
   }
   function exportFile(format: string) {
@@ -1114,7 +1119,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       return;
     }
     try {
-      if (preview && format === 'musicxml') download(preview.source, `${preview.score.title}.musicxml`, 'application/vnd.recordare.musicxml+xml');
+      // alphaTab stores titles with non-breaking spaces; filenames use plain ones.
+      if (preview && format === 'musicxml') download(preview.source, `${preview.score.title.replaceAll('\u00a0', ' ')}.musicxml`, 'application/vnd.recordare.musicxml+xml');
       if (format === 'json') download(JSON.stringify(score, null, 2), `${score.title}.playtab.json`, 'application/json');
       if (format === 'txt') download(exportAscii(score), `${score.title}.txt`);
       if (format === 'midi') api.current?.downloadMidi();
@@ -1153,7 +1159,9 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
             {[1, 2, 3].map(value => <option key={value} value={value}>{value}</option>)}
           </select></label>}
         </div>
-        <button type="button" className="primary export-button" aria-haspopup="dialog" disabled={!rendered} onClick={openExportDialog}>Export</button>
+        {exportBlocked && <span className="export-blocked" id="export-blocked-reason">{exportBlocked}</span>}
+        <button type="button" className="primary export-button" aria-haspopup="dialog" disabled={Boolean(exportBlocked)}
+          aria-describedby={exportBlocked ? 'export-blocked-reason' : undefined} onClick={openExportDialog}>Export</button>
       </div>
     </div>
     {error && <p className="alert" role="alert">{error}</p>}
@@ -1179,9 +1187,9 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       <div className="dialog-heading"><div><div className="eyebrow">SAVE OR SHARE YOUR TAB</div><h2 id="export-dialog-title">Export score</h2></div><button type="button" className="icon-button" aria-label="Close export" onClick={closeExportDialog}>×</button></div>
       <p>Choose an output format. The current view and layout settings will be used for PDF export.</p>
       <label className="export-format-label">Format<select aria-label="Export format" value={exportFormat} onChange={e => setExportFormat(e.target.value)}>
-        <option value="pdf">Print / save PDF</option><option value="midi">MIDI (.mid)</option><option value="tef2">TEF2 (.tef)</option><option value="tef3">TablEdit TEF3 (.tef)</option>{preview ? <option value="musicxml">Original MusicXML</option> : <><option value="txt">Plaintext (.txt)</option><option value="json">Playtab (.json)</option></>}
+        <option value="pdf">Print / save PDF</option><option value="midi">MIDI (.mid)</option><option value="tef2">TEF2 (.tef)</option><option value="tef3">TablEdit TEF3 (.tef)</option>{preview ? <option value="musicxml">MusicXML (.musicxml)</option> : <><option value="txt">Plaintext (.txt)</option><option value="json">Playtab (.json)</option></>}
       </select></label>
-      <div className="dialog-footer"><button type="button" onClick={closeExportDialog}>Cancel</button><button type="button" className="primary" disabled={!rendered} onClick={confirmExport}>Export file</button></div>
+      <div className="dialog-footer"><button type="button" onClick={closeExportDialog}>Cancel</button><button type="button" className="primary" disabled={Boolean(exportBlocked)} onClick={confirmExport}>Export file</button></div>
     </dialog>
   </>;
 }

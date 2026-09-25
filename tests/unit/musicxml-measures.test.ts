@@ -251,6 +251,27 @@ describe('ED-16 grace editing and removal', () => {
   });
 });
 
+describe('ED-22 exports carry the current draft', () => {
+  it('reimports an edited MusicXML export to the same events and plays the corrected pitch in MIDI', () => {
+    const source = fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8');
+    const original = readMusicXml(source, 'tie.musicxml');
+    const state = musicXmlEditorState(source, original.score);
+    state.notes[0].fret = 5;
+    const edited = applyMusicXmlEdits(source, state, [state.notes[0].index]);
+    const reopened = readMusicXml(edited, 'tie.musicxml').score;
+    const events = (value: typeof reopened) => value.tracks[0].staves[0].bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats.map(beat =>
+      `${bar.index}:${beat.playbackStart}:${beat.playbackDuration}:${beat.notes.map(note => `${note.string}/${note.fret}/${note.realValue}`).join(',')}`)));
+    expect(events(readMusicXml(new XMLSerializer().serializeToString(new DOMParser().parseFromString(edited, 'application/xml')), 'export.musicxml').score)).toEqual(events(reopened));
+    const keys = (value: typeof reopened) => {
+      const file = new midi.MidiFile();
+      new midi.MidiFileGenerator(value, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
+      return file.events.filter((event): event is midi.NoteOnEvent => event instanceof midi.NoteOnEvent).map(event => event.noteKey);
+    };
+    expect(keys(original.score)[0]).toBe(50);
+    expect(keys(reopened)[0]).toBe(55);
+  });
+});
+
 describe('ED-21 blank scores', () => {
   const blank = (overrides: Partial<Parameters<typeof createBlankMusicXml>[0]> = {}) =>
     createBlankMusicXml({ title: 'Untitled', tempo: 96, numerator: 4, denominator: 4, measures: 8, tuning: OPEN_G_TUNING, ...overrides });

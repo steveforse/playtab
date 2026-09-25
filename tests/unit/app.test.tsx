@@ -20,8 +20,9 @@ const { inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } = vi.h
 const { applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace } = vi.hoisted(() => ({
   applyMusicXmlGraceGroup: vi.fn(), inspectMusicXmlGraceGroup: vi.fn(), removeMusicXmlGraceGroup: vi.fn(), removeMusicXmlGrace: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
-  Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
+  Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing, exportBlockedReason }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
+    <span data-testid="export-blocked">{exportBlockedReason ?? ''}</span>
     {editing && <>
       <button type="button" data-testid="choose-note" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null })}>Choose note</button>
       <button type="button" data-testid="choose-grace" onClick={() => onSelectionChange?.({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 2, kind: 'note', noteId: 5, graceIndex: 0, graceGroupId: 'g1' })}>Choose grace</button>
@@ -1883,6 +1884,19 @@ describe('workspace application', () => {
     expect(screen.getByLabelText('Selection inspector').textContent).toContain('Measure 1');
     expect(screen.getByLabelText('Selection inspector').textContent).toContain('String 1');
     expect(fetchMock.mock.calls.filter(([, options]) => (options as RequestInit | undefined)?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('blocks export while a typed fret is still pending', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    expect(screen.getByTestId('export-blocked').textContent).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '7' } });
+    expect(screen.getByTestId('export-blocked').textContent).toBe('Apply or clear the pending fret before exporting.');
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '0' } });
+    expect(screen.getByTestId('export-blocked').textContent).toBe('');
   });
 
   it('blocks an imported deletion with a protected attachment', async () => {
