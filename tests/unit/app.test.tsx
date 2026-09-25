@@ -7,7 +7,8 @@ import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
 const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), addMusicXmlRepeat: vi.fn(), addMusicXmlEndings: vi.fn(), inspectMusicXmlRepeats: vi.fn(() => []), inspectMusicXmlRepeatEndings: vi.fn(() => null), removeMusicXmlRepeat: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), changeMusicXmlMeter: vi.fn(), changeMusicXmlPickup: vi.fn(), connectMusicXmlTie: vi.fn(), inspectMusicXmlTie: vi.fn(() => ({ canRemove: false })), removeMusicXmlTie: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), inspectMusicXmlMeterRange: vi.fn(() => ({ firstMeasure: 1, lastMeasure: 2 })), insertMusicXmlEvent: vi.fn(), createMusicXmlTriplet: vi.fn(), removeMusicXmlTriplet: vi.fn(), inspectMusicXmlTriplet: vi.fn(() => ({ triplet: false, canRemove: false })), insertMusicXmlMeasure: vi.fn(), duplicateMusicXmlMeasure: vi.fn(), deleteMusicXmlMeasure: vi.fn(), sourceTabNoteRecords: vi.fn(() => []) }));
-const { addMusicXmlGraceGroup, removeMusicXmlGrace } = vi.hoisted(() => ({ addMusicXmlGraceGroup: vi.fn(), removeMusicXmlGrace: vi.fn() }));
+const { applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace } = vi.hoisted(() => ({
+  applyMusicXmlGraceGroup: vi.fn(), inspectMusicXmlGraceGroup: vi.fn(), removeMusicXmlGraceGroup: vi.fn(), removeMusicXmlGrace: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
   Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing }: any) => <>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
@@ -32,7 +33,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, addMusicXmlGraceGroup, removeMusicXmlGrace, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords }));
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords }));
 
 const response = (body: unknown, ok = true, status = 200) => ({ ok, status, json: async () => body });
 const score = structuredClone(demo);
@@ -65,7 +66,7 @@ describe('workspace application', () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); addMusicXmlRepeat.mockReset(); inspectMusicXmlRepeats.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); changeMusicXmlMeter.mockReset(); changeMusicXmlPickup.mockReset(); connectMusicXmlTie.mockReset(); inspectMusicXmlTie.mockReset(); removeMusicXmlTie.mockReset(); inspectMusicXmlDuration.mockReset(); inspectMusicXmlMeterRange.mockReset(); insertMusicXmlEvent.mockReset(); createMusicXmlTriplet.mockReset(); removeMusicXmlTriplet.mockReset(); inspectMusicXmlTriplet.mockReset(); insertMusicXmlMeasure.mockReset(); duplicateMusicXmlMeasure.mockReset(); deleteMusicXmlMeasure.mockReset(); sourceTabNoteRecords.mockReset(); sourceTabNoteRecords.mockReturnValue([]); inspectMusicXmlRepeats.mockReturnValue([]); inspectMusicXmlTie.mockReturnValue({ canRemove: false }); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); inspectMusicXmlMeterRange.mockReturnValue({ firstMeasure: 1, lastMeasure: 2 }); inspectMusicXmlTriplet.mockReturnValue({ triplet: false, canRemove: false }); });
   afterEach(() => { addMusicXmlEndings.mockReset(); inspectMusicXmlRepeatEndings.mockReset(); inspectMusicXmlRepeatEndings.mockReturnValue(null); removeMusicXmlRepeat.mockReset(); });
-  afterEach(() => { addMusicXmlGraceGroup.mockReset(); removeMusicXmlGrace.mockReset(); });
+  afterEach(() => { applyMusicXmlGraceGroup.mockReset(); inspectMusicXmlGraceGroup.mockReset(); removeMusicXmlGraceGroup.mockReset(); removeMusicXmlGrace.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -342,7 +343,8 @@ describe('workspace application', () => {
   it('adds a grace chord with a supported display duration as one history step', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
     promoteNativeScore.mockReturnValue('<score-partwise/>');
-    addMusicXmlGraceGroup.mockReturnValue('<score-partwise><grace/></score-partwise>');
+    inspectMusicXmlGraceGroup.mockReturnValue({ destination: 0, events: [], readOnly: [], connections: [] });
+    applyMusicXmlGraceGroup.mockReturnValue('<score-partwise><grace/></score-partwise>');
     readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename,
       score: { title: score.title, masterBars: [{}, {}], tracks: [{ staves: [{ bars: [{ voices: [{ beats: [{
         graceType: source.includes('<grace/>') ? 1 : 0, graceIndex: 0,
@@ -355,31 +357,96 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByText('Techniques', { selector: 'summary' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add grace…' }));
     const dialog = screen.getByRole('dialog', { name: 'Add grace group' });
-    fireEvent.change(within(dialog).getByLabelText('Grace fret 1'), { target: { value: '2' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Add string' }));
-    fireEvent.change(within(dialog).getByLabelText('Grace string 2'), { target: { value: '4' } });
-    fireEvent.change(within(dialog).getByLabelText('Display duration'), { target: { value: '8' } });
-    expect(addMusicXmlGraceGroup).toHaveBeenLastCalledWith('<score-partwise/>', expect.anything(),
-      { measure: 0, beat: 0, voice: 0 }, [{ string: 3, fret: 2 }, { string: 4, fret: 0 }], 8);
+    expect(within(dialog).queryByRole('button', { name: 'Remove grace group' })).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Grace event 1 fret 1'), { target: { value: '2' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add string to grace event 1' }));
+    fireEvent.change(within(dialog).getByLabelText('Grace event 1 string 2'), { target: { value: '4' } });
+    fireEvent.change(within(dialog).getByLabelText('Grace event 1 transition 2'), { target: { value: 'hammer-on' } });
+    fireEvent.change(within(dialog).getByLabelText('Grace event 1 display duration'), { target: { value: '8' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add grace event' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove grace event 2' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add string to grace event 1' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove grace event 1 string 3' }));
+    expect(applyMusicXmlGraceGroup).toHaveBeenLastCalledWith('<score-partwise/>', expect.anything(), { measure: 0, beat: 0, voice: 0 },
+      [{ denominator: 8, notes: [{ string: 3, fret: 2, transition: 'none' }, { string: 4, fret: 0, transition: 'hammer-on' }] }]);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply grace group' }));
     expect(screen.getByText('Grace group added before the selected event.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
-    addMusicXmlGraceGroup.mockImplementation(() => { throw new Error('A grace event needs distinct strings.'); });
+    applyMusicXmlGraceGroup.mockImplementation(() => { throw new Error('Grace event 1, string 4: a hammer-on needs a higher fret.'); });
     fireEvent.click(screen.getByRole('button', { name: 'Add grace…' }));
-    expect(within(dialog).getByRole('alert').textContent).toContain('distinct strings');
+    expect(within(dialog).getByRole('alert').textContent).toContain('needs a higher fret');
     expect(within(dialog).getByRole('button', { name: 'Apply grace group' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    addMusicXmlGraceGroup.mockReturnValue('<score-partwise><grace/></score-partwise>');
+    applyMusicXmlGraceGroup.mockReturnValue('<score-partwise><grace/></score-partwise>');
     fireEvent.click(screen.getByRole('button', { name: 'Add grace…' }));
     readMusicXml.mockImplementationOnce(() => { throw new Error('Grace preview could not be rendered.'); });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply grace group' }));
     expect(within(dialog).getByRole('alert').textContent).toContain('could not be rendered');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    inspectMusicXmlGraceGroup.mockImplementationOnce(() => { throw new Error('The paired grace group cannot be matched safely.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Add grace…' }));
+    expect(screen.getByRole('alert').textContent).toContain('cannot be matched safely');
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '3' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add grace…' }));
     expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret');
+  });
+
+  it('edits an existing grace group, and keeps a read-only one unless it is removed whole', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    const grace = { notes: [{ string: 3, fret: 2, id: 5 }], playbackStart: 0, graceType: 1, graceIndex: 0, graceGroup: { id: 'g1' }, isRest: false };
+    const main = { notes: [{ string: 3, fret: 0, id: 1 }], playbackStart: 0, graceType: 0, isRest: false };
+    readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, score: {
+      ...preview.score, tracks: [{ staves: [{ bars: [{ voices: [{ beats: value.includes('removed') ? [main] : [grace, main] }] }] }] }],
+    } }));
+    const existing = [{ denominator: null, notes: [{ string: 3, fret: 2, transition: 'pull-off' }] }];
+    inspectMusicXmlGraceGroup.mockReturnValue({ destination: 1, events: existing, readOnly: [], connections: ['pull-off'] });
+    applyMusicXmlGraceGroup.mockReturnValue('<score-partwise edited="true"/>');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Techniques', { selector: 'summary' }));
+    fireEvent.click(screen.getByTestId('choose-grace'));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit grace…' }));
+    let dialog = screen.getByRole('dialog', { name: 'Edit grace group' });
+    expect(dialog.textContent).toContain('Destination: measure 1, event 2');
+    expect(within(dialog).getByLabelText<HTMLSelectElement>('Grace event 1 display duration').value).toBe('');
+    expect(within(dialog).getByLabelText<HTMLSelectElement>('Grace event 1 transition 1').value).toBe('pull-off');
+    fireEvent.change(within(dialog).getByLabelText('Grace event 1 fret 1'), { target: { value: '3' } });
+    expect(applyMusicXmlGraceGroup).toHaveBeenLastCalledWith(source, expect.anything(), { measure: 0, beat: 1, voice: 0 },
+      [{ denominator: null, notes: [{ string: 3, fret: 3, transition: 'pull-off' }] }]);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply grace group' }));
+    expect(screen.getByText('Grace group updated.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+    inspectMusicXmlGraceGroup.mockReturnValue({ destination: 1, events: existing, connections: ['slide'],
+      readOnly: ['Grace event 1, string 3 has the marking “TEF grace effect 5”.'] });
+    removeMusicXmlGraceGroup.mockReturnValue({ source: '<score-partwise removed="true"/>', dependencies: ['slide'] });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit grace…' }));
+    dialog = screen.getByRole('dialog', { name: 'Edit grace group' });
+    expect(within(dialog).getByRole('note').textContent).toContain('TEF grace effect 5');
+    expect(within(dialog).getByRole('note').textContent).toContain('disconnects its slide');
+    expect(within(dialog).queryByRole('button', { name: 'Apply grace group' })).toBeNull();
+    expect(within(dialog).queryByLabelText('Grace event 1 fret 1')).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit grace…' }));
+    removeMusicXmlGraceGroup.mockImplementationOnce(() => { throw new Error('The paired grace group cannot be matched safely.'); });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove grace group' }));
+    expect(within(dialog).getByRole('alert').textContent).toContain('cannot be matched safely');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove grace group' }));
+    expect(removeMusicXmlGraceGroup).toHaveBeenLastCalledWith(source, expect.anything(), { measure: 0, beat: 1, voice: 0 });
+    expect(screen.getByText('Grace group removed.')).toBeTruthy();
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add grace…' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('previews exclusions, cancels safely, and confirms duplication as one history step', async () => {
@@ -1192,7 +1259,7 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByTestId('choose-grace'));
     expect(screen.queryByRole('button', { name: 'Make rest' })).toBeNull();
     fireEvent.click(screen.getByText('Techniques', { selector: 'summary' }));
-    expect(screen.getByRole('button', { name: 'Add grace…' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Edit grace…' }).hasAttribute('disabled')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Remove grace' }));
     expect(removeMusicXmlGrace).toHaveBeenLastCalledWith(source, expect.anything(), { measure: 0, beat: 0, voice: 0, string: undefined });
     const dialog = screen.getByRole('dialog', { name: 'Confirm note removal' });
