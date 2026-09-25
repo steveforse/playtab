@@ -1,0 +1,131 @@
+/* Library, notices, tips and export. */
+.notice-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+.notice-dismiss,
+.tip-dismiss {
+  border: 0;
+  background: transparent;
+  color: #7d866d;
+  font-size: 19px;
+  line-height: 1;
+  padding: 2px 5px;
+}
+.notice-dismiss:hover:not(:disabled),
+.tip-dismiss:hover:not(:disabled) {
+  background: #e7ebd2;
+}
+.tip-dismiss {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+.practice-note,
+.player-tips {
+  position: relative;
+}
+.practice-note {
+  padding-right: 40px;
+}
+.player-tips {
+  padding-right: 30px;
+}
+.empty-library p {
+  margin: 0;
+}
+.library-list .practice-demo {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px 13px;
+  border: 0;
+  border-radius: 6px;
+  background: #e1e8d7;
+  color: inherit;
+  font-size: 13px;
+}
+.library-list .practice-demo:hover:not(:disabled) {
+  background: #d5e0c7;
+}
+.player-tips .tip-dismiss {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+}
+.player-tips .player-hint {
+  margin-top: 13px;
+}
+.player-tips .player-hint:first-child {
+  margin-top: 13px;
+}
+.segmented button {
+  font-size: 11px;
+  padding: 8px 13px;
+  background: transparent;
+  border-color: transparent;
+  color: #9ca290;
+}
+.segmented button[aria-selected=true] {
+  background: white;
+  border-color: var(--line);
+  color: #29392e;
+  font-weight: 600;
+}
+.score-paper[hidden],
+.lyrics-section[hidden] {
+  display: none;
+}
+.lyrics-section {
+  margin-top: 0;
+}
+.export-button {
+  font-size: 11px;
+  padding: 8px 13px;
+  white-space: nowrap;
+}
+.export-dialog {
+  width: min(480px,calc(100vw - 30px));
+  border: 1px solid #d9dfcf;
+  border-radius: 12px;
+  padding: 30px;
+  background: var(--field);
+  color: var(--ink);
+  box-shadow: 0 20px 100px #15231733;
+}
+.export-dialog::backdrop {
+  background: #1f302962;
+  backdrop-filter: blur(3px);
+}
+.export-dialog h2 {
+  font-family: 'Libre Baskerville',serif;
+  font-weight: 400;
+  font-size: 25px;
+  margin: 0;
+}
+.export-dialog>p {
+  font-size: 12px;
+  color: #818978;
+  line-height: 1.7;
+}
+.export-format-label {
+  display: grid;
+  gap: 8px;
+  font-size: 11px;
+  margin: 24px 0;
+}
+.export-format-label select {
+  border: 1px solid #d9dfd1;
+  border-radius: 5px;
+  padding: 9px;
+  background: white;
+  color: var(--ink);
+}
+.export-dialog .dialog-footer {
+  justify-content: flex-end;
+  margin-top: 26px;
+}

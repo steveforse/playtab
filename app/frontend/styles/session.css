@@ -1,0 +1,161 @@
+/* Title actions, saving and unsaved-change guards. */
+.title-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.edit-mode-toggle {
+  font-size: 11px;
+  white-space: nowrap;
+  padding: 9px 12px;
+  background: #edf1e6;
+  border-color: #cfd9c5;
+}
+.edit-mode-toggle[aria-pressed=true] {
+  background: #dce8c8;
+  border-color: #8ba56d;
+  color: #304c36;
+  font-weight: 600;
+}
+.editor-sidebar {
+  margin: 22px 0 0;
+  padding: 15px 13px 17px;
+  background: #e8eee1;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.editor-sidebar .sidebar-section {
+  margin: 0 0 10px;
+  color: var(--label);
+}
+.editor-sidebar-status {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  color: #51634e;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.editor-sidebar-status strong {
+  font-size: 12px;
+  color: #304c36;
+}
+.editor-sidebar-status span {
+  color: #788473;
+}
+@media (max-width:800px) {
+  .title-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+  .editor-sidebar {
+    display: none;
+  }
+}
+.save-status {
+  margin: 7px 0 0;
+  color: #74816e;
+  font-size: 11px;
+}
+.score-more {
+  position: relative;
+  font-size: 11px;
+}
+.score-more summary {
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 12px;
+  background: white;
+}
+.score-more summary::-webkit-details-marker {
+  display: none;
+}
+.score-more[open] button {
+  position: absolute;
+  right: 0;
+  top: 36px;
+  z-index: 5;
+  white-space: nowrap;
+  box-shadow: 0 5px 18px #23352224;
+}
+.copy-dialog {
+  width: min(400px,calc(100vw - 32px));
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 22px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 12px 36px var(--shadow);
+}
+.copy-dialog::backdrop {
+  background: var(--backdrop);
+}
+.copy-dialog h2 {
+  margin: 0 0 18px;
+  font-size: 19px;
+}
+.copy-dialog label {
+  display: block;
+  font-size: 12px;
+}
+.copy-dialog input {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  padding: 9px;
+}
+.copy-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+.score-more[open] button:nth-of-type(2) {
+  top: 76px;
+}
+.guard-dialog {
+  width: min(440px,calc(100vw - 32px));
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 22px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 12px 36px var(--shadow);
+}
+.guard-dialog::backdrop {
+  background: var(--backdrop);
+}
+.guard-dialog h2 {
+  margin: 0 0 10px;
+  font-size: 19px;
+}
+.guard-dialog p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.guard-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.guard-dialog-actions button:last-child {
+  background: #365a3e;
+  color: #fff;
+  border-color: #365a3e;
+}
+.guard-dialog[aria-label="Score changed in another tab"] {
+  width: min(520px,calc(100vw - 32px));
+}
+@media (max-width:800px) {
+  .shell.edit-mode main {
+    margin-left: 0;
+  }
+}
