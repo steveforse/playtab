@@ -1,5 +1,6 @@
 import type { model } from '@coderline/alphatab';
 import type { SourceIdentityMap } from './source-identity';
+import { derived, readSourceDocument } from './xml-cache';
 import { DURATION_DENOMINATORS, REST_SPACE_ERROR, addTime as addRhythmTime, subtractTime as subtractRhythmTime, durationTime, fillRestTime, planDurationChange, rationalTime, compareTime,
   type DurationDenominator, type RationalTime } from '../editor/rhythm';
 
@@ -53,6 +54,15 @@ const descendants = (node: Element | Document, name: string) => Array.from(node.
 const directMeasures = (part: Element) => children(part).filter(candidate => candidate.localName === 'measure');
 const text = (node: Element | undefined) => node?.textContent?.trim() ?? '';
 
+// A shared, cached parse for read-only inspection. Never mutate its result.
+function readDocument(source: string) {
+  const document = readSourceDocument(source);
+  if (document.getElementsByTagName('parsererror').length || document.documentElement.localName !== 'score-partwise') {
+    throw new Error('Invalid MusicXML.');
+  }
+  return document;
+}
+
 function parseDocument(source: string) {
   const document = new DOMParser().parseFromString(source, 'application/xml');
   if (document.getElementsByTagName('parsererror').length || document.documentElement.localName !== 'score-partwise') {
@@ -61,14 +71,29 @@ function parseDocument(source: string) {
   return document;
 }
 
+// The part is a direct child of score-partwise; avoid walking every element.
+function scorePart(document: Document): Element | undefined {
+  return children(document.documentElement).find(item => item.localName === 'part');
+}
+
+const tabStaffCache = new WeakMap<Document, number>();
 function sourceTabStaff(document: Document): number {
+  return derived(tabStaffCache, document, () => computeTabStaff(document));
+}
+
+function computeTabStaff(document: Document): number {
   const details = descendants(document.documentElement, 'staff-details').find(item => text(child(item, 'staff-lines')) === '5');
   return Number(details?.getAttribute('number') || '1');
 }
 
+const recordCache = new WeakMap<Document, ReturnType<typeof computeTabNoteRecords>>();
 export function sourceTabNoteRecords(document: Document) {
+  return derived(recordCache, document, () => computeTabNoteRecords(document));
+}
+
+function computeTabNoteRecords(document: Document) {
   const staff = sourceTabStaff(document);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   if (!part) return [];
   return directMeasures(part).flatMap((measure, measureIndex) => {
     const eventByVoice = new Map<string, number>();
@@ -110,7 +135,12 @@ function sourceTabNotes(document: Document) { return sourceTabNoteRecords(docume
 // Match the original source before either representation is changed. Use
 // musical position and pitch, never parallel note-array indexes: chords may
 // be written in a different order on the two staves.
+const linkedCache = new WeakMap<Document, (note: Element) => Element[]>();
 function linkedStaffNotes(document: Document) {
+  return derived(linkedCache, document, () => computeLinkedStaffNotes(document));
+}
+
+function computeLinkedStaffNotes(document: Document) {
   type Fraction = [number, number];
   const fraction = (n: number, d = 1): Fraction => {
     const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
@@ -120,7 +150,7 @@ function linkedStaffNotes(document: Document) {
   const add = (a: Fraction, b: Fraction): Fraction => fraction(a[0] * b[1] + b[0] * a[1], a[1] * b[1]);
   const keyFor = new Map<Element, string>();
   const byStaff = new Map<number, Map<string, Element[]>>();
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   let divisions = 1;
   for (const [measureIndex, measure] of (part ? directMeasures(part) : []).entries()) {
     let position: Fraction = [0, 1];
@@ -205,8 +235,8 @@ function chordName(harmony: Element) {
 }
 
 export function musicXmlEditorState(source: string, score: model.Score, sourceIdentity?: SourceIdentityMap): MusicXmlEditorState {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const document = readDocument(source);
+  const part = scorePart(document);
   const tab = score.tracks?.[0]?.staves?.[0];
   const sourceNotes = sourceTabNoteRecords(document);
   if (sourceIdentity && sourceIdentity.noteIds.length !== sourceNotes.length) throw new Error('Source identity map no longer matches this score. Reopen it before editing.');
@@ -314,7 +344,7 @@ function setWords(document: Document, values: string[]) {
     if (words[index]) words[index].textContent = value;
   });
   words.slice(values.length).forEach(word => word.parentNode?.removeChild(word));
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[0];
   values.slice(words.length).forEach(value => {
     if (!measure) return;
@@ -348,7 +378,7 @@ function setChords(document: Document, values: string[]) {
     updateChord(harmony, value);
   });
   harmonies.slice(values.length).forEach(harmony => harmony.parentNode?.removeChild(harmony));
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[0];
   values.slice(harmonies.length).forEach(value => {
     if (!measure) return;
@@ -376,7 +406,7 @@ function setLyrics(document: Document, value: string) {
 }
 
 function setMeasureCount(document: Document, count: number) {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   if (!part) return;
   const measures = directMeasures(part);
   while (measures.length > count) part.removeChild(measures.pop()!);
@@ -577,7 +607,7 @@ const subtractTime = (left: Rational, right: Rational): Rational => rational(lef
 const timeGreater = (left: Rational, right: Rational) => left[0] * right[1] > right[0] * left[1];
 
 function timingBoundary(document: Document, measureIndex: number, staff: number, voice: string, event?: Element[]): string | null {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   if (!part) return 'This source has no playable part.';
   const measures = directMeasures(part);
   if (!measures[measureIndex]) return 'This source measure cannot be found.';
@@ -634,8 +664,8 @@ function timingBoundary(document: Document, measureIndex: number, staff: number,
 }
 
 export function musicXmlTimingBoundary(source: string, position: { measure: number; staff: number; voice: string; event?: number }): string | null {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const document = readDocument(source);
+  const part = scorePart(document);
   const measure = part ? directMeasures(part)[position.measure] : undefined;
   const group = measure && position.event !== undefined ? sourceBeatGroups(measure, position.staff, position.voice)[position.event] : undefined;
   return timingBoundary(document, position.measure, position.staff, position.voice, group);
@@ -727,7 +757,7 @@ function deleteSourceNotes(document: Document, notes: Element[]) {
 
 export function removeMusicXmlNotes(source: string, score: model.Score, position: RemovalPosition): { source: string; dependencies: string[] } | null {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const voice = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice];
   const beat = voice?.beats?.[position.beat];
@@ -805,7 +835,7 @@ export type GraceRemoval = { source: string; dependencies: string[]; groupRemove
 // no rest is left behind; the group disappears with its final event.
 export function removeMusicXmlGrace(source: string, score: model.Score, position: RemovalPosition): GraceRemoval {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
   if (!measure || !rendered?.graceType) throw new Error('Select a grace note to remove it.');
@@ -877,7 +907,7 @@ function replaceRestWithNote(rest: Element, midi: number, string?: number, fret?
 // duplicate notation staff. Never shift the source event's duration or onset.
 export function addMusicXmlNote(source: string, score: model.Score, position: NotePosition): string {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const beat = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
   if (!measure || !beat || beat.graceType) throw new Error('This source event cannot be mapped safely for note insertion.');
@@ -931,8 +961,8 @@ export type RhythmPosition = { measure: number; beat: number; voice: number };
 export type MusicXmlDurationInfo = { denominator: DurationDenominator | null; dots: number; rest: boolean; reason?: string };
 
 export function inspectMusicXmlDuration(source: string, position: RhythmPosition): MusicXmlDurationInfo {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const document = readDocument(source);
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const group = measure && sourceBeatGroups(measure, sourceTabStaff(document), String(position.voice + 1))[position.beat];
   if (!group) return { denominator: null, dots: 0, rest: false, reason: 'Select an ordinary event to edit its rhythm.' };
@@ -1076,7 +1106,7 @@ export function changeMusicXmlDuration(source: string, score: model.Score, posit
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
   if (!rendered || rendered.graceType) throw new Error('Select an ordinary event to change its duration.');
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
   const tabStaff = sourceTabStaff(document);
@@ -1171,7 +1201,7 @@ export function insertMusicXmlEvent(source: string, score: model.Score, options:
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[measureIndex]?.voices?.[voiceIndex]?.beats?.[eventIndex];
   if (!rendered || rendered.graceType) throw new Error('Select an ordinary event before inserting another event.');
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[measureIndex];
   if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
   const tabStaff = sourceTabStaff(document);
@@ -1282,7 +1312,7 @@ export function createMusicXmlTriplet(source: string, score: model.Score, positi
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
   if (!rendered || rendered.graceType) throw new Error('Select an ordinary event to make a triplet.');
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
   const tabStaff = sourceTabStaff(document);
@@ -1372,8 +1402,8 @@ function removableTripletRest(group: Element[]): boolean {
 export type MusicXmlTripletInfo = { triplet: boolean; canRemove: boolean; start?: number; reason?: string };
 
 export function inspectMusicXmlTriplet(source: string, position: RhythmPosition): MusicXmlTripletInfo {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const document = readDocument(source);
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const groups = measure ? sourceBeatGroups(measure, sourceTabStaff(document), String(position.voice + 1)) : [];
   const selected = groups[position.beat];
@@ -1394,7 +1424,7 @@ export function removeMusicXmlTriplet(source: string, score: model.Score, positi
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
   if (!rendered || rendered.graceType) throw new Error('Select a triplet child to remove its group.');
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
   const tabStaff = sourceTabStaff(document);
@@ -1453,7 +1483,7 @@ export function insertMusicXmlMeasure(source: string, score: model.Score, measur
   placement: 'before' | 'after'): string {
   if (placement !== 'before' && placement !== 'after') throw new Error('Invalid measure insertion position.');
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (!part || !measures[measureIndex] || !score.masterBars[measureIndex]) throw new Error('The selected measure cannot be identified safely.');
   if (measures.length >= 256) throw new Error('A score cannot contain more than 256 measures.');
@@ -1572,7 +1602,7 @@ function excludedCopySpans(original: Element, copy: Element): { excluded: string
 
 export function duplicateMusicXmlMeasure(source: string, score: model.Score, measureIndex: number): MeasureDuplication {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   const selected = measures[measureIndex];
   if (!part || !selected || !score.masterBars[measureIndex] || measures.length !== score.masterBars.length) {
@@ -1662,7 +1692,7 @@ export type MeasureDeletion = { source: string; noteCount: number; restCount: nu
 
 export function deleteMusicXmlMeasure(source: string, score: model.Score, measureIndex: number): MeasureDeletion {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   const selected = measures[measureIndex];
   if (!part || !selected || !score.masterBars[measureIndex] || measures.length !== score.masterBars.length) {
@@ -1726,8 +1756,8 @@ function meterRange(measures: Element[], measureIndex: number, scope: MeterScope
 }
 
 export function inspectMusicXmlMeterRange(source: string, score: model.Score, measureIndex: number, scope: MeterScope) {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const document = readDocument(source);
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (!measures[measureIndex] || measures.length !== score.masterBars.length) {
     throw new Error('The selected source measure cannot be identified safely.');
@@ -1832,7 +1862,7 @@ export function changeMusicXmlMeter(source: string, score: model.Score, measureI
   if (!Number.isInteger(numerator) || numerator < 1 || numerator > 12 || ![2, 4, 8, 16].includes(denominator)
     || !['this', 'from'].includes(scope)) throw new Error('Choose a numerator from 1–12 and denominator 2, 4, 8, or 16.');
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (!part || !measures[measureIndex] || !score.masterBars[measureIndex] || measures.length !== score.masterBars.length) {
     throw new Error('The selected source measure cannot be identified safely.');
@@ -1884,7 +1914,7 @@ export function changeMusicXmlPickup(source: string, score: model.Score, numerat
     throw new Error('Choose a positive pickup length with denominator 2, 4, 8, 16, 32, or 64.');
   }
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (!part || !measures[0] || measures.length !== score.masterBars.length) {
     throw new Error('The first source measure cannot be identified safely.');
@@ -1905,7 +1935,7 @@ export function changeMusicXmlPickup(source: string, score: model.Score, numerat
 export type TiePosition = { measure: number; beat: number; voice: number; string: number; fret: number };
 
 function tieSourceRecords(document: Document, score: model.Score) {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   if (!part || directMeasures(part).length !== score.masterBars.length) {
     throw new Error('The tie source measure count does not match the rendered score.');
   }
@@ -1952,7 +1982,7 @@ function removeTieMarker(note: Element, type: 'start' | 'stop') {
 }
 
 export function inspectMusicXmlTie(source: string, score: model.Score, position: TiePosition) {
-  const document = parseDocument(source);
+  const document = readDocument(source);
   const record = tieRecord(tieSourceRecords(document, score), position);
   return { canRemove: descendants(record.note, 'tie').length > 0 };
 }
@@ -1968,7 +1998,7 @@ export function connectMusicXmlTie(source: string, score: model.Score, origin: T
   const fromIndex = sameLane.indexOf(from);
   const toIndex = sameLane.indexOf(to);
   if (toIndex <= fromIndex) throw new Error('Tie destination must follow the selected origin.');
-  const part = descendants(document.documentElement, 'part')[0]!;
+  const part = scorePart(document)!;
   const voiceEvents = directMeasures(part).flatMap(measure => sourceBeatGroups(measure, sourceTabStaff(document), from.voice)
     .filter(group => !child(group[0], 'grace')));
   const originEvent = voiceEvents.findIndex(group => group.includes(from.note));
@@ -2036,8 +2066,8 @@ function sourceRepeatRegions(measures: Element[]): RepeatRegion[] {
 }
 
 export function inspectMusicXmlRepeats(source: string): RepeatRegion[] {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const document = readDocument(source);
+  const part = scorePart(document);
   if (!part) throw new Error('The repeat source has no music part.');
   return sourceRepeatRegions(directMeasures(part));
 }
@@ -2054,7 +2084,7 @@ function repeatBarline(document: Document, measure: Element, location: 'left' | 
 
 export function addMusicXmlRepeat(source: string, score: model.Score, start: number, end: number, count: number): string {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (!part || measures.length !== score.masterBars.length) throw new Error('The repeat source measures do not match the rendered score.');
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end >= measures.length || start >= end) {
@@ -2088,7 +2118,7 @@ export function addMusicXmlRepeat(source: string, score: model.Score, start: num
 export function addMusicXmlEndings(source: string, score: model.Score, repeatStart: number, repeatEnd: number,
   firstStart: number, secondEnd: number): string {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (measures.length !== score.masterBars.length) throw new Error('The ending source measures do not match the rendered score.');
   const regions = sourceRepeatRegions(measures);
@@ -2148,8 +2178,8 @@ function knownRepeatEndings(measures: Element[], regions: RepeatRegion[], region
 }
 
 export function inspectMusicXmlRepeatEndings(source: string, start: number, end: number): RepeatEndings | null {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const document = readDocument(source);
+  const part = scorePart(document);
   if (!part) throw new Error('The repeat source has no music part.');
   const measures = directMeasures(part);
   const regions = sourceRepeatRegions(measures);
@@ -2160,7 +2190,7 @@ export function inspectMusicXmlRepeatEndings(source: string, start: number, end:
 
 export function removeMusicXmlRepeat(source: string, score: model.Score, start: number, end: number): string {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (measures.length !== score.masterBars.length) throw new Error('The repeat source measures do not match the rendered score.');
   const regions = sourceRepeatRegions(measures);
@@ -2211,9 +2241,9 @@ function transitionMarkersOf(note: Element) {
   ];
 }
 
-function locateGraceGroup(source: string, score: model.Score, position: RhythmPosition) {
-  const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+function locateGraceGroup(source: string, score: model.Score, position: RhythmPosition, readOnly = false) {
+  const document = readOnly ? readDocument(source) : parseDocument(source);
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const beats = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats;
   let destination = position.beat;
@@ -2326,7 +2356,7 @@ function readGraceEvents(located: ReturnType<typeof locateGraceGroup>) {
 }
 
 export function inspectMusicXmlGraceGroup(source: string, score: model.Score, position: RhythmPosition): GraceGroupInfo {
-  const located = locateGraceGroup(source, score, position);
+  const located = locateGraceGroup(source, score, position, true);
   const { events, readOnly } = readGraceEvents(located);
   const existing = located.lanes.flatMap(lane => lane.groups.slice(located.first, located.destination).flat());
   return { destination: located.destination, events, readOnly, connections: attachedDependencies(existing) };
@@ -2473,7 +2503,7 @@ export type NoteTechniqueInfo = {
 };
 
 function annotatedSourceNote(document: Document, score: model.Score, position: TiePosition) {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   if (!part || directMeasures(part).length !== score.masterBars.length) throw new Error('The source measure count does not match the rendered score.');
   const matches = sourceTabNoteRecords(document).filter(record => record.measure === position.measure && record.beat === position.beat
     && record.voice === String(position.voice) && record.string === position.string && record.fret === position.fret);
@@ -2530,7 +2560,7 @@ function readBend(note: Element): Pick<NoteTechniqueInfo, 'bend' | 'bendReason'>
 }
 
 export function inspectMusicXmlNoteTechniques(source: string, score: model.Score, position: TiePosition): NoteTechniqueInfo {
-  const note = annotatedSourceNote(parseDocument(source), score, position);
+  const note = annotatedSourceNote(readDocument(source), score, position);
   return { ...readHands(note), ...readBend(note) };
 }
 
@@ -2689,7 +2719,7 @@ function anchorGroups(part: Element, measureIndex: number, onset: Rational) {
 }
 
 function anchorEvent(document: Document, score: model.Score, position: RhythmPosition) {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
   if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary event to anchor text to it.');
@@ -2703,7 +2733,7 @@ function anchorEvent(document: Document, score: model.Score, position: RhythmPos
 }
 
 export function inspectMusicXmlAnchor(source: string, score: model.Score, position: RhythmPosition): AnchorInfo {
-  const document = parseDocument(source);
+  const document = readDocument(source);
   const { part, onset } = anchorEvent(document, score, position);
   const groups = anchorGroups(part, position.measure, onset);
   return {
@@ -2806,7 +2836,7 @@ const SYLLABIC: LyricSyllabic[] = ['single', 'begin', 'middle', 'end'];
 
 // Timed lyrics live on the first note of an event, once per staff lane.
 function lyricEvent(document: Document, score: model.Score, position: RhythmPosition) {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
   if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary event to edit its lyric.');
@@ -2842,7 +2872,7 @@ function readLyrics(group: Element[]): EventLyric[] {
 }
 
 export function inspectMusicXmlLyrics(source: string, score: model.Score, position: RhythmPosition): EventLyric[] {
-  return readLyrics(lyricEvent(parseDocument(source), score, position)[0]);
+  return readLyrics(lyricEvent(readDocument(source), score, position)[0]);
 }
 
 function placeLyric(note: Element, lyric: Element, verse: number) {
@@ -2912,7 +2942,7 @@ function tabTuningDetails(measure: Element, tabStaff: number) {
 }
 
 function scoreTuningState(document: Document, score: model.Score) {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   if (!part) throw new Error('This score has no part to configure.');
   const measures = directMeasures(part);
   const tabStaff = sourceTabStaff(document);
@@ -2957,7 +2987,7 @@ function newTempoDirection(document: Document, tempo: number, staff: number) {
 }
 
 export function inspectMusicXmlScoreSettings(source: string, score: model.Score): ScoreSettingsInfo {
-  const document = parseDocument(source);
+  const document = readDocument(source);
   const { part, initial, end } = scoreTuningState(document, score);
   const { measure, onsets } = measureTimeline(part, 0);
   const opening = tempoDirectives(measure, onsets, rational(0n)).map(directiveTempo).find(value => value !== null);
@@ -3055,7 +3085,7 @@ export function applyMusicXmlScoreSettings(source: string, score: model.Score, s
     return created;
   })();
   settings.tuning.forEach((midi, index) => { if (midi !== initial[index] || !firstDetails) writeTuning(details, 5 - index, midi); });
-  const before = previewTuningConflicts(parseDocument(source), initial);
+  const before = previewTuningConflicts(readDocument(source), initial);
   const conflict = previewTuningConflicts(document, initial).find(item => !before.has(item.key));
   if (conflict) {
     throw new Error(`${conflict.where}: this score changes tuning again at measure ${end + 1}, and the preview plays one tuning per staff, so this note would sound wrong. No tuning change was applied.`);
@@ -3067,7 +3097,7 @@ export function applyMusicXmlScoreSettings(source: string, score: model.Score, s
 // wins), so every written TAB pitch must agree with that tuning to preview.
 function previewTuningConflicts(document: Document, fallback: number[]) {
   const tabStaff = sourceTabStaff(document);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const tuning = [...fallback];
   for (const measure of part ? directMeasures(part) : []) {
     for (const details of tabTuningDetails(measure, tabStaff)) {
@@ -3104,7 +3134,7 @@ function tempoBefore(part: Element, measureIndex: number, onset: Rational, fallb
 }
 
 export function inspectMusicXmlTempo(source: string, score: model.Score, position: RhythmPosition): LocalTempoInfo {
-  const document = parseDocument(source);
+  const document = readDocument(source);
   const { part, measure, onset } = anchorEvent(document, score, position);
   const onsets = measureTimeline(part, position.measure).onsets;
   const local = tempoDirectives(measure, onsets, onset).map(directiveTempo).find(value => value !== null) ?? null;
@@ -3147,7 +3177,7 @@ export type NoteTransition = { kind: TransitionKind; direction: 'outgoing' | 'in
 const TRANSITION_KINDS: TransitionKind[] = ['tie', 'hammer-on', 'pull-off', 'slide'];
 
 function transitionLane(document: Document, score: model.Score, position: TiePosition) {
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   if (!part || directMeasures(part).length !== score.masterBars.length) throw new Error('The source measure count does not match the rendered score.');
   const records = sourceTabNoteRecords(document);
   const matches = records.filter(record => record.measure === position.measure && record.beat === position.beat
@@ -3164,7 +3194,7 @@ function kindMarkers(note: Element, kind: TransitionKind, type: 'start' | 'stop'
 }
 
 export function inspectMusicXmlTransitions(source: string, score: model.Score, position: TiePosition): NoteTransition[] {
-  const { record, lane } = transitionLane(parseDocument(source), score, position);
+  const { record, lane } = transitionLane(readDocument(source), score, position);
   const index = lane.indexOf(record);
   return TRANSITION_KINDS.flatMap(kind => (['outgoing', 'incoming'] as const).flatMap(direction => {
     if (!kindMarkers(record.note, kind, direction === 'outgoing' ? 'start' : 'stop').length) return [];
@@ -3297,7 +3327,7 @@ function crossingSpans(originals: Element[], copies: Element[]) {
 
 export function copyMusicXmlMeasures(source: string, score: model.Score, first: number, last: number): MeasureClipboard {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (!part || measures.length !== score.masterBars.length) throw new Error('The source measure count does not match the rendered score.');
   if (!Number.isInteger(first) || !Number.isInteger(last) || first < 0 || last < first || last >= measures.length) throw new Error('Select whole measures to copy.');
@@ -3357,7 +3387,7 @@ export function pasteMusicXmlMeasures(source: string, score: model.Score, clipbo
   if (pitchMode !== 'frets' && pitchMode !== 'pitches') throw new Error('Choose Keep frets or Keep pitches.');
   if (mode === 'replace') return replaceMusicXmlMeasures(source, score, clipboard, measureIndex, pitchMode);
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   if (!part || measures.length !== score.masterBars.length || !measures[measureIndex]) throw new Error('The destination measure cannot be identified safely.');
   if (!clipboard.measures.length) throw new Error('The clipboard is empty.');
@@ -3457,7 +3487,7 @@ function rangeGuard(measures: Element[], first: number, last: number, action: st
 
 function replaceMusicXmlMeasures(source: string, score: model.Score, clipboard: MeasureClipboard, first: number, pitchMode: TuningMode): string {
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0];
+  const part = scorePart(document);
   const measures = part ? directMeasures(part) : [];
   const last = first + clipboard.measures.length - 1;
   if (!part || measures.length !== score.masterBars.length || !measures[first]) throw new Error('The destination measure cannot be identified safely.');
@@ -3516,7 +3546,7 @@ export type MeasureCut = { source: string; clipboard: MeasureClipboard; notes: n
 export function cutMusicXmlMeasures(source: string, score: model.Score, first: number, last: number): MeasureCut {
   const clipboard = copyMusicXmlMeasures(source, score, first, last);
   const document = parseDocument(source);
-  const part = descendants(document.documentElement, 'part')[0]!;
+  const part = scorePart(document)!;
   const measures = directMeasures(part);
   rangeGuard(measures, first, last, 'Cutting these measures');
   let notes = 0; let labels = 0; let lyrics = 0;

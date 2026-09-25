@@ -12,6 +12,7 @@ import { documentKey, emptyHistory, record, travel, type Snapshot } from './edit
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
 import { sourceEventCount, type IdentityCarry, type SourceIdentityMap } from './music/source-identity';
+import { readSourceDocument } from './music/xml-cache';
 
 type LibraryItem = { id: number; title: string; revision?: number };
 type RemovalMode = 'note' | 'rest' | 'grace';
@@ -78,7 +79,7 @@ function readdressMeasureCarries(preview: MusicXmlPreview, addressFor: (index: n
     const next = addressFor(Number(address.slice(0, separator)));
     return next === null ? [] : [{ kind: 'event', id, address: `${next}${address.slice(separator)}` }];
   });
-  const notes = sourceTabNoteRecords(new DOMParser().parseFromString(preview.source, 'application/xml'));
+  const notes = sourceTabNoteRecords(readSourceDocument(preview.source));
   const noteCarries: IdentityCarry[] = notes.flatMap((record, index) => {
     const next = addressFor(record.measure);
     return next === null ? [] : [{ kind: 'note', id: preview.sourceIdentity!.noteIds[index],
@@ -749,7 +750,7 @@ export function App() {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
       const measureIndex = selection.measure - 1;
       const candidate = duplicateMusicXmlMeasure(base.source, base.score, measureIndex);
-      const parsed = new DOMParser().parseFromString(base.source, 'application/xml');
+      const parsed = readSourceDocument(base.source);
       const part = Array.from(parsed.getElementsByTagName('*')).find(element => element.localName === 'part');
       const measure = part && Array.from(part.children).filter(element => element.localName === 'measure')[measureIndex];
       const notes = measure ? Array.from(measure.children).filter(element => element.localName === 'note') : [];
