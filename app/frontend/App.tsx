@@ -1675,6 +1675,15 @@ export function App() {
   const wholeRange = wholeMeasurePassage();
   const rangeReason = !passage ? 'Select a range first' : !wholeRange ? 'Select whole measures first' : undefined;
   const playReason = playerControls.current?.canPlay ? undefined : 'Playback is not ready yet';
+  // The status bar summarises the selection in the compact form other
+  // notation editors use, e.g. "M3 E2 S4 · fret 5 · G3 · 1/8".
+  const durationText = selectedRhythm?.denominator
+    ? `${selectedRhythm.rest ? 'rest ' : ''}${selectedRhythm.denominator === 1 ? '1' : `1/${selectedRhythm.denominator}`}${'.'.repeat(selectedRhythm.dots)}` : null;
+  const statusSelection = passage ? rangeDescription(passage, wholeRange) : selection
+    ? [`M${selection.measure} E${selection.event}${selection.string !== null ? ` S${selection.string}` : ''}`,
+      selection.fret !== null ? `fret ${selection.fret}` : null, selectedDetails?.pitchValue != null ? selectedDetails.pitch : null, durationText]
+      .filter(Boolean).join(' · ')
+    : 'Nothing selected';
   const commands: EditorCommands = {
     undo: { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !history.undo.length,
       title: history.undo.length ? `Undo: ${history.undo.at(-1)!.description}` : 'Nothing to undo', run: () => moveHistory('undo') },
@@ -1801,7 +1810,7 @@ export function App() {
         <p className="save-status" role="status">{saving ? 'Saving…' : conflicted ? 'Changed in another tab' : saveError ? 'Could not save' : savedId === null ? hasDocumentEdits || pendingFret ? 'Unsaved changes' : 'Not saved to library' : dirty || pendingFret ? 'Unsaved changes' : 'Saved'}</p>
         {saveError && <p className="alert" role="alert">{saveError} {conflicted ? <button type="button" onClick={() => setConflictOpen(true)}>Resolve conflict…</button> : <button type="button" disabled={saving} onClick={() => void (failedCopyName ? save(failedCopyName) : saveCurrent())}>Retry save</button>}</p>}
         {error && <p className="alert" role="alert">{error}</p>}
-        {message && <p className="success" role="status">{message}</p>}
+        {message && !editMode && <p className="success" role="status">{message}</p>}
         {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}
         {showPracticeTip && <aside className="practice-note" role="note" aria-label="Practice tip"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span><button type="button" className="tip-dismiss" aria-label="Dismiss practice tip" onClick={() => setShowPracticeTip(false)}>×</button></aside>}
         {editMode && !narrow && <EditorToolbar commands={commands} />}
@@ -1837,6 +1846,11 @@ export function App() {
           onRenderResult={handleRenderResult}
           sessionKey={session.current}
         />
+        {editMode && <div className="editor-status-bar" role="status" aria-label="Editor status">
+          <span className="editor-status-selection">{statusSelection}</span>
+          {surfaceBuffer && <span className="editor-status-buffer">Fret {fretDraft} typed — Enter applies, Escape cancels</span>}
+          {message && <span className="editor-status-message">{message}</span>}
+        </div>}
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
     </main>
