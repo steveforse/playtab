@@ -1,0 +1,62 @@
+import { expect, test } from '@playwright/test';
+import { DOMParser } from '@xmldom/xmldom';
+
+test('ED-20 copies a whole measure and pastes it before another, keeping internal spans', async ({ page }, testInfo) => {
+  let savedSource = '';
+  await page.route('**/api/songs**', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: [] });
+    savedSource = route.request().postDataJSON().score.source;
+    return route.fulfill({ status: 201, json: { id: 92, title: 'Rich editor exercise', revision: 0 } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
+  const notation = page.getByTestId('notation');
+  const firstFret = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(firstFret).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const box = (await firstFret.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByRole('combobox', { name: 'Selection voice' }).selectOption('2');
+  await page.locator('summary', { hasText: /^Measure$/ }).click();
+  await page.getByRole('button', { name: 'Select measure' }).click();
+  await page.locator('summary', { hasText: /^Select passage$/ }).click();
+  await page.getByRole('button', { name: 'Copy passage' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Copied 1 measure (1).' })).toBeVisible();
+  await expect(page.getByText('Clipboard: 1 measure from “Rich editor exercise”.')).toBeVisible();
+
+  await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('2');
+  await page.getByRole('button', { name: 'Paste passage…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Paste passage' });
+  await expect(dialog.getByRole('alert')).toContainText('Pasting before measure 2 would split a tie');
+  await expect(dialog.getByRole('button', { name: 'Paste' })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('1');
+  await page.getByRole('button', { name: 'Paste passage…' }).click();
+  await expect(dialog.getByRole('note')).toContainText('a tie that crosses the passage edge; repeat barlines');
+  await dialog.screenshot({ path: testInfo.outputPath('paste-dialog.png') });
+  await dialog.getByRole('button', { name: 'Paste' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Pasted 1 measure before measure 1; they are now measures 1–1.' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Selection measure' }).locator('option')).toHaveCount(3);
+  await expect(notation.locator('svg text').filter({ hasText: /^H$/ })).toHaveCount(2);
+  await notation.screenshot({ path: testInfo.outputPath('pasted-score.png') });
+  await page.getByRole('button', { name: '＋ Save to library' }).click();
+  await expect.poll(() => savedSource).not.toBe('');
+  const measures = new DOMParser().parseFromString(savedSource, 'application/xml').getElementsByTagName('measure');
+  expect(measures).toHaveLength(3);
+  expect(measures[0].getElementsByTagName('hammer-on')).toHaveLength(4);
+  expect(measures[0].getElementsByTagName('tied')).toHaveLength(0);
+  expect(measures[1].getElementsByTagName('repeat')).toHaveLength(1);
+
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-tie.musicxml');
+  const other = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(page.getByRole('heading', { name: 'Tie exercise', level: 1 })).toBeVisible({ timeout: 45000 });
+  if (await page.getByRole('button', { name: 'Edit score', exact: true }).count()) await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const otherBox = (await other.boundingBox())!;
+  await page.mouse.click(otherBox.x + otherBox.width / 2, otherBox.y + otherBox.height / 2);
+  await page.locator('summary', { hasText: /^Select passage$/ }).click();
+  await expect(page.getByText('Clipboard: 1 measure from “Rich editor exercise”.')).toBeVisible();
+  await page.getByRole('button', { name: 'Paste passage…' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('The copied measures use staves 1, 2 with tablature on staff 2; this score uses staves 1 with tablature on staff 1.');
+});

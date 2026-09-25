@@ -10,7 +10,8 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures,
+  type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -247,6 +248,77 @@ describe('ED-16 grace editing and removal', () => {
     expect(protectedGrace).not.toBe(rich);
     expect(() => removeMusicXmlGrace(protectedGrace, graceTarget(protectedGrace).score, { measure: 0, beat, voice, string: 4 }))
       .toThrow('protected notehead attachment');
+  });
+});
+
+describe('ED-20 copy and paste whole measures', () => {
+  const score = (source: string) => readMusicXml(source, 'paste.musicxml').score;
+  const single = rich.replace('<staff-details number="2"><staff-tuning line="1"><tuning-step>A</tuning-step><tuning-octave>4</tuning-octave></staff-tuning></staff-details>', '');
+  const measureNotes = (source: string, index: number, staff = '2') => Array.from(new DOMParser().parseFromString(source, 'application/xml')
+    .getElementsByTagName('measure')[index].getElementsByTagName('note')).filter(note => note.getElementsByTagName('staff')[0]?.textContent === staff);
+  const frets = (source: string, index: number) => measureNotes(source, index).filter(note => note.getElementsByTagName('fret').length)
+    .map(note => note.getElementsByTagName('fret')[0].textContent);
+
+  it('copies whole measures with their timing and tuning, excluding edge-crossing spans and repeats', () => {
+    const clip = copyMusicXmlMeasures(rich, score(rich), 0, 0);
+    expect(clip).toMatchObject({ title: 'Rich editor exercise', meters: ['4/4'], staves: [1, 2], tabStaff: 2, tuning: [62, 59, 55, 50, 67] });
+    expect(clip.excluded).toEqual(['a tie that crosses the passage edge', 'repeat barlines']);
+    expect(clip.measures).toHaveLength(1);
+    expect(clip.measures[0]).toContain('<attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>');
+    expect(clip.measures[0]).not.toContain('<tied type="start"/>');
+    expect(clip.measures[0]).not.toContain('<repeat');
+    expect(clip.measures[0]).toContain('<hammer-on type="start">H</hammer-on>');
+    const both = copyMusicXmlMeasures(rich, score(rich), 0, 1);
+    expect(both.meters).toEqual(['4/4', '3/4']);
+    expect(both.excluded).toContain('tuning changes (the destination tuning is used)');
+    expect(both.excluded).not.toContain('a tie that crosses the passage edge');
+    expect(() => copyMusicXmlMeasures(rich, score(rich), 1, 0)).toThrow('Select whole measures to copy.');
+  });
+
+  it('pastes before a measure as new identities, restating the destination timing and keeping internal spans', () => {
+    const clip = copyMusicXmlMeasures(rich, score(rich), 0, 0);
+    expect(() => pasteMusicXmlMeasures(rich, score(rich), clip, 1, 'insert', 'frets'))
+      .toThrow('Pasting before measure 2 would split a tie that continues into that measure. Remove it first or paste elsewhere.');
+    const pasted = pasteMusicXmlMeasures(rich, score(rich), clip, 0, 'insert', 'frets');
+    const after = score(pasted);
+    expect(after.masterBars.map(bar => `${bar.timeSignatureNumerator}/${bar.timeSignatureDenominator}`)).toEqual(['4/4', '4/4', '3/4']);
+    expect(frets(pasted, 0)).toEqual(frets(rich, 0));
+    expect(frets(pasted, 1)).toEqual(frets(rich, 0));
+    const first = new DOMParser().parseFromString(pasted, 'application/xml').getElementsByTagName('measure')[0];
+    expect(first.getAttribute('number')).toBe('1');
+    expect(first.getElementsByTagName('staff-details')).toHaveLength(1);
+    expect(first.getElementsByTagName('repeat')).toHaveLength(0);
+    expect(after.tracks[0].staves[0].bars[0].voices[1].beats.some(beat => beat.notes.some(note => note.isHammerPullOrigin))).toBe(true);
+    expect(after.tracks[0].staves[0].bars[1].voices[1].beats.at(-1)!.notes[0].isTieOrigin).toBe(true);
+    const threeFour = copyMusicXmlMeasures(rich, score(rich), 1, 1);
+    const tie = fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8');
+    expect(() => pasteMusicXmlMeasures(tie, score(tie), threeFour, 0, 'insert', 'frets'))
+      .toThrow('The copied measures use staves 1, 2 with tablature on staff 2; this score uses staves 1 with tablature on staff 1.');
+    const tieClip = copyMusicXmlMeasures(tie, score(tie), 0, 0);
+    const waltz = pasteMusicXmlMeasures(pasted, after, { ...threeFour }, 1, 'insert', 'frets');
+    expect(score(waltz).masterBars.map(bar => `${bar.timeSignatureNumerator}/${bar.timeSignatureDenominator}`)).toEqual(['4/4', '3/4', '4/4', '3/4']);
+    expect(new DOMParser().parseFromString(waltz, 'application/xml').getElementsByTagName('measure')[2].getElementsByTagName('time')).toHaveLength(1);
+    const again = pasteMusicXmlMeasures(tie, score(tie), tieClip, 1, 'insert', 'frets');
+    expect(score(again).masterBars).toHaveLength(3);
+    expect(() => pasteMusicXmlMeasures(tie, score(tie), { ...tieClip, measures: Array(255).fill(tieClip.measures[0]) }, 0, 'insert', 'frets')).toThrow('256-measure limit');
+    expect(() => pasteMusicXmlMeasures(tie, score(tie), tieClip, 0, 'replace', 'frets')).toThrow('not available yet');
+    expect(() => pasteMusicXmlMeasures(tie, score(tie), { ...tieClip, measures: [] }, 0, 'insert', 'frets')).toThrow('clipboard is empty');
+  });
+
+  it('keeps frets or pitches for a destination in another tuning, rejecting impossible frets before pasting', () => {
+    const clip = copyMusicXmlMeasures(single, score(single), 0, 0);
+    const dropped = applyMusicXmlScoreSettings(single, score(single), { title: 'Dropped', tempo: 96, tuning: [62, 59, 55, 48, 67], mode: 'pitches' }).source;
+    const keepFrets = pasteMusicXmlMeasures(dropped, score(dropped), clip, 0, 'insert', 'frets');
+    expect(frets(keepFrets, 0)).toEqual(frets(single, 0));
+    expect(measureNotes(keepFrets, 0).filter(note => note.getElementsByTagName('fret').length).map(note => `${note.getElementsByTagName('step')[0].textContent}${note.getElementsByTagName('octave')[0].textContent}`))
+      .toEqual(['C3', 'G3', 'C3', 'D3', 'E3', 'E3', 'G3']);
+    expect(() => score(keepFrets)).not.toThrow();
+    const keepPitches = pasteMusicXmlMeasures(dropped, score(dropped), clip, 0, 'insert', 'pitches');
+    expect(frets(keepPitches, 0)).toEqual(['2', '0', '2', '4', '6', '6', '0']);
+    expect(() => score(keepPitches)).not.toThrow();
+    const raised = applyMusicXmlScoreSettings(single, score(single), { title: 'Raised', tempo: 96, tuning: [62, 59, 55, 52, 67], mode: 'frets' }).source;
+    expect(() => pasteMusicXmlMeasures(raised, score(raised), clip, 0, 'insert', 'pitches'))
+      .toThrow('Copied measure 1, event 1, string 4: keeping its pitch would need fret -2, outside 0–36. Nothing was pasted.');
   });
 });
 
