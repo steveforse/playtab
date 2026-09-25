@@ -1,0 +1,25 @@
+/* Editor status bar under the score. */
+.editor-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 18px;
+  margin: 12px 0 0;
+  padding: 7px 12px;
+  background: #eef2e8f2;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.editor-status-selection {
+  font-weight: 600;
+}
+.editor-status-buffer {
+  color: #2c5f8a;
+  font-weight: 600;
+}
+.editor-status-message {
+  color: #4d6a45;
+}

@@ -129,7 +129,7 @@ describe('workspace application', () => {
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true });
     expect(screen.queryByRole('alert')).toBeNull();
     fireEvent.click(screen.getByTestId('choose-range'));
-    expect(screen.getByText('M1 E1 – M1 E2 selected')).toBeTruthy();
+    expect(screen.getAllByText('M1 E1 – M1 E2 selected')).toHaveLength(2);
     fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true });
     expect(screen.getByRole('alert').textContent).toContain('Select whole measures to copy');
     fireEvent.keyDown(document.body, { key: 'x', metaKey: true });
