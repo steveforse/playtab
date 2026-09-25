@@ -8,7 +8,8 @@ import { readMusicXml } from '../../app/frontend/music/musicxml';
 import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusicXmlEdits, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGrace, removeMusicXmlGraceGroup, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
   inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
   inspectMusicXmlTie, removeMusicXmlTie,
-  inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } from '../../app/frontend/music/musicxml-editor';
+  inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
+  type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -245,6 +246,102 @@ describe('ED-16 grace editing and removal', () => {
     expect(protectedGrace).not.toBe(rich);
     expect(() => removeMusicXmlGrace(protectedGrace, graceTarget(protectedGrace).score, { measure: 0, beat, voice, string: 4 }))
       .toThrow('protected notehead attachment');
+  });
+});
+
+describe('ED-18 anchored chords, sections and annotations', () => {
+  const score = () => readMusicXml(rich, 'rich.musicxml').score;
+  const m2e3 = { measure: 1, beat: 2, voice: 1 };
+  const m1e2 = { measure: 0, beat: 1, voice: 1 };
+  const cMinor: ChordSpelling = { step: 'C', alter: 0, quality: 'minor', bass: null };
+  const tabBeats = (source: string, measure: number) => readMusicXml(source, 'rich.musicxml').score.tracks[0].staves[0].bars[measure].voices[1].beats;
+  const measureXml = (source: string, index: number) => new DOMParser().parseFromString(source, 'application/xml').getElementsByTagName('measure')[index];
+
+  it('anchors a chord at the selected onset and a section at its measure start, removing only the chosen item', () => {
+    expect(inspectMusicXmlAnchor(rich, score(), m2e3)).toEqual({ chords: [], words: [], sections: [] });
+    const chord = changeMusicXmlAnchor(rich, score(), m2e3, 'chord', null, cMinor);
+    const harmonies = Array.from(measureXml(chord, 1).getElementsByTagName('harmony'));
+    expect(harmonies.map(item => item.getElementsByTagName('staff')[0].textContent).sort()).toEqual(['1', '2']);
+    expect(measureXml(chord, 0).getElementsByTagName('harmony')).toHaveLength(1);
+    const beats = tabBeats(chord, 1);
+    expect(beats[2].chord?.name).toBe('Cm');
+    expect(beats[2].playbackStart - beats[0].playbackStart).toBe(1920);
+    expect(beats.slice(0, 2).every(beat => !beat.chord)).toBe(true);
+    const chordScore = readMusicXml(chord, 'rich.musicxml').score;
+    expect(inspectMusicXmlAnchor(chord, chordScore, m2e3).chords).toEqual([{ text: 'Cm', chord: cMinor }]);
+    const section = changeMusicXmlAnchor(chord, chordScore, m2e3, 'section', null, 'Chorus');
+    const sectionScore = readMusicXml(section, 'rich.musicxml').score;
+    expect(sectionScore.masterBars[1].section?.marker).toBe('Chorus');
+    expect(sectionScore.masterBars[0].section).toBeFalsy();
+    const first = Array.from(measureXml(section, 1).childNodes).filter(node => node.nodeType === 1).map(node => (node as unknown as Element).localName);
+    expect(first.indexOf('direction')).toBeLessThan(first.indexOf('note'));
+    expect(inspectMusicXmlAnchor(section, sectionScore, { measure: 1, beat: 0, voice: 1 }).sections).toEqual([{ text: 'Chorus' }]);
+    const noChord = changeMusicXmlAnchor(section, sectionScore, m2e3, 'chord', 0, null);
+    expect(measureXml(noChord, 1).getElementsByTagName('harmony')).toHaveLength(0);
+    expect(measureXml(noChord, 0).getElementsByTagName('harmony')).toHaveLength(1);
+    expect(noChord).toContain('<rehearsal>Chorus</rehearsal>');
+    const noSection = changeMusicXmlAnchor(noChord, readMusicXml(noChord, 'rich.musicxml').score, m2e3, 'section', 0, null);
+    expect(noSection).toBe(new XMLSerializer().serializeToString(new DOMParser().parseFromString(rich, 'application/xml')));
+  });
+
+  it('keeps multiple annotations individually editable without touching other words, lyrics or techniques', () => {
+    expect(inspectMusicXmlAnchor(rich, score(), m1e2)).toEqual({ chords: [{ text: 'C/G', chord: { step: 'C', alter: 0, quality: 'major', bass: { step: 'G', alter: 0 } } }],
+      words: [{ text: 'Section A' }], sections: [] });
+    const added = changeMusicXmlAnchor(rich, score(), m1e2, 'words', null, '  Play softly ');
+    const addedScore = readMusicXml(added, 'rich.musicxml').score;
+    expect(inspectMusicXmlAnchor(added, addedScore, m1e2).words).toEqual([{ text: 'Section A' }, { text: 'Play softly' }]);
+    expect(tabBeats(added, 0)[1].text).toContain('Play softly');
+    const edited = changeMusicXmlAnchor(added, addedScore, m1e2, 'words', 1, 'Play loudly');
+    expect(edited.match(/<words>Play loudly<\/words>/g)).toHaveLength(2);
+    expect(edited).toContain('<words>Section A</words>');
+    expect(edited).toContain('<words>Section B</words>');
+    expect(edited.match(/<text>Low<\/text>/g)).toHaveLength(2);
+    expect(edited).toContain('<hammer-on type="start">H</hammer-on>');
+    const removed = changeMusicXmlAnchor(edited, readMusicXml(edited, 'rich.musicxml').score, m1e2, 'words', 0, null);
+    expect(removed).not.toContain('Section A');
+    expect(removed).toContain('<direction><direction-type><words/></direction-type><sound tempo="96"/></direction>');
+    const removedScore = readMusicXml(removed, 'rich.musicxml').score;
+    expect(removedScore.tempo).toBe(readMusicXml(rich, 'rich.musicxml').score.tempo);
+    expect(inspectMusicXmlAnchor(removed, removedScore, m1e2).words).toEqual([{ text: 'Play loudly' }]);
+    expect(removed).toContain('<words>Play loudly</words>');
+  });
+
+  it('writes accidental and bass spelling, and keeps an unknown imported quality until replaced', () => {
+    const flat: ChordSpelling = { step: 'B', alter: -1, quality: 'minor-seventh', bass: { step: 'F', alter: 1 } };
+    const spelled = changeMusicXmlAnchor(rich, score(), m2e3, 'chord', null, flat);
+    expect(spelled).toContain('<root><root-step>B</root-step><root-alter>-1</root-alter></root><kind>minor-seventh</kind><bass><bass-step>F</bass-step><bass-alter>1</bass-alter></bass>');
+    expect(inspectMusicXmlAnchor(spelled, readMusicXml(spelled, 'rich.musicxml').score, m2e3).chords).toEqual([{ text: 'B♭m7/F♯', chord: flat }]);
+    const tef = rich.replace('<harmony><root><root-step>C</root-step></root><kind>major</kind><bass><bass-step>G</bass-step></bass></harmony>',
+      '<harmony placement="above" data-playtab-strings="0,0,0,0,0"><root><root-step>C</root-step><root-alter>-1</root-alter></root><kind text="m7b5">major</kind></harmony>');
+    expect(tef).toContain('m7b5');
+    const info = inspectMusicXmlAnchor(tef, score(), m1e2).chords[0];
+    expect(info.text).toBe('C♭m7b5');
+    expect(info.reason).toContain('kept until you replace it');
+    expect(info.chord).toBeUndefined();
+    const other = changeMusicXmlAnchor(tef, score(), m1e2, 'words', 0, 'Section A2');
+    expect(other).toContain('<kind text="m7b5">major</kind>');
+    const replaced = changeMusicXmlAnchor(tef, score(), m1e2, 'chord', 0, cMinor);
+    expect(replaced).toContain('<harmony placement="above"><root><root-step>C</root-step></root><kind>minor</kind></harmony>');
+    for (const [from, to] of [['<root-alter>-1</root-alter>', '<root-alter>2</root-alter>'], ['<kind text="m7b5">major</kind>', '<kind>ninth</kind>'],
+      ['<kind text="m7b5">major</kind>', '<kind>minor</kind><degree/>'], ['placement="above"', 'placement="above" font-size="9"']]) {
+      expect(inspectMusicXmlAnchor(tef.replace(from, to), score(), m1e2).chords[0].reason).toBeTruthy();
+    }
+  });
+
+  it('validates limits before mutation and keeps anchors when an event is emptied', () => {
+    expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'words', null, 'x'.repeat(161))).toThrow('Text must be 1–160 characters.');
+    expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'section', null, '   ')).toThrow('Text must be 1–160 characters.');
+    expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'chord', null, { ...cMinor, step: 'H' as 'C' })).toThrow('Choose a chord root');
+    expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'chord', null, { ...cMinor, bass: { step: 'C', alter: 2 as 1 } })).toThrow('Choose a chord root');
+    expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'chord', null, 'Cm')).toThrow('matching value');
+    expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'words', null, null)).toThrow('Choose an existing item');
+    expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'words', 3, 'Late')).toThrow('no longer at this position');
+    expect(() => inspectMusicXmlAnchor(rich, score(), { measure: 0, beat: 0, voice: 1 })).toThrow('Select an ordinary event');
+    const chord = changeMusicXmlAnchor(rich, score(), { measure: 1, beat: 1, voice: 1 }, 'chord', null, cMinor);
+    const emptied = removeMusicXmlNotes(chord, readMusicXml(chord, 'rich.musicxml').score, { measure: 1, beat: 1, voice: 1 })!;
+    expect(measureXml(emptied.source, 1).getElementsByTagName('harmony')).toHaveLength(2);
+    expect(inspectMusicXmlAnchor(emptied.source, readMusicXml(emptied.source, 'rich.musicxml').score, { measure: 1, beat: 1, voice: 1 }).chords)
+      .toEqual([{ text: 'Cm', chord: cMinor }]);
   });
 });
 

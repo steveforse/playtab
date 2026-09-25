@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -27,9 +27,16 @@ type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndin
 type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; destination: number; first: number;
   existing: boolean; readOnly: string[]; connections: string[] };
 type BendTarget = { originalKey: string; selection: ScoreSelection; existing: NoteBend | 'none' | null; reason?: string };
+type AnchorTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; kind: AnchorKind; items: AnchorItem[] };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 const BEND_LABELS: Record<BendAmount, string> = { 1: '1/2 step', 2: 'Whole step', 3: '1½ steps', 4: '2 steps' };
+const ANCHOR_NAMES: Record<AnchorKind, { title: string; item: string }> = {
+  chord: { title: 'Chord name', item: 'chord' }, words: { title: 'Annotation', item: 'annotation' }, section: { title: 'Section label', item: 'section' } };
+const CHORD_QUALITIES: [ChordQuality, string][] = [['major', 'Major'], ['minor', 'Minor'], ['dominant', '7'], ['major-seventh', 'maj7'],
+  ['minor-seventh', 'm7'], ['diminished', 'dim'], ['augmented', 'aug'], ['suspended-fourth', 'sus4']];
+const CHORD_STEPS: ChordRoot['step'][] = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+const DEFAULT_CHORD: ChordSpelling = { step: 'C', alter: 0, quality: 'major', bass: null };
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
 const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
@@ -165,6 +172,13 @@ export function App() {
   const repeatOpener = useRef<HTMLElement | null>(null);
   const [graceTarget, setGraceTarget] = useState<GraceTarget | null>(null);
   const [graceEvents, setGraceEvents] = useState<GraceEventSpec[]>([]);
+  const [anchorTarget, setAnchorTarget] = useState<AnchorTarget | null>(null);
+  const [anchorChoice, setAnchorChoice] = useState<number | 'new'>('new');
+  const [anchorText, setAnchorText] = useState('');
+  const [anchorChord, setAnchorChord] = useState<ChordSpelling>(DEFAULT_CHORD);
+  const [anchorError, setAnchorError] = useState('');
+  const anchorDialog = useRef<HTMLDialogElement>(null);
+  const anchorOpener = useRef<HTMLElement | null>(null);
   const [bendTarget, setBendTarget] = useState<BendTarget | null>(null);
   const [bendDraft, setBendDraft] = useState<NoteBend>({ amount: 2, shape: 'bend' });
   const bendDialog = useRef<HTMLDialogElement>(null);
@@ -325,6 +339,14 @@ export function App() {
     if (repeatRemoval && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-repeat-remove-cancel]')?.focus(); }
     else if (!repeatRemoval && dialog.open) dialog.close();
   }, [repeatRemoval]);
+  useEffect(() => {
+    const dialog = anchorDialog.current;
+    if (!dialog) return;
+    if (anchorTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-anchor-first]')?.focus(); }
+    else if (!anchorTarget && dialog.open) {
+      dialog.close(); if (anchorOpener.current?.isConnected) anchorOpener.current.focus({ preventScroll: true });
+    }
+  }, [anchorTarget]);
   useEffect(() => {
     const dialog = bendDialog.current;
     if (!dialog) return;
@@ -892,6 +914,48 @@ export function App() {
     if (changeNoteTechnique(bendTarget.selection, (base, position) => setMusicXmlBend(base.source, base.score, position, bend),
       bend ? shape : 'Remove bend', bend ? `${shape} applied.` : 'Bend removed.')) setBendTarget(null);
   }
+  function anchorPosition(target: ScoreSelection) {
+    return { measure: target.measure - 1, beat: target.event - 1, voice: target.voice - 1 };
+  }
+  function chooseAnchorItem(choice: number | 'new', items: AnchorItem[]) {
+    setAnchorChoice(choice); setAnchorError('');
+    const item = choice === 'new' ? undefined : items[choice];
+    setAnchorText(item?.text ?? '');
+    setAnchorChord(item?.chord ?? DEFAULT_CHORD);
+  }
+  function openAnchorDialog(kind: AnchorKind, opener: HTMLElement) {
+    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to anchor text to it.'); return; }
+    if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const info = inspectMusicXmlAnchor(base.source, base.score, anchorPosition(selection));
+      const items = kind === 'chord' ? info.chords : kind === 'words' ? info.words : info.sections;
+      anchorOpener.current = opener;
+      chooseAnchorItem(items.length ? 0 : 'new', items);
+      setAnchorTarget({ originalKey: documentKey(currentDocument), base, selection, kind, items });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function applyAnchor(remove: boolean) {
+    if (!anchorTarget) return;
+    const { base, selection: target, kind, items } = anchorTarget;
+    if (anchorTarget.originalKey !== documentKey(currentDocument)) { setAnchorTarget(null); setError('The score changed since this text was opened. Open it again.'); return; }
+    const name = ANCHOR_NAMES[kind].item;
+    const value = remove ? null : kind === 'chord' ? anchorChord : anchorText;
+    const shown = value === null ? items[anchorChoice as number].text : typeof value === 'string' ? value.trim() : chordSpellingName(value);
+    const where = kind === 'section' ? `measure ${target.measure}` : `measure ${target.measure}, event ${target.event}`;
+    try {
+      const nextSource = changeMusicXmlAnchor(base.source, base.score, anchorPosition(target), kind, anchorChoice === 'new' ? null : anchorChoice, value);
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+      const after = selectionAtPosition(target, score, nextPreview, {});
+      const verb = remove ? 'Remove' : anchorChoice === 'new' ? 'Add' : 'Change';
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity },
+        `${verb} ${name} “${shown}” at ${where}`);
+      setPreview(nextPreview); setSelection(after); setAnchorTarget(null); setError('');
+      setMessage(`${name[0].toUpperCase()}${name.slice(1)} “${shown}” ${remove ? 'removed from' : anchorChoice === 'new' ? 'added at' : 'updated at'} ${where}.`);
+    } catch (failure) { setAnchorError((failure as Error).message); }
+  }
   function openPickupDialog(opener: HTMLElement) {
     if (!selection || selection.measure !== 1) return;
     if (pendingFret) { setError('Apply the pending fret before changing the pickup.'); return; }
@@ -1419,6 +1483,10 @@ export function App() {
                 <button type="button" onClick={() => { setPendingTie(null); setError(''); setMessage('Tie cancelled.'); }}>Cancel tie</button>
               </div>}
             </details>
+            <details className="editor-text-tools"><summary>Text</summary>
+              {(['chord', 'section', 'words'] as AnchorKind[]).map(kind => <button key={kind} type="button" disabled={selection.graceIndex !== null}
+                onClick={event => openAnchorDialog(kind, event.currentTarget)}>{ANCHOR_NAMES[kind].title}…</button>)}
+            </details>
             <details className="editor-passage-tools"><summary>Select passage</summary>
               <button type="button" onClick={() => setPassage({ start: selection, end: selection })}>Set range start</button>
               <button type="button" disabled={!passage} onClick={() => {
@@ -1618,6 +1686,50 @@ export function App() {
         {!graceTarget?.readOnly.length && <button type="button" disabled={!gracePreview?.candidate}
           onClick={() => { if (gracePreview?.candidate) confirmGrace(gracePreview.candidate); }}>Apply grace group</button>}
       </div>
+    </dialog>
+    <dialog ref={anchorDialog} className="duplicate-dialog anchor-dialog" aria-label={anchorTarget ? ANCHOR_NAMES[anchorTarget.kind].title : 'Text'}
+      onCancel={event => { event.preventDefault(); setAnchorTarget(null); }}>
+      {anchorTarget && (() => {
+        const { kind, items, selection: target } = anchorTarget;
+        const name = ANCHOR_NAMES[kind].item;
+        const current = anchorChoice === 'new' ? undefined : items[anchorChoice];
+        const root = (label: string, value: ChordRoot, change: (next: ChordRoot) => void) => <>
+          <label>{label}<select aria-label={label} value={value.step} onChange={event => change({ ...value, step: event.target.value as ChordRoot['step'] })}>
+            {CHORD_STEPS.map(step => <option key={step} value={step}>{step}</option>)}</select></label>
+          <label>{label} accidental<select aria-label={`${label} accidental`} value={value.alter} onChange={event => change({ ...value, alter: Number(event.target.value) as ChordRoot['alter'] })}>
+            <option value={0}>Natural</option><option value={-1}>Flat ♭</option><option value={1}>Sharp ♯</option></select></label>
+        </>;
+        return <>
+          <h2>{ANCHOR_NAMES[kind].title}</h2>
+          <p>{kind === 'section' ? `Anchored at the start of measure ${target.measure}.` : `Anchored at measure ${target.measure}, event ${target.event}.`}</p>
+          {items.length > 0 && <label className="anchor-choice">Item<select aria-label="Existing item" data-anchor-first="" value={anchorChoice}
+            onChange={event => chooseAnchorItem(event.target.value === 'new' ? 'new' : Number(event.target.value), items)}>
+            {items.map((item, index) => <option key={index} value={index}>{item.text}</option>)}
+            <option value="new">Add new {name}</option></select></label>}
+          {current?.reason && <p className="grace-read-only" role="note">{current.reason}</p>}
+          {kind === 'chord' ? <div className="insert-dialog-fields">
+            {root('Root', anchorChord, next => { setAnchorError(''); setAnchorChord(chord => ({ ...chord, ...next })); })}
+            <label>Quality<select aria-label="Quality" value={anchorChord.quality} onChange={event => { setAnchorError(''); setAnchorChord(chord => ({ ...chord, quality: event.target.value as ChordQuality })); }}>
+              {CHORD_QUALITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label>Bass<select aria-label="Bass" value={anchorChord.bass?.step ?? ''} onChange={event => { setAnchorError('');
+              const step = event.target.value as ChordRoot['step'] | '';
+              setAnchorChord(chord => ({ ...chord, bass: step ? { step, alter: chord.bass?.alter ?? 0 } : null })); }}>
+              <option value="">None</option>{CHORD_STEPS.map(step => <option key={step} value={step}>{step}</option>)}</select></label>
+            {anchorChord.bass && <label>Bass accidental<select aria-label="Bass accidental" value={anchorChord.bass.alter}
+              onChange={event => { const alter = Number(event.target.value) as ChordRoot['alter']; setAnchorChord(chord => ({ ...chord, bass: chord.bass && { ...chord.bass, alter } })); }}>
+              <option value={0}>Natural</option><option value={-1}>Flat ♭</option><option value={1}>Sharp ♯</option></select></label>}
+            <p className="anchor-chord-preview">Shows as <strong>{chordSpellingName(anchorChord)}</strong></p>
+          </div> : <label className="anchor-text">Text<input aria-label="Text" data-anchor-first={items.length ? undefined : ''} maxLength={ANCHOR_TEXT_LIMIT} value={anchorText}
+            onChange={event => { setAnchorError(''); setAnchorText(event.target.value); }} /></label>}
+          {anchorError && <p className="alert" role="alert">{anchorError}</p>}
+          <div className="duplicate-dialog-actions">
+            <button type="button" data-anchor-first={kind === 'chord' && !items.length ? '' : undefined} onClick={() => setAnchorTarget(null)}>Cancel</button>
+            {current && <button type="button" onClick={() => applyAnchor(true)}>Remove {name}</button>}
+            <button type="button" disabled={kind !== 'chord' && (!anchorText.trim() || anchorText.trim().length > ANCHOR_TEXT_LIMIT)}
+              onClick={() => applyAnchor(false)}>{current?.reason ? `Replace ${name}` : `Apply ${name}`}</button>
+          </div>
+        </>;
+      })()}
     </dialog>
     <dialog ref={bendDialog} className="duplicate-dialog bend-dialog" aria-label="Bend" onCancel={event => { event.preventDefault(); setBendTarget(null); }}>
       <h2>Bend</h2>
