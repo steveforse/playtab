@@ -52,6 +52,10 @@ import { CutDialog } from './editor/dialogs/CutDialog';
 import { KeyboardHelpDialog } from './editor/dialogs/KeyboardHelpDialog';
 import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
 import { TempoDialog } from './editor/dialogs/TempoDialog';
+import { CommandButtons, CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
+import { SelectionInspector } from './editor/sidebar/SelectionInspector';
+import { RhythmTools } from './editor/sidebar/RhythmTools';
+import { TechniqueTools, TRANSITION_COMMANDS } from './editor/sidebar/TechniqueTools';
 import { InsertEventDialog, type InsertEventDraft } from './editor/dialogs/InsertEventDialog';
 import { ConflictDialog, DiscardDialog, LeaveDialog, RemovalDialog, SaveCopyDialog } from './editor/dialogs/SessionDialogs';
 import { ANCHOR_NAMES, BEND_LABELS, capitalized, CHORD_QUALITIES, CHORD_STEPS, DEFAULT_CHORD, midiName, TRANSITION_NAMES } from './editor/labels';
@@ -1588,138 +1592,98 @@ export function App() {
     }
   })();
   const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || selectedBeats?.[selection.event - 2]?.graceType));
+  const measureCount = preview?.score.masterBars.length ?? score.measures.length;
+  const onSelection = (run: (current: ScoreSelection) => void) => (_opener: HTMLElement) => { if (selection) run(selection); };
+  const noteSelected = selection?.kind === 'note';
+  const commands: EditorCommands = {
+    undo: { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !history.undo.length,
+      title: history.undo.length ? `Undo: ${history.undo.at(-1)!.description}` : 'Nothing to undo', run: () => moveHistory('undo') },
+    redo: { label: 'Redo', shortcut: 'Ctrl+Shift+Z', disabled: !history.redo.length,
+      title: history.redo.length ? `Redo: ${history.redo.at(-1)!.description}` : 'Nothing to redo', run: () => moveHistory('redo') },
+    'apply-fret': { label: noteSelected ? 'Apply' : 'Add note', disabled: selection?.string == null,
+      run: onSelection(current => updateSelectionFret(current, Number(fretDraft))) },
+    'move-string': { label: 'Move', disabled: !moveOutcome || Boolean(moveOutcome.reason), run: () => moveSelectedString() },
+    'remove-note': { label: 'Remove note', shortcut: 'Delete', className: 'editor-remove-note', disabled: !noteSelected, run: onSelection(current => requestRemoval(current)) },
+    'make-rest': { label: 'Make rest', hidden: !noteSelected || selection?.graceIndex !== null, run: onSelection(current => requestRemoval(current, 'rest')) },
+    ...Object.fromEntries(DURATION_DENOMINATORS.map(value => [`duration-${value}`, {
+      label: value === 1 ? '1' : `1/${value}`, ariaLabel: value === 1 ? 'Whole note duration' : `1/${value} duration`,
+      pressed: selectedRhythm ? selectedRhythm.denominator === value && selectedRhythm.dots === 0 : undefined,
+      disabled: !selectedRhythm || selectedTupletLocked, run: () => changeSelectedDuration(value, false),
+    } satisfies EditorCommand])),
+    dotted: { label: 'Dotted', className: 'editor-dotted-button', pressed: selectedRhythm ? selectedRhythm.dots === 1 : undefined,
+      disabled: !selectedRhythm || selectedRhythm.denominator === null || selectedTupletLocked,
+      run: () => selectedRhythm && changeSelectedDuration(selectedRhythm.denominator!, selectedRhythm.dots !== 1) },
+    'split-rest': { label: 'Split rest', className: 'editor-split-rest',
+      disabled: !selectedRhythm?.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0 || selectedTupletLocked,
+      run: () => selectedRhythm && changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false) },
+    'insert-event': { label: 'Insert event…', className: 'editor-insert-event', disabled: !selection, run: opener => openInsertEvent(opener) },
+    'set-tempo': { label: 'Set tempo here…', className: 'editor-insert-event', disabled: !selection || selection.graceIndex !== null, run: opener => openTempoDialog(opener) },
+    triplet: { label: 'Triplet', className: 'editor-triplet-button',
+      disabled: !selectedRhythm || selectedTupletLocked || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0,
+      run: () => changeSelectedTriplet(false) },
+    'remove-triplet': { label: 'Remove triplet', className: 'editor-remove-triplet', hidden: !selectedTriplet?.triplet,
+      disabled: !selectedTriplet?.canRemove, run: () => changeSelectedTriplet(true) },
+    grace: { label: selectedHasGrace ? 'Edit grace…' : 'Add grace…', disabled: !noteSelected, run: opener => openGraceDialog(opener) },
+    'remove-grace': { label: 'Remove grace', hidden: !noteSelected || selection?.graceIndex === null, run: onSelection(current => requestRemoval(current, 'grace')) },
+    bend: { label: 'Bend…', disabled: !selectedTechniques, run: opener => openBendDialog(opener) },
+    ...Object.fromEntries(TRANSITION_COMMANDS.map(kind => [kind, {
+      label: capitalized(TRANSITION_NAMES[kind]), disabled: !noteSelected || pendingTie !== null, run: () => beginTransition(kind),
+    } satisfies EditorCommand])),
+    'remove-tie': { label: 'Remove tie', hidden: !selectedTie, run: () => removeSelectedTie() },
+    ...Object.fromEntries((['chord', 'section', 'words'] as AnchorKind[]).map(kind => [kind, {
+      label: `${ANCHOR_NAMES[kind].title}…`, disabled: !selection || selection.graceIndex !== null, run: opener => openAnchorDialog(kind, opener),
+    } satisfies EditorCommand])),
+    lyric: { label: 'Lyric syllable…', disabled: !selection || selection.graceIndex !== null, run: opener => openLyricDialog(opener) },
+    'lyrics-chords': { label: 'Lyrics & chords…', run: opener => openStandaloneDialog(opener) },
+    'range-start': { label: 'Set range start', disabled: !selection, run: onSelection(current => setPassage({ start: current, end: current })) },
+    'range-end': { label: 'Set range end', disabled: !passage || !selection, run: onSelection(current => {
+      if (!passage) return;
+      const first = passage.start.measure < current.measure || passage.start.measure === current.measure && passage.start.event <= current.event;
+      setPassage(first ? { start: passage.start, end: current } : { start: current, end: passage.start });
+    }) },
+    'clear-passage': { label: 'Clear passage', disabled: !passage, run: () => setPassage(null) },
+    'copy-passage': { label: 'Copy passage', disabled: !passage, run: () => copyPassage() },
+    'cut-passage': { label: 'Cut passage…', disabled: !passage, run: opener => openCutDialog(opener) },
+    'paste-passage': { label: 'Paste passage…', disabled: !clipboard, run: opener => openPasteDialog(opener) },
+    'select-measure': { label: 'Select measure', disabled: !selection, run: () => selectWholeMeasure() },
+    'insert-measure-before': { label: 'Insert measure before', disabled: !selection, run: () => insertSelectedMeasure('before') },
+    'insert-measure-after': { label: 'Insert measure after', disabled: !selection, run: () => insertSelectedMeasure('after') },
+    'duplicate-measure': { label: 'Duplicate measure…', disabled: !selection, run: opener => previewDuplicateMeasure(opener) },
+    'delete-measure': { label: 'Delete measure…', disabled: !selection || measureCount <= 1, run: opener => previewDeleteMeasure(opener) },
+    'time-signature': { label: 'Time signature…', disabled: !selection, run: opener => openMeterDialog(opener) },
+    repeat: { label: 'Repeat / endings…', disabled: !selection, run: opener => openRepeatDialog(opener) },
+    pickup: { label: 'Pickup…', disabled: selection?.measure !== 1, run: opener => openPickupDialog(opener) },
+    'score-settings': { label: 'Score settings…', run: opener => openSettingsDialog(opener) },
+    'keyboard-help': { label: 'Keyboard help…', shortcut: '?', run: () => setHelpOpen(true) },
+  };
   const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
-        <div className="editor-history">
-          <button type="button" disabled={!history.undo.length} title={history.undo.length ? `Undo: ${history.undo.at(-1)!.description}` : 'Nothing to undo'} onClick={() => moveHistory('undo')}>Undo</button>
-          <button type="button" disabled={!history.redo.length} title={history.redo.length ? `Redo: ${history.redo.at(-1)!.description}` : 'Nothing to redo'} onClick={() => moveHistory('redo')}>Redo</button>
-        </div>
+        <div className="editor-history"><CommandButtons commands={commands} ids={['undo', 'redo']} /></div>
         <p className="editor-selection-empty">Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z redoes. History lasts while this score is open; older actions expire after 100 edits or 32 MB.</p>
         <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note or empty string position to begin editing.'}</span></p>
         <div className="editor-selection" aria-label="Selection inspector">
           {!selection ? <p className="editor-selection-empty">No note, rest, or staff position selected.</p> : <>
-            <div className="editor-selection-summary" aria-live="polite">
-              <span>Measure {selection.measure}</span>
-              <span>Event {selection.event}</span>
-              <span>String {selection.string ?? '—'}</span>
-              {selectedDetails && <span>{selectedDetails.offset}</span>}
-              {selectedDetails && <span>{selectedDetails.pitch}</span>}
-              {selection.fret !== null && <span>Fret {selection.fret}</span>}
-            </div>
-            <div className="editor-selection-fields">
-              <label>Measure<select aria-label="Selection measure" value={selection.measure} onChange={event => navigateInspector({ measure: Number(event.target.value) })}>{Array.from({ length: Math.max(1, preview?.score.masterBars.length ?? score.measures.length) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
-              <label>Event<select aria-label="Selection event" value={selection.event} onChange={event => navigateInspector({ event: Number(event.target.value) })}>{Array.from({ length: Math.max(1, selectedEventCount) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
-              <label>Voice<select aria-label="Selection voice" value={selection.voice} onChange={event => navigateInspector({ voice: Number(event.target.value) })}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-              <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => navigateInspector({ string: event.target.value ? Number(event.target.value) : null })}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-              {selectedDetails?.grace && <label>Grace<select aria-label="Selection grace" value={selection.event}
-                onChange={event => navigateInspector({ event: Number(event.target.value) })}>
-                {selectedDetails.grace.options.map(option => <option key={option.event} value={option.event}>{option.label}</option>)}</select></label>}
-            </div>
-            {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
-            {selection.string !== null && <div className="editor-note-tools">
-              <label>{selection.kind === 'note' ? 'Fret' : 'Add fret'}<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => setFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); updateSelectionFret(selection, Number(fretDraft)); } }} /></label>
-              <button type="button" onClick={() => updateSelectionFret(selection, Number(fretDraft))}>{selection.kind === 'note' ? 'Apply' : 'Add note'}</button>
-              {surfaceBuffer && <p className="editor-fret-buffer" role="status">Fret {fretDraft} typed — press Enter to apply or Escape to cancel.</p>}
-              {selection.kind === 'note' && <>
-                <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
-                <label>When moving<select aria-label="Move keeps" value={moveMode} onChange={event => setMoveMode(event.target.value as 'fret' | 'pitch')}>
-                  <option value="fret">Keep fret</option><option value="pitch">Keep pitch</option></select></label>
-                {moveOutcome && <p className="editor-rhythm-reason" role="status">{moveOutcome.reason ?? `Result: string ${moveOutcome.destination}, fret ${moveOutcome.fret}, ${moveOutcome.pitch}.`}</p>}
-                <button type="button" onClick={moveSelectedString} disabled={!moveOutcome || Boolean(moveOutcome.reason)}>Move</button>
-                <button type="button" className="editor-remove-note" onClick={() => requestRemoval(selection)}>Remove note</button>
-              </>}
-            </div>}
-            {selection.kind === 'note' && selection.graceIndex === null && <div className="editor-event-tools"><button type="button" onClick={() => requestRemoval(selection, 'rest')}>Make rest</button></div>}
-            {selectedRhythm && <div className="editor-rhythm-tools" aria-label="Duration tools">
-              <p>Duration</p>
-              <div className="editor-duration-buttons">{DURATION_DENOMINATORS.map(value => <button key={value} type="button"
-                aria-label={value === 1 ? 'Whole note duration' : `1/${value} duration`}
-                aria-pressed={selectedRhythm.denominator === value && selectedRhythm.dots === 0}
-                disabled={selectedTupletLocked}
-                onClick={() => changeSelectedDuration(value, false)}>{value === 1 ? '1' : `1/${value}`}</button>)}</div>
-              <button type="button" className="editor-dotted-button" aria-pressed={selectedRhythm.dots === 1}
-                disabled={selectedRhythm.denominator === null || selectedTupletLocked}
-                onClick={() => changeSelectedDuration(selectedRhythm.denominator!, selectedRhythm.dots !== 1)}>Dotted</button>
-              <button type="button" className="editor-split-rest" disabled={!selectedRhythm.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0 || selectedTupletLocked}
-                onClick={() => changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false)}>Split rest</button>
-              {selectedRhythm.rest && !selectedTupletLocked && selectedRhythm.denominator === 64 && <p className="editor-rhythm-reason">A 1/64 rest is the shortest rest; it cannot be split further.</p>}
-              {selectedRhythm.rest && !selectedTupletLocked && selectedRhythm.dots > 0 && <p className="editor-rhythm-reason">A dotted rest cannot be split; choose an undotted duration first.</p>}
-              <button type="button" className="editor-insert-event" onClick={event => openInsertEvent(event.currentTarget)}>Insert event…</button>
-              <button type="button" className="editor-insert-event" disabled={selection.graceIndex !== null} onClick={event => openTempoDialog(event.currentTarget)}>Set tempo here…</button>
-              <button type="button" className="editor-triplet-button" disabled={selectedTupletLocked || selectedRhythm.denominator === null
-                || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0}
-                onClick={() => changeSelectedTriplet(false)}>Triplet</button>
-              {selectedTriplet?.triplet && <button type="button" className="editor-remove-triplet" disabled={!selectedTriplet.canRemove}
-                onClick={() => changeSelectedTriplet(true)}>Remove triplet</button>}
-              {selectedRhythm.reason && <p className="editor-rhythm-reason">{selectedRhythm.reason}</p>}
-              {selectedTriplet?.reason && selectedTriplet.reason !== selectedRhythm.reason && <p className="editor-rhythm-reason">{selectedTriplet.reason}</p>}
-            </div>}
-            <details className="editor-technique-tools"><summary>Techniques</summary>
-              <button type="button" disabled={selection.kind !== 'note'}
-                onClick={event => openGraceDialog(event.currentTarget)}>{selectedHasGrace ? 'Edit grace…' : 'Add grace…'}</button>
-              {selection.kind === 'note' && selection.graceIndex !== null && <button type="button" onClick={() => requestRemoval(selection, 'grace')}>Remove grace</button>}
-              {selectedTechniques && <div className="editor-hand-tools">
-                <label>Picking hand<select aria-label="Picking hand" value={selectedTechniques.picking ?? ''} disabled={selectedTechniques.picking === null}
-                  onChange={event => changeHand('picking', event.target.value as PickingHand)}>
-                  {selectedTechniques.picking === null && <option value="">Kept as written</option>}
-                  <option value="none">None</option><option value="T">T</option><option value="I">I</option><option value="M">M</option></select></label>
-                {selectedTechniques.pickingReason && <p className="editor-rhythm-reason">{selectedTechniques.pickingReason}</p>}
-                <label>Fretting hand<select aria-label="Fretting hand" value={selectedTechniques.fretting ?? ''} disabled={selectedTechniques.fretting === null}
-                  onChange={event => changeHand('fretting', event.target.value as FrettingHand)}>
-                  {selectedTechniques.fretting === null && <option value="">Kept as written</option>}
-                  <option value="none">None</option>{['1', '2', '3', '4'].map(value => <option key={value} value={value}>{value}</option>)}<option value="T">Thumb</option></select></label>
-                {selectedTechniques.frettingReason && <p className="editor-rhythm-reason">{selectedTechniques.frettingReason}</p>}
-                <button type="button" onClick={event => openBendDialog(event.currentTarget)}>Bend…</button>
-              </div>}
-              <div className="editor-transition-buttons">{(['hammer-on', 'pull-off', 'slide', 'tie'] as TransitionKind[]).map(kind =>
-                <button key={kind} type="button" disabled={selection.kind !== 'note' || pendingTie !== null} onClick={() => beginTransition(kind)}>{capitalized(TRANSITION_NAMES[kind])}</button>)}</div>
-              {selectedTie && <button type="button" onClick={removeSelectedTie}>Remove tie</button>}
-              {selectedTransitions.map(item => <button key={`${item.kind}:${item.direction}`} type="button" onClick={() => removeTransition(item)}>
-                Remove {TRANSITION_NAMES[item.kind]} {item.direction === 'outgoing' ? 'to' : 'from'} {item.other ? `m${item.other.measure} e${item.other.event}` : 'its other note'}</button>)}
-              {pendingTie && <div className="editor-tie-pending" role="status">
-                <p>{pendingTie.kind === 'tie' ? 'Origin' : `${capitalized(TRANSITION_NAMES[pendingTie.kind])} origin`}: measure {pendingTie.origin.measure}, event {pendingTie.origin.event}, string {pendingTie.origin.string}, fret {pendingTie.origin.fret}. Select the destination note.</p>
-                <button type="button" disabled={selection.kind !== 'note'} onClick={() => completeTransition(selection)}>Use selected note</button>
-                <button type="button" onClick={() => { const name = TRANSITION_NAMES[pendingTie.kind]; setPendingTie(null); setError(''); setMessage(`${capitalized(name)} cancelled.`); }}>Cancel {TRANSITION_NAMES[pendingTie.kind]}</button>
-              </div>}
-            </details>
-            <details className="editor-text-tools"><summary>Text</summary>
-              {(['chord', 'section', 'words'] as AnchorKind[]).map(kind => <button key={kind} type="button" disabled={selection.graceIndex !== null}
-                onClick={event => openAnchorDialog(kind, event.currentTarget)}>{ANCHOR_NAMES[kind].title}…</button>)}
-              <button type="button" disabled={selection.graceIndex !== null} onClick={event => openLyricDialog(event.currentTarget)}>Lyric syllable…</button>
-              <button type="button" onClick={event => openStandaloneDialog(event.currentTarget)}>Lyrics &amp; chords…</button>
-            </details>
-            <details className="editor-passage-tools"><summary>Select passage</summary>
-              <button type="button" onClick={() => setPassage({ start: selection, end: selection })}>Set range start</button>
-              <button type="button" disabled={!passage} onClick={() => {
-                if (!passage) return;
-                const first = passage.start.measure < selection.measure || passage.start.measure === selection.measure && passage.start.event <= selection.event;
-                setPassage(first ? { start: passage.start, end: selection } : { start: selection, end: passage.start });
-              }}>Set range end</button>
-              <button type="button" disabled={!passage} onClick={() => setPassage(null)}>Clear passage</button>
-              <button type="button" disabled={!passage} onClick={copyPassage}>Copy passage</button>
-              <button type="button" disabled={!passage} onClick={event => openCutDialog(event.currentTarget)}>Cut passage…</button>
-              <button type="button" disabled={!clipboard} onClick={event => openPasteDialog(event.currentTarget)}>Paste passage…</button>
+            <SelectionInspector selection={selection} details={selectedDetails} measureCount={measureCount} eventCount={selectedEventCount}
+              onNavigate={navigateInspector} fretDraft={fretDraft} onFretDraft={setFretDraft} fretBuffered={Boolean(surfaceBuffer)}
+              moveString={moveString} onMoveString={setMoveString} moveMode={moveMode} onMoveMode={setMoveMode} moveOutcome={moveOutcome} commands={commands} />
+            {selectedRhythm && <RhythmTools rhythm={selectedRhythm} triplet={selectedTriplet} tupletLocked={selectedTupletLocked} commands={commands} />}
+            <TechniqueTools selection={selection} techniques={selectedTechniques} onHand={changeHand} transitions={selectedTransitions}
+              onRemoveTransition={removeTransition} pendingTransition={pendingTie} onCompleteTransition={() => completeTransition(selection)}
+              onCancelTransition={() => { if (!pendingTie) return; const name = TRANSITION_NAMES[pendingTie.kind]; setPendingTie(null); setError(''); setMessage(`${capitalized(name)} cancelled.`); }}
+              commands={commands} />
+            <CommandGroup className="editor-text-tools" summary="Text" commands={commands} ids={['chord', 'section', 'words', 'lyric', 'lyrics-chords']} />
+            <CommandGroup className="editor-passage-tools" summary="Select passage" commands={commands}
+              ids={['range-start', 'range-end', 'clear-passage', 'copy-passage', 'cut-passage', 'paste-passage']}>
               {clipboard && <p className="editor-rhythm-reason">Clipboard: {clipboard.measures.length} measure{clipboard.measures.length === 1 ? '' : 's'} from “{clipboard.title}”.</p>}
-            </details>
-            <details className="editor-measure-tools"><summary>Measure</summary>
-              <button type="button" onClick={selectWholeMeasure}>Select measure</button>
-              <button type="button" onClick={() => insertSelectedMeasure('before')}>Insert measure before</button>
-              <button type="button" onClick={() => insertSelectedMeasure('after')}>Insert measure after</button>
-              <button type="button" onClick={event => previewDuplicateMeasure(event.currentTarget)}>Duplicate measure…</button>
-              <button type="button" disabled={(preview?.score.masterBars.length ?? score.measures.length) <= 1}
-                onClick={event => previewDeleteMeasure(event.currentTarget)}>Delete measure…</button>
-              {(preview?.score.masterBars.length ?? score.measures.length) <= 1 && <p>The last remaining measure cannot be deleted.</p>}
-              <button type="button" onClick={event => openMeterDialog(event.currentTarget)}>Time signature…</button>
-              <button type="button" onClick={event => openRepeatDialog(event.currentTarget)}>Repeat / endings…</button>
-              <button type="button" disabled={selection.measure !== 1} onClick={event => openPickupDialog(event.currentTarget)}>Pickup…</button>
+            </CommandGroup>
+            <CommandGroup className="editor-measure-tools" summary="Measure" commands={commands} ids={['select-measure', 'insert-measure-before', 'insert-measure-after',
+              'duplicate-measure', 'delete-measure', 'time-signature', 'repeat', 'pickup']}>
+              {measureCount <= 1 && <p>The last remaining measure cannot be deleted.</p>}
               {selection.measure !== 1 && <p>Pickup length is available only in the first measure.</p>}
-            </details>
+            </CommandGroup>
           </>}
         </div>
-        <details className="editor-score-tools"><summary>Score</summary>
-          <button type="button" onClick={event => openSettingsDialog(event.currentTarget)}>Score settings…</button>
-          <button type="button" onClick={() => setHelpOpen(true)}>Keyboard help…</button>
-        </details>
+        <CommandGroup className="editor-score-tools" summary="Score" commands={commands} ids={['score-settings', 'keyboard-help']} />
       </section>;
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
