@@ -10,7 +10,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -247,6 +247,94 @@ describe('ED-16 grace editing and removal', () => {
     expect(protectedGrace).not.toBe(rich);
     expect(() => removeMusicXmlGrace(protectedGrace, graceTarget(protectedGrace).score, { measure: 0, beat, voice, string: 4 }))
       .toThrow('protected notehead attachment');
+  });
+});
+
+describe('ED-14 hammer-on, pull-off and slide authoring', () => {
+  const tie = fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8');
+  const crossBar = tie.replace(/(<measure number="2">[\s\S]*?<step>)D(<\/step>[\s\S]*?<fret>)0(<\/fret>)/, '$1E$2' + '2$3');
+  const score = (source: string) => readMusicXml(source, 'transition.musicxml').score;
+  const m1 = { measure: 0, beat: 0, voice: 1, string: 4, fret: 0 };
+  const m2 = { measure: 1, beat: 0, voice: 1, string: 4, fret: 2 };
+
+  it('writes a cross-bar hammer-on that renders, plays legato and reopens, and a slide between different frets', () => {
+    expect(crossBar).toContain('<fret>2</fret>');
+    const hammer = connectMusicXmlTransition(crossBar, score(crossBar), 'hammer-on', m1, m2);
+    expect(hammer).toContain('<hammer-on type="start">H</hammer-on>');
+    expect(hammer).toContain('<hammer-on type="stop"/>');
+    const after = score(hammer);
+    const origin = after.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+    expect(origin.isHammerPullOrigin).toBe(true);
+    expect(origin.hammerPullDestination?.beat.voice.bar.index).toBe(1);
+    const file = new midi.MidiFile();
+    new midi.MidiFileGenerator(after, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
+    expect(file.events.some(event => event instanceof midi.NoteBendEvent && (event as midi.NoteBendEvent & { isHammerPull?: boolean }).isHammerPull)).toBe(true);
+    expect(inspectMusicXmlTransitions(hammer, after, m1)).toEqual([{ kind: 'hammer-on', direction: 'outgoing', other: { measure: 2, event: 1, fret: 2 } }]);
+    expect(inspectMusicXmlTransitions(hammer, after, m2)).toEqual([{ kind: 'hammer-on', direction: 'incoming', other: { measure: 1, event: 1, fret: 0 } }]);
+    expect(removeMusicXmlTransition(hammer, after, m2, 'hammer-on', 'incoming')).toBe(new XMLSerializer().serializeToString(new DOMParser().parseFromString(crossBar, 'application/xml')));
+    const slide = connectMusicXmlTransition(crossBar, score(crossBar), 'slide', m1, m2);
+    expect(slide.match(/<slide type="(start|stop)" number="1"\/>/g)).toHaveLength(2);
+    expect(score(slide).tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0].slideOutType).not.toBe(0);
+    expect(removeMusicXmlTransition(slide, score(slide), m1, 'slide', 'outgoing')).not.toContain('<slide');
+    const pull = crossBar.replace('<fret>0</fret>', '<fret>5</fret>').replace(/<step>D<\/step>/, '<step>G</step>');
+    expect(connectMusicXmlTransition(pull, score(pull), 'pull-off', { ...m1, fret: 5 }, m2)).toContain('<pull-off type="start">PO</pull-off>');
+  });
+
+  it('writes and removes a pull-off on both paired staves, keeping fingering and other spans', () => {
+    const rich2 = { measure: 1, beat: 0, voice: 2, string: 4, fret: 4 };
+    const e2 = { measure: 1, beat: 1, voice: 2, string: 4, fret: 2 };
+    const pulled = connectMusicXmlTransition(rich, readMusicXml(rich, 'rich.musicxml').score, 'pull-off', rich2, e2);
+    expect(pulled.match(/<pull-off type="start">PO<\/pull-off>/g)).toHaveLength(2);
+    expect(pulled.match(/<pull-off type="stop"\/>/g)).toHaveLength(2);
+    const pulledScore = readMusicXml(pulled, 'rich.musicxml').score;
+    expect(inspectMusicXmlTransitions(pulled, pulledScore, rich2).map(item => `${item.kind}:${item.direction}`)).toEqual(['tie:incoming', 'pull-off:outgoing']);
+    expect(removeMusicXmlTransition(pulled, pulledScore, rich2, 'pull-off', 'outgoing')).toBe(new XMLSerializer().serializeToString(new DOMParser().parseFromString(rich, 'application/xml')));
+    const e = { measure: 0, beat: 2, voice: 2, string: 4, fret: 2 };
+    const noHammer = removeMusicXmlTransition(rich, readMusicXml(rich, 'rich.musicxml').score, e, 'hammer-on', 'incoming');
+    expect(noHammer).not.toContain('hammer-on');
+    expect(noHammer).toContain('<fingering enclosure="circle">1</fingering><other-technical>TEF fingering T</other-technical>');
+    expect(noHammer.match(/<slide number="1" type="start"\/>/g)).toHaveLength(2);
+    expect(() => removeMusicXmlTransition(rich, readMusicXml(rich, 'rich.musicxml').score, e, 'pull-off', 'outgoing')).toThrow('has no pull-off to remove');
+    expect(removeMusicXmlTransition(rich, readMusicXml(rich, 'rich.musicxml').score, { ...rich2, measure: 0, beat: 4 }, 'tie', 'outgoing')).not.toContain('<tied type="start"/>');
+  });
+
+  it('leaves the document unchanged with a specific error for invalid endpoints', () => {
+    const s = score(crossBar);
+    expect(() => connectMusicXmlTransition(crossBar, s, 'hammer-on', m1, { ...m2, string: 3 })).toThrow('must stay on the same string');
+    expect(() => connectMusicXmlTransition(crossBar, s, 'hammer-on', m1, { ...m2, voice: 2 })).toThrow('must stay in the same voice');
+    expect(() => connectMusicXmlTransition(crossBar, s, 'hammer-on', m2, m1)).toThrow('must come after the origin');
+    expect(() => connectMusicXmlTransition(crossBar, s, 'pull-off', m1, m2)).toThrow('A pull-off must go to a lower fret.');
+    expect(() => connectMusicXmlTransition(crossBar, s, 'hammer-on', { ...m1, fret: 3 }, m2)).toThrow('cannot be uniquely identified');
+    const same = score(tie);
+    expect(() => connectMusicXmlTransition(tie, same, 'slide', m1, { ...m2, fret: 0 })).toThrow('A slide must go to a different fret.');
+    expect(() => connectMusicXmlTransition(tie, same, 'hammer-on', m1, { ...m2, fret: 0 })).toThrow('A hammer-on must go to a higher fret.');
+    const richScore = readMusicXml(rich, 'rich.musicxml').score;
+    expect(() => connectMusicXmlTransition(rich, richScore, 'slide', { measure: 0, beat: 1, voice: 2, string: 4, fret: 0 }, { measure: 0, beat: 3, voice: 2, string: 4, fret: 4 }))
+      .toThrow('Another note on string 4 comes first.');
+    expect(() => connectMusicXmlTransition(rich, richScore, 'slide', { measure: 0, beat: 1, voice: 2, string: 4, fret: 0 }, { measure: 0, beat: 2, voice: 2, string: 4, fret: 2 }))
+      .toThrow('The origin already starts a tie or transition.');
+    const hammer = connectMusicXmlTransition(crossBar, s, 'hammer-on', m1, m2);
+    expect(() => connectMusicXmlTransition(hammer, score(hammer), 'tie', m1, m2)).toThrow();
+    expect(() => removeMusicXmlTransition(crossBar.replace('<fret>2</fret>', '<fret>2</fret><hammer-on type="stop"/>'), s, m2, 'hammer-on', 'incoming'))
+      .toThrow('The other hammer-on endpoint cannot be identified safely.');
+  });
+
+  it('rejects a fret edit that would invalidate an existing span, while unrelated edits keep chains', () => {
+    const richScore = readMusicXml(rich, 'rich.musicxml').score;
+    const state = musicXmlEditorState(rich, richScore);
+    const e = state.notes.find(note => note.measure === 0 && note.voice === 1 && note.beat === 2 && note.string === 4)!;
+    e.fret = 0;
+    expect(() => applyMusicXmlEdits(rich, state, [e.index])).toThrow('This change would make the existing hammer-on invalid. Remove that hammer-on first.');
+    const slideState = musicXmlEditorState(rich, richScore);
+    const f = slideState.notes.find(note => note.measure === 0 && note.voice === 1 && note.beat === 3 && note.string === 4)!;
+    f.fret = 2;
+    expect(() => applyMusicXmlEdits(rich, slideState, [f.index])).toThrow('existing slide invalid');
+    const unrelated = musicXmlEditorState(rich, richScore);
+    const later = unrelated.notes.find(note => note.measure === 1 && note.voice === 1 && note.beat === 1 && note.string === 4)!;
+    later.fret = 3;
+    const edited = applyMusicXmlEdits(rich, unrelated, [later.index]);
+    expect(edited).toContain('<hammer-on type="start">H</hammer-on>');
+    expect(edited.match(/<slide number="1" type="start"\/>/g)).toHaveLength(2);
   });
 });
 

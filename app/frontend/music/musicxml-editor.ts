@@ -419,27 +419,32 @@ function removePairedTechniqueForDeletedNote(sourceNotes: Element[], index: numb
   });
 }
 
-function removeIncompatibleDirectionalTechniques(sourceNotes: Element[]) {
+// A fret or string edit must not silently change a connected span: the
+// named span is removed explicitly first.
+function rejectIncompatibleTransitions(sourceNotes: Element[]) {
   sourceNotes.forEach((note, index) => {
     const technical = child(child(note, 'notations') ?? note, 'technical');
     if (!technical) return;
     const string = text(child(technical, 'string'));
     const fret = Number(text(child(technical, 'fret')));
-    children(technical).filter(item => (item.localName === 'hammer-on' || item.localName === 'pull-off') && (item.getAttribute('type') || 'start') === 'start').forEach(marker => {
+    const notations = child(note, 'notations');
+    const starts = [...children(technical), ...(notations ? children(notations) : [])].filter(item =>
+      ['hammer-on', 'pull-off', 'slide'].includes(item.localName) && (item.getAttribute('type') || 'start') === 'start');
+    for (const marker of starts) {
       for (let cursor = index + 1; cursor < sourceNotes.length; cursor++) {
-        const candidateTechnical = child(child(sourceNotes[cursor], 'notations') ?? sourceNotes[cursor], 'technical');
+        const candidate = sourceNotes[cursor];
+        const candidateTechnical = child(child(candidate, 'notations') ?? candidate, 'technical');
         if (!candidateTechnical || text(child(candidateTechnical, 'string')) !== string) continue;
-        const paired = children(candidateTechnical).find(item => item.localName === marker.localName && (item.getAttribute('type') || 'start') === 'stop');
-        if (!paired) continue;
+        const candidateNotations = child(candidate, 'notations');
+        const paired = [...children(candidateTechnical), ...(candidateNotations ? children(candidateNotations) : [])].some(item => item.localName === marker.localName
+          && item.getAttribute('type') === 'stop' && (marker.localName !== 'slide' || (item.getAttribute('number') || '1') === (marker.getAttribute('number') || '1')));
+        if (!paired) break;
         const destinationFret = Number(text(child(candidateTechnical, 'fret')));
-        const validDirection = marker.localName === 'hammer-on' ? destinationFret > fret : destinationFret < fret;
-        if (!validDirection) {
-          technical.removeChild(marker);
-          candidateTechnical.removeChild(paired);
-        }
+        const valid = marker.localName === 'hammer-on' ? destinationFret > fret : marker.localName === 'pull-off' ? destinationFret < fret : destinationFret !== fret;
+        if (!valid) throw new Error(`This change would make the existing ${marker.localName} invalid. Remove that ${marker.localName} first.`);
         break;
       }
-    });
+    }
   });
 }
 
@@ -533,7 +538,7 @@ export function applyMusicXmlEdits(source: string, state: MusicXmlEditorState, n
   if (state.notes.some(edit => {
     const before = original?.notes.find(note => note.index === edit.index);
     return !before || edit.string !== before.string || edit.fret !== before.fret || edit.deleted;
-  })) removeIncompatibleDirectionalTechniques(sourceNotes);
+  })) rejectIncompatibleTransitions(sourceNotes);
   const notesToDelete = sourceNotes.filter((_, index) => deletedNoteIndexes.has(index) && (!noteIndexes || noteIndexes.includes(index)));
   notesToDelete.forEach(note => removePairedTechniqueForDeletedNote(sourceNotes, sourceNotes.indexOf(note)));
   deleteSourceNotes(document, [...notesToDelete, ...pairedDeletions]);
@@ -3134,5 +3139,99 @@ export function setMusicXmlLocalTempo(source: string, score: model.Score, positi
   }
   if (directives.length) directives.forEach(direction => setDirectiveTempo(direction, tempo));
   else measure.insertBefore(newTempoDirection(document, tempo, tabStaff), anchors[0].note);
+  return new XMLSerializer().serializeToString(document);
+}
+
+export type TransitionKind = 'tie' | 'hammer-on' | 'pull-off' | 'slide';
+export type NoteTransition = { kind: TransitionKind; direction: 'outgoing' | 'incoming'; other: { measure: number; event: number; fret: number } | null };
+const TRANSITION_KINDS: TransitionKind[] = ['tie', 'hammer-on', 'pull-off', 'slide'];
+
+function transitionLane(document: Document, score: model.Score, position: TiePosition) {
+  const part = descendants(document.documentElement, 'part')[0];
+  if (!part || directMeasures(part).length !== score.masterBars.length) throw new Error('The source measure count does not match the rendered score.');
+  const records = sourceTabNoteRecords(document);
+  const matches = records.filter(record => record.measure === position.measure && record.beat === position.beat
+    && record.voice === String(position.voice) && record.string === position.string && record.fret === position.fret);
+  if (matches.length !== 1) throw new Error('The selected note cannot be uniquely identified in the source.');
+  const record = matches[0];
+  return { record, lane: records.filter(item => item.voice === record.voice && item.string === record.string) };
+}
+
+function kindMarkers(note: Element, kind: TransitionKind, type: 'start' | 'stop') {
+  const names = kind === 'tie' ? ['tie', 'tied'] : [kind];
+  return descendants(note, names[0]).concat(names[1] ? descendants(note, names[1]) : [])
+    .filter(marker => (marker.getAttribute('type') || (kind === 'tie' ? '' : 'start')) === type);
+}
+
+export function inspectMusicXmlTransitions(source: string, score: model.Score, position: TiePosition): NoteTransition[] {
+  const { record, lane } = transitionLane(parseDocument(source), score, position);
+  const index = lane.indexOf(record);
+  return TRANSITION_KINDS.flatMap(kind => (['outgoing', 'incoming'] as const).flatMap(direction => {
+    if (!kindMarkers(record.note, kind, direction === 'outgoing' ? 'start' : 'stop').length) return [];
+    const other = lane[index + (direction === 'outgoing' ? 1 : -1)];
+    return [{ kind, direction, other: other ? { measure: other.measure + 1, event: other.beat + 1, fret: other.fret } : null }];
+  }));
+}
+
+// Hammer-on, pull-off and slide join a note to the next note on the same
+// string and voice; ties keep their dedicated command and checks.
+export function connectMusicXmlTransition(source: string, score: model.Score, kind: TransitionKind, origin: TiePosition, destination: TiePosition): string {
+  if (kind === 'tie') return connectMusicXmlTie(source, score, origin, destination);
+  const label = TRANSITION_LABELS[kind];
+  if (origin.voice !== destination.voice) throw new Error(`A ${label} must stay in the same voice.`);
+  if (origin.string !== destination.string) throw new Error(`A ${label} must stay on the same string.`);
+  const document = parseDocument(source);
+  const from = transitionLane(document, score, origin);
+  const to = transitionLane(document, score, destination);
+  const fromIndex = from.lane.indexOf(from.record);
+  const toIndex = from.lane.findIndex(record => record.note === to.record.note);
+  if (toIndex <= fromIndex) throw new Error(`The ${label} destination must come after the origin.`);
+  if (toIndex !== fromIndex + 1) throw new Error(`Another note on string ${origin.string} comes first. A ${label} must end on the next note on that string.`);
+  if (kind === 'hammer-on' && !(to.record.fret > from.record.fret)) throw new Error('A hammer-on must go to a higher fret.');
+  if (kind === 'pull-off' && !(to.record.fret < from.record.fret)) throw new Error('A pull-off must go to a lower fret.');
+  if (kind === 'slide' && to.record.fret === from.record.fret) throw new Error('A slide must go to a different fret.');
+  const outgoing = ['hammer-on', 'pull-off', 'slide', 'glissando', 'tie', 'tied'].some(name => descendants(from.record.note, name).some(marker => (marker.getAttribute('type') || 'start') === 'start'));
+  if (outgoing) throw new Error('The origin already starts a tie or transition. Remove it before adding another.');
+  const incoming = ['hammer-on', 'pull-off', 'slide', 'glissando', 'tie', 'tied'].some(name => descendants(to.record.note, name).some(marker => marker.getAttribute('type') === 'stop'));
+  if (incoming) throw new Error('The destination already ends a tie or transition. Remove it before adding another.');
+  const linked = linkedStaffNotes(document);
+  const origins = [from.record.note, ...linked(from.record.note)];
+  const destinations = [to.record.note, ...linked(to.record.note)];
+  if (origins.length !== destinations.length) throw new Error('Paired notation endpoints cannot be matched safely.');
+  let slideNumber = 1;
+  if (kind === 'slide') {
+    const measures = new Set([from.record.note.parentNode, to.record.note.parentNode]);
+    const used = new Set([...measures].flatMap(measure => descendants(measure as Element, 'slide').concat(descendants(measure as Element, 'glissando')))
+      .map(marker => Number(marker.getAttribute('number') || '1')));
+    while (used.has(slideNumber)) slideNumber++;
+  }
+  origins.forEach(note => addTransitionMarker(note, kind, 'start', slideNumber));
+  destinations.forEach(note => addTransitionMarker(note, kind, 'stop', slideNumber));
+  return new XMLSerializer().serializeToString(document);
+}
+
+export function removeMusicXmlTransition(source: string, score: model.Score, position: TiePosition, kind: TransitionKind, direction: 'outgoing' | 'incoming'): string {
+  if (kind === 'tie') return removeMusicXmlTie(source, score, position);
+  const document = parseDocument(source);
+  const { record, lane } = transitionLane(document, score, position);
+  const own = kindMarkers(record.note, kind, direction === 'outgoing' ? 'start' : 'stop');
+  if (own.length !== 1) throw new Error(`The selected note has no ${TRANSITION_LABELS[kind]} to remove.`);
+  const other = lane[lane.indexOf(record) + (direction === 'outgoing' ? 1 : -1)];
+  const number = own[0].getAttribute('number') || '1';
+  const counterpart = other && kindMarkers(other.note, kind, direction === 'outgoing' ? 'stop' : 'start')
+    .filter(marker => kind !== 'slide' || (marker.getAttribute('number') || '1') === number);
+  if (!other || counterpart?.length !== 1) throw new Error(`The other ${TRANSITION_LABELS[kind]} endpoint cannot be identified safely.`);
+  const linked = linkedStaffNotes(document);
+  const strip = (note: Element, type: 'start' | 'stop') => {
+    for (const marker of kindMarkers(note, kind, type).filter(item => kind !== 'slide' || (item.getAttribute('number') || '1') === number)) {
+      const parent = marker.parentNode as Element;
+      parent.removeChild(marker);
+      if (parent.localName === 'technical' && !children(parent).length) parent.parentNode!.removeChild(parent);
+    }
+    const notations = child(note, 'notations');
+    if (notations && !children(notations).length) note.removeChild(notations);
+  };
+  for (const note of [record.note, ...linked(record.note)]) strip(note, direction === 'outgoing' ? 'start' : 'stop');
+  for (const note of [other.note, ...linked(other.note)]) strip(note, direction === 'outgoing' ? 'stop' : 'start');
   return new XMLSerializer().serializeToString(document);
 }

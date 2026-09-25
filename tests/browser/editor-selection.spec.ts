@@ -134,7 +134,9 @@ test('ED-02 edits and deletes an existing imported note', async ({ page }) => {
   await page.getByRole('button', { name: 'Edit score' }).click();
 
   const inspector = page.getByLabel('Selection inspector');
-  const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^[0-9]+$/ }).first();
+  // The hammer-on destination (fret 3) can become fret 12 and keep its span
+  // valid; editing the origin to 12 would be rejected until the span is removed.
+  const note = page.getByTestId('notation').locator('svg text').filter({ hasText: /^3$/ }).first();
   const noteBox = await note.boundingBox();
   expect(noteBox).not.toBeNull();
   await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
@@ -143,6 +145,9 @@ test('ED-02 edits and deletes an existing imported note', async ({ page }) => {
   await expect(inspector).toContainText('Fret 12');
   await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(1);
   await page.keyboard.press('Backspace');
+  const confirm = page.getByRole('dialog', { name: 'Confirm note removal' });
+  await expect(confirm).toContainText('hammer-on');
+  await confirm.getByRole('button', { name: 'Remove note' }).click();
   await expect(inspector).not.toContainText('Fret 12');
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
