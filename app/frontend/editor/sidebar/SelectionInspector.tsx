@@ -43,9 +43,7 @@ export function SelectionInspector({ selection, details, measureCount, eventCoun
           <option value="fret">Keep fret</option><option value="pitch">Keep pitch</option></select></label>
         {moveOutcome && <p className="editor-rhythm-reason" role="status">{moveOutcome.reason ?? `Result: string ${moveOutcome.destination}, fret ${moveOutcome.fret}, ${moveOutcome.pitch}.`}</p>}
         <CommandButton id="move-string" command={commands['move-string']} />
-        <CommandButton id="remove-note" command={commands['remove-note']} />
       </>}
     </div>}
-    {!commands['make-rest'].hidden && <div className="editor-event-tools"><CommandButton id="make-rest" command={commands['make-rest']} /></div>}
   </>;
 }

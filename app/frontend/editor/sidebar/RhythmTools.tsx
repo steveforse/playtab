@@ -10,12 +10,10 @@ export function RhythmTools({ rhythm, triplet, tupletLocked, commands }: {
 }) {
   return <div className="editor-rhythm-tools" aria-label="Duration tools">
     <p>Duration</p>
-    <div className="editor-duration-buttons"><CommandButtons commands={commands} ids={DURATION_COMMANDS} /></div>
-    <CommandButton id="dotted" command={commands.dotted} />
     <CommandButton id="split-rest" command={commands['split-rest']} />
     {rhythm.rest && !tupletLocked && rhythm.denominator === 64 && <p className="editor-rhythm-reason">A 1/64 rest is the shortest rest; it cannot be split further.</p>}
     {rhythm.rest && !tupletLocked && rhythm.dots > 0 && <p className="editor-rhythm-reason">A dotted rest cannot be split; choose an undotted duration first.</p>}
-    <CommandButtons commands={commands} ids={['insert-event', 'set-tempo', 'triplet', 'remove-triplet']} />
+    <CommandButtons commands={commands} ids={['set-tempo', 'remove-triplet']} />
     {rhythm.reason && <p className="editor-rhythm-reason">{rhythm.reason}</p>}
     {triplet?.reason && triplet.reason !== rhythm.reason && <p className="editor-rhythm-reason">{triplet.reason}</p>}
   </div>;
