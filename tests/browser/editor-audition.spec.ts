@@ -105,6 +105,7 @@ test('ED-06 stops selection audio on an edit and retains playback settings and e
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   await notation.focus();
   await notation.press('4');
+  await notation.press('Enter');
   await expect(page.getByText('Score updated. Press Play to listen.')).toBeVisible();
   await expect(page.getByText('Playing range: M1 E1–M1 E1')).toBeVisible();
   await expect(page.getByRole('button', { name: '↻ Loop' })).toHaveAttribute('aria-pressed', 'true');

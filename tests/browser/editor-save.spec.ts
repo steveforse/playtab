@@ -30,6 +30,7 @@ test('ED-07 saves changes to the same song and switches to a separately titled c
   const box = (await note.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('4');
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Save changes' })).toBeEnabled();
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('button', { name: '✓ Saved' })).toBeDisabled();

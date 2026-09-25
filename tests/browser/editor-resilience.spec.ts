@@ -20,8 +20,8 @@ test('ED-24 keeps only the newest revision and one player through rapid edits, v
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await first.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  // Four keystrokes without waiting: 1, 12, then a new buffer 1, 15.
-  for (const digit of ['1', '2', '1', '5']) await page.keyboard.press(digit);
+  // Two commits without waiting for the first render: 12, then 15.
+  for (const key of ['1', '2', 'Enter', '1', '5', 'Enter']) await page.keyboard.press(key);
   await expect(notation.locator('svg text').filter({ hasText: /^15$/ })).toHaveCount(1);
   for (const stale of ['1', '12']) await expect(notation.locator('svg text').filter({ hasText: new RegExp(`^${stale}$`) })).toHaveCount(0);
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 15');
