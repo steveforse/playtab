@@ -12,6 +12,8 @@ export interface EditorCommand {
   title?: string;
   shortcut?: string;
   disabled?: boolean;
+  // Why a disabled command is unavailable; shown in tooltips and menus.
+  reason?: string;
   pressed?: boolean;
   // Hidden commands are not offered at all (for example "Remove tie" when
   // the selected note has no tie).
@@ -37,7 +39,8 @@ export function commandIcon(id: string, command: EditorCommand): IconName | unde
 }
 
 // Tooltips name the command and its shortcut; icon-only buttons always get one.
-export function commandTitle(command: EditorCommand) {
+export function commandTitle(command: EditorCommand): string | undefined {
+  if (command.disabled && command.reason) return `${command.ariaLabel ?? command.label} — ${command.reason}`;
   if (command.title) return command.shortcut ? `${command.title} (${command.shortcut})` : command.title;
   const name = command.ariaLabel ?? command.label;
   if (command.shortcut) return `${name} (${command.shortcut})`;

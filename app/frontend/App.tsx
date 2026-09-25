@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSelection } from './Player';
+import { defaultPlayerPreferences, Player, type ContextMenuRequest, type PlayerControls, type PlayerPreferences, type ScoreSelection } from './Player';
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { createBlankMusicXml, OPEN_G_TUNING, promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
@@ -61,7 +61,8 @@ import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
 import { TempoDialog } from './editor/dialogs/TempoDialog';
 import { CommandButtons, CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
 import { SelectionInspector } from './editor/sidebar/SelectionInspector';
-import { RhythmTools } from './editor/sidebar/RhythmTools';
+import { ContextMenu, type MenuEntry } from './editor/ContextMenu';
+import { DURATION_COMMANDS, RhythmTools } from './editor/sidebar/RhythmTools';
 import { TechniqueTools, TRANSITION_COMMANDS } from './editor/sidebar/TechniqueTools';
 import { InsertEventDialog, type InsertEventDraft } from './editor/dialogs/InsertEventDialog';
 import { ConflictDialog, DiscardDialog, LeaveDialog, RemovalDialog, SaveCopyDialog } from './editor/dialogs/SessionDialogs';
@@ -209,6 +210,8 @@ export function App() {
   const newScoreOpener = useRef<HTMLElement | null>(null);
   const [narrow, setNarrow] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuRequest | null>(null);
+  const playerControls = useRef<PlayerControls | null>(null);
   const [sheetTransportHost, setSheetTransportHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
@@ -395,6 +398,14 @@ export function App() {
       setError(''); setMessage(result.description);
       documentRefocus();
     } catch (error) { setError((error as Error).message); }
+  }
+  function focusFretEntry() {
+    if (narrow) setToolsOpen(true);
+    requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>('input[aria-label="Fret"]');
+      input?.focus({ preventScroll: true });
+      input?.select();
+    });
   }
   function documentRefocus() { document.querySelector<HTMLElement>('[data-testid="notation"]')?.focus({ preventScroll: true }); }
   const historyAction = useRef(moveHistory);
@@ -1658,6 +1669,11 @@ export function App() {
   const measureCount = preview?.score.masterBars.length ?? score.measures.length;
   const onSelection = (run: (current: ScoreSelection) => void) => (_opener: HTMLElement) => { if (selection) run(selection); };
   const noteSelected = selection?.kind === 'note';
+  const graceReason = selection?.graceIndex !== null && selection ? 'Not available on a grace note' : undefined;
+  const tupletReason = !selectedRhythm ? 'Select an event first' : selectedTupletLocked ? selectedTriplet?.reason ?? 'Change the triplet as a whole' : undefined;
+  const wholeRange = wholeMeasurePassage();
+  const rangeReason = !passage ? 'Select a range first' : !wholeRange ? 'Select whole measures first' : undefined;
+  const playReason = playerControls.current?.canPlay ? undefined : 'Playback is not ready yet';
   const commands: EditorCommands = {
     undo: { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !history.undo.length,
       title: history.undo.length ? `Undo: ${history.undo.at(-1)!.description}` : 'Nothing to undo', run: () => moveHistory('undo') },
@@ -1671,7 +1687,7 @@ export function App() {
     ...Object.fromEntries(DURATION_DENOMINATORS.map(value => [`duration-${value}`, {
       label: value === 1 ? '1' : `1/${value}`, iconOnly: true, ariaLabel: value === 1 ? 'Whole note duration' : `1/${value} duration`,
       pressed: selectedRhythm ? selectedRhythm.denominator === value && selectedRhythm.dots === 0 : undefined,
-      disabled: !selectedRhythm || selectedTupletLocked, run: () => changeSelectedDuration(value, false),
+      disabled: !selectedRhythm || selectedTupletLocked, reason: tupletReason, run: () => changeSelectedDuration(value, false),
     } satisfies EditorCommand])),
     dotted: { label: 'Dotted', className: 'editor-dotted-button', pressed: selectedRhythm ? selectedRhythm.dots === 1 : undefined,
       disabled: !selectedRhythm || selectedRhythm.denominator === null || selectedTupletLocked,
@@ -1680,23 +1696,24 @@ export function App() {
       disabled: !selectedRhythm?.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0 || selectedTupletLocked,
       run: () => selectedRhythm && changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false) },
     'insert-event': { label: 'Insert event…', className: 'editor-insert-event', disabled: !selection, run: opener => openInsertEvent(opener) },
-    'set-tempo': { label: 'Set tempo here…', className: 'editor-insert-event', disabled: !selection || selection.graceIndex !== null, run: opener => openTempoDialog(opener) },
+    'set-tempo': { label: 'Set tempo here…', className: 'editor-insert-event', disabled: !selection || selection.graceIndex !== null, reason: graceReason, run: opener => openTempoDialog(opener) },
     triplet: { label: 'Triplet', className: 'editor-triplet-button',
       disabled: !selectedRhythm || selectedTupletLocked || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0,
       run: () => changeSelectedTriplet(false) },
     'remove-triplet': { label: 'Remove triplet', className: 'editor-remove-triplet', hidden: !selectedTriplet?.triplet,
       disabled: !selectedTriplet?.canRemove, run: () => changeSelectedTriplet(true) },
-    grace: { label: selectedHasGrace ? 'Edit grace…' : 'Add grace…', disabled: !noteSelected, run: opener => openGraceDialog(opener) },
+    grace: { label: selectedHasGrace ? 'Edit grace…' : 'Add grace…', disabled: !noteSelected, reason: 'Select a note first', run: opener => openGraceDialog(opener) },
     'remove-grace': { label: 'Remove grace', hidden: !noteSelected || selection?.graceIndex === null, run: onSelection(current => requestRemoval(current, 'grace')) },
-    bend: { label: 'Bend…', disabled: !selectedTechniques, run: opener => openBendDialog(opener) },
+    bend: { label: 'Bend…', disabled: !selectedTechniques, reason: 'Select a note first', run: opener => openBendDialog(opener) },
     ...Object.fromEntries(TRANSITION_COMMANDS.map(kind => [kind, {
-      label: capitalized(TRANSITION_NAMES[kind]), disabled: !noteSelected || pendingTie !== null, run: () => beginTransition(kind),
+      label: capitalized(TRANSITION_NAMES[kind]), disabled: !noteSelected || pendingTie !== null,
+      reason: pendingTie ? 'Finish or cancel the pending transition first' : 'Select a note first', run: () => beginTransition(kind),
     } satisfies EditorCommand])),
     'remove-tie': { label: 'Remove tie', hidden: !selectedTie, run: () => removeSelectedTie() },
     ...Object.fromEntries((['chord', 'section', 'words'] as AnchorKind[]).map(kind => [kind, {
-      label: `${ANCHOR_NAMES[kind].title}…`, disabled: !selection || selection.graceIndex !== null, run: opener => openAnchorDialog(kind, opener),
+      label: `${ANCHOR_NAMES[kind].title}…`, disabled: !selection || selection.graceIndex !== null, reason: graceReason, run: opener => openAnchorDialog(kind, opener),
     } satisfies EditorCommand])),
-    lyric: { label: 'Lyric syllable…', disabled: !selection || selection.graceIndex !== null, run: opener => openLyricDialog(opener) },
+    lyric: { label: 'Lyric syllable…', disabled: !selection || selection.graceIndex !== null, reason: graceReason, run: opener => openLyricDialog(opener) },
     'lyrics-chords': { label: 'Lyrics & chords…', run: opener => openStandaloneDialog(opener) },
     'range-start': { label: 'Set range start', disabled: !selection, run: onSelection(current => setPassage({ start: current, end: current })) },
     'range-end': { label: 'Set range end', disabled: !passage || !selection, run: onSelection(current => {
@@ -1706,20 +1723,34 @@ export function App() {
     }) },
     'clear-passage': { label: 'Clear passage', disabled: !passage, run: () => setPassage(null) },
     'clear-range': { label: 'Clear to rests…', icon: 'make-rest', shortcut: 'Delete', disabled: !passage, run: opener => openClearRange(opener) },
-    'copy-passage': { label: 'Copy passage', shortcut: 'Ctrl+C', disabled: !passage, run: () => copyPassage() },
-    'cut-passage': { label: 'Cut passage…', shortcut: 'Ctrl+X', disabled: !passage, run: opener => openCutDialog(opener) },
-    'paste-passage': { label: 'Paste passage…', shortcut: 'Ctrl+V', disabled: !clipboard, run: opener => openPasteDialog(opener) },
+    'copy-passage': { label: 'Copy passage', shortcut: 'Ctrl+C', disabled: Boolean(rangeReason), reason: rangeReason, run: () => copyPassage() },
+    'cut-passage': { label: 'Cut passage…', shortcut: 'Ctrl+X', disabled: Boolean(rangeReason), reason: rangeReason, run: opener => openCutDialog(opener) },
+    'paste-passage': { label: 'Paste passage…', shortcut: 'Ctrl+V', disabled: !clipboard || !selection, reason: 'Copy or cut measures first', run: opener => openPasteDialog(opener) },
     'select-measure': { label: 'Select measure', disabled: !selection, run: () => selectWholeMeasure() },
     'insert-measure-before': { label: 'Insert measure before', disabled: !selection, run: () => insertSelectedMeasure('before') },
     'insert-measure-after': { label: 'Insert measure after', disabled: !selection, run: () => insertSelectedMeasure('after') },
     'duplicate-measure': { label: 'Duplicate measure…', disabled: !selection, run: opener => previewDuplicateMeasure(opener) },
-    'delete-measure': { label: 'Delete measure…', disabled: !selection || measureCount <= 1, run: opener => previewDeleteMeasure(opener) },
+    'delete-measure': { label: 'Delete measure…', disabled: !selection || measureCount <= 1, reason: 'The last remaining measure cannot be deleted', run: opener => previewDeleteMeasure(opener) },
     'time-signature': { label: 'Time signature…', disabled: !selection, run: opener => openMeterDialog(opener) },
     repeat: { label: 'Repeat / endings…', disabled: !selection, run: opener => openRepeatDialog(opener) },
-    pickup: { label: 'Pickup…', disabled: selection?.measure !== 1, run: opener => openPickupDialog(opener) },
+    pickup: { label: 'Pickup…', disabled: selection?.measure !== 1, reason: 'Only the first measure can be a pickup', run: opener => openPickupDialog(opener) },
+    'edit-fret': { label: noteSelected ? 'Edit fret…' : 'Add note…', icon: noteSelected ? 'edit-tools' : 'add-note', disabled: selection?.string == null,
+      reason: 'Select a string position first', run: () => focusFretEntry() },
+    'play-from-here': { label: 'Play from here', icon: 'play', disabled: !selection || Boolean(playReason), reason: playReason, run: () => playerControls.current?.playFrom() },
+    'play-selection': { label: passage ? 'Play range' : 'Play selection', icon: 'play', disabled: !selection || Boolean(playReason), reason: playReason, run: () => playerControls.current?.playSelection() },
     'score-settings': { label: 'Score settings…', run: opener => openSettingsDialog(opener) },
     'keyboard-help': { label: 'Keyboard help…', shortcut: '?', run: () => setHelpOpen(true) },
   };
+  const measureEntries: MenuEntry[] = ['select-measure', 'insert-measure-before', 'insert-measure-after', 'duplicate-measure', 'delete-measure', 'time-signature', 'repeat'];
+  const durationEntries: MenuEntry = { label: 'Duration', items: [...DURATION_COMMANDS, 'dotted', 'split-rest', 'triplet', 'remove-triplet'] };
+  const textEntries: MenuEntry = { label: 'Text', items: ['chord', 'section', 'words', 'lyric'] };
+  const contextEntries: MenuEntry[] = contextMenu?.scope === 'range' || contextMenu?.scope === 'measure'
+    ? ['copy-passage', 'cut-passage', 'paste-passage', 'clear-range', '-', 'play-selection', 'clear-passage', '-', ...measureEntries]
+    : noteSelected
+      ? ['edit-fret', 'remove-note', 'make-rest', '-', durationEntries,
+        { label: 'Techniques', items: ['tie', 'hammer-on', 'pull-off', 'slide', 'bend', 'grace', 'remove-grace', 'remove-tie'] }, textEntries,
+        '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection']
+      : ['edit-fret', 'insert-event', '-', durationEntries, textEntries, '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection'];
   const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
         <div className="editor-history"><CommandButtons commands={commands} ids={['undo', 'redo']} /></div>
@@ -1798,6 +1829,7 @@ export function App() {
           onPassageChange={setPassage}
           onFretKey={handleFretKey}
           onBeforeNavigate={commitPendingFret}
+          onContextMenu={request => setContextMenu(request)} controlsRef={playerControls}
           onSelectionDelete={current => { if (passage) openClearRange(document.activeElement instanceof HTMLElement ? document.activeElement : null); else requestRemoval(current); }}
           exportBlockedReason={pendingFret ? 'Apply or clear the pending fret before exporting.' : null}
           historyRevision={historyRevision}
@@ -1833,6 +1865,8 @@ export function App() {
     <BendDialog target={bendTarget} onApply={applyBend} onClose={() => setBendTarget(null)} returnFocus={bendOpener} />
     <PickupDialog target={pickupTarget} onApply={confirmPickupChange} onClose={() => setPickupTarget(null)} returnFocus={pickupOpener} />
     <DuplicateMeasureDialog pending={pendingDuplication} onConfirm={confirmDuplicateMeasure} onClose={() => setPendingDuplication(null)} returnFocus={duplicateOpener} />
+    <ContextMenu at={editMode ? contextMenu : null} entries={contextEntries} commands={commands} label="Score actions"
+      onClose={() => { setContextMenu(null); documentRefocus(); }} />
     <InsertEventDialog open={insertOpen} initialString={selection?.string ?? 1} error={error} onInsert={confirmInsertEvent}
       onClose={() => setInsertOpen(false)} returnFocus={insertOpener} />
     <RemovalDialog pending={pendingRemoval} onConfirm={confirmRemoval} onClose={() => setPendingRemoval(null)} returnFocus={removalOpener} onFocusFallback={documentRefocus} />
