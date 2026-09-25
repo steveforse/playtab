@@ -23,7 +23,7 @@ type PendingMeasureDeletion = { originalKey: string; base: MusicXmlPreview; sour
   noteCount: number; restCount: number; labelCount: number };
 type MeterTarget = { originalKey: string; base: MusicXmlPreview; measureIndex: number };
 type PickupTarget = { originalKey: string; base: MusicXmlPreview };
-type RepeatTarget = { originalKey: string; base: MusicXmlPreview };
+type RepeatTarget = { originalKey: string; base: MusicXmlPreview; measure: number };
 type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndings | null };
 type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; destination: number; first: number;
   existing: boolean; readOnly: string[]; connections: string[]; initialEvents: GraceEventSpec[] };
@@ -38,6 +38,10 @@ type CutTarget = { originalKey: string; base: MusicXmlPreview; first: number; la
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection; kind: TransitionKind };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 import { AnchorDialog } from './editor/dialogs/AnchorDialog';
+import { DeleteMeasureDialog, DuplicateMeasureDialog, RepeatRemovalDialog } from './editor/dialogs/ConfirmMeasureDialogs';
+import { MeterDialog, type MeterCandidate } from './editor/dialogs/MeterDialog';
+import { PickupDialog } from './editor/dialogs/PickupDialog';
+import { RepeatDialog, type RepeatDraft } from './editor/dialogs/RepeatDialog';
 import { GraceDialog } from './editor/dialogs/GraceDialog';
 import { NewScoreDialog, type NewScoreDraft } from './editor/dialogs/NewScoreDialog';
 import { PasteDialog } from './editor/dialogs/PasteDialog';
@@ -176,21 +180,10 @@ export function App() {
   const [pendingDuplication, setPendingDuplication] = useState<PendingDuplication | null>(null);
   const [pendingMeasureDeletion, setPendingMeasureDeletion] = useState<PendingMeasureDeletion | null>(null);
   const [meterTarget, setMeterTarget] = useState<MeterTarget | null>(null);
-  const [meterApplyError, setMeterApplyError] = useState('');
-  const [meterDraft, setMeterDraft] = useState<{ numerator: number; denominator: 2 | 4 | 8 | 16; scope: 'this' | 'from' }>({
-    numerator: 4, denominator: 4, scope: 'this',
-  });
-  const meterDialog = useRef<HTMLDialogElement>(null);
   const meterOpener = useRef<HTMLElement | null>(null);
   const [repeatTarget, setRepeatTarget] = useState<RepeatTarget | null>(null);
-  const [repeatDraft, setRepeatDraft] = useState({ start: 1, end: 2, count: 2 });
-  const [repeatAddTouched, setRepeatAddTouched] = useState(false);
-  const [repeatSelected, setRepeatSelected] = useState('');
-  const [endingDraft, setEndingDraft] = useState({ firstStart: 1, secondEnd: 1 });
-  const [repeatApplyError, setRepeatApplyError] = useState('');
+  const [repeatRemovalError, setRepeatRemovalError] = useState('');
   const [repeatRemoval, setRepeatRemoval] = useState<RepeatRemoval | null>(null);
-  const repeatDialog = useRef<HTMLDialogElement>(null);
-  const repeatRemovalDialog = useRef<HTMLDialogElement>(null);
   const repeatOpener = useRef<HTMLElement | null>(null);
   const [graceTarget, setGraceTarget] = useState<GraceTarget | null>(null);
   const [anchorTarget, setAnchorTarget] = useState<AnchorTarget | null>(null);
@@ -220,15 +213,8 @@ export function App() {
   const graceOpener = useRef<HTMLElement | null>(null);
   const [pickupTarget, setPickupTarget] = useState<PickupTarget | null>(null);
   const [pendingTie, setPendingTie] = useState<PendingTie | null>(null);
-  const [pickupApplyError, setPickupApplyError] = useState('');
-  const [pickupDraft, setPickupDraft] = useState<{ numerator: number; denominator: 2 | 4 | 8 | 16 | 32 | 64 }>({
-    numerator: 1, denominator: 8,
-  });
-  const pickupDialog = useRef<HTMLDialogElement>(null);
   const pickupOpener = useRef<HTMLElement | null>(null);
-  const duplicateDialog = useRef<HTMLDialogElement>(null);
   const duplicateOpener = useRef<HTMLElement | null>(null);
-  const deleteMeasureDialog = useRef<HTMLDialogElement>(null);
   const deleteMeasureOpener = useRef<HTMLElement | null>(null);
   const [insertOpen, setInsertOpen] = useState(false);
   const [insertDraft, setInsertDraft] = useState<Pick<InsertEventOptions, 'placement' | 'kind' | 'denominator' | 'dotted' | 'string' | 'fret'>>({
@@ -330,57 +316,6 @@ export function App() {
       if (insertOpener.current?.isConnected) insertOpener.current.focus({ preventScroll: true });
     }
   }, [insertOpen]);
-  useEffect(() => {
-    const dialog = duplicateDialog.current;
-    if (!dialog) return;
-    if (pendingDuplication && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-duplicate-cancel]')?.focus(); }
-    else if (!pendingDuplication && dialog.open) {
-      dialog.close();
-      if (duplicateOpener.current?.isConnected) duplicateOpener.current.focus({ preventScroll: true });
-    }
-  }, [pendingDuplication]);
-  useEffect(() => {
-    const dialog = deleteMeasureDialog.current;
-    if (!dialog) return;
-    if (pendingMeasureDeletion && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-delete-measure-cancel]')?.focus(); }
-    else if (!pendingMeasureDeletion && dialog.open) {
-      dialog.close();
-      if (deleteMeasureOpener.current?.isConnected) deleteMeasureOpener.current.focus({ preventScroll: true });
-    }
-  }, [pendingMeasureDeletion]);
-  useEffect(() => {
-    const dialog = meterDialog.current;
-    if (!dialog) return;
-    if (meterTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-meter-first]')?.focus(); }
-    else if (!meterTarget && dialog.open) {
-      dialog.close();
-      if (meterOpener.current?.isConnected) meterOpener.current.focus({ preventScroll: true });
-    }
-  }, [meterTarget]);
-  useEffect(() => {
-    const dialog = repeatDialog.current;
-    if (!dialog) return;
-    if (repeatTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-repeat-first]')?.focus(); }
-    else if (!repeatTarget && dialog.open) {
-      dialog.close();
-      if (repeatOpener.current?.isConnected) repeatOpener.current.focus({ preventScroll: true });
-    }
-  }, [repeatTarget]);
-  useEffect(() => {
-    const dialog = repeatRemovalDialog.current;
-    if (!dialog) return;
-    if (repeatRemoval && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-repeat-remove-cancel]')?.focus(); }
-    else if (!repeatRemoval && dialog.open) dialog.close();
-  }, [repeatRemoval]);
-  useEffect(() => {
-    const dialog = pickupDialog.current;
-    if (!dialog) return;
-    if (pickupTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-pickup-first]')?.focus(); }
-    else if (!pickupTarget && dialog.open) {
-      dialog.close();
-      if (pickupOpener.current?.isConnected) pickupOpener.current.focus({ preventScroll: true });
-    }
-  }, [pickupTarget]);
   function load(next: Score, original: string | null, diagnostics: string[] = [], id: number | null = null, revision: number | null = null) {
     session.current++;
     const snapshot = { document: next, original, diagnostics, id, revision };
@@ -819,17 +754,14 @@ export function App() {
       const master = base.score.masterBars[measureIndex];
       if (!master) throw new Error('The selected measure cannot be identified safely.');
       meterOpener.current = opener;
-      setMeterApplyError('');
-      setMeterDraft({ numerator: master.timeSignatureNumerator,
-        denominator: master.timeSignatureDenominator as 2 | 4 | 8 | 16, scope: 'this' });
       setMeterTarget({ originalKey: documentKey(currentDocument), base, measureIndex });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function confirmMeterChange(candidate: ReturnType<typeof changeMusicXmlMeter>) {
-    if (!meterTarget || !selection) return;
+  function confirmMeterChange(candidate: MeterCandidate): string | null {
+    if (!meterTarget || !selection) return null;
     if (meterTarget.originalKey !== documentKey(currentDocument)) {
-      setMeterTarget(null); setError('The score changed since this meter preview. Open it again.'); return;
+      setMeterTarget(null); setError('The score changed since this meter preview. Open it again.'); return null;
     }
     try {
       const { base } = meterTarget;
@@ -840,29 +772,22 @@ export function App() {
       setPreview(nextPreview); setSelection(null); setMeterTarget(null); setPassage(null);
       setMessage(`Time signature changed in measures ${candidate.firstMeasure}–${candidate.lastMeasure}. Edit and playback selections cleared.`);
       setError('');
-    } catch (failure) { setMeterApplyError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
   function openRepeatDialog(opener: HTMLElement) {
     if (!selection) return;
     if (pendingFret) { setError('Apply the pending fret before editing repeats.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
-      let regions: RepeatRegion[] = [];
-      try { regions = inspectMusicXmlRepeats(base.source); } catch { /* Preserve unsupported imported maps read-only in the dialog. */ }
-      const selected = regions.find(item => selection.measure - 1 >= item.start && selection.measure - 1 <= item.end) ?? regions[0];
       repeatOpener.current = opener;
-      setRepeatDraft({ start: selection.measure, end: Math.min(base.score.masterBars.length, selection.measure + 1), count: 2 });
-      setRepeatAddTouched(false);
-      setRepeatSelected(selected ? `${selected.start}:${selected.end}` : '');
-      setEndingDraft({ firstStart: selected ? selected.end + 1 : selection.measure,
-        secondEnd: selected ? selected.end + 2 : selection.measure + 1 });
-      setRepeatApplyError(''); setRepeatTarget({ originalKey: documentKey(currentDocument), base }); setError('');
+      setRepeatTarget({ originalKey: documentKey(currentDocument), base, measure: selection.measure }); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function commitRepeatChange(target: RepeatTarget, candidate: string, description: string, status: string) {
+  function commitRepeatChange(target: RepeatTarget, candidate: string, description: string, status: string): string | null {
     if (target.originalKey !== documentKey(currentDocument)) {
       setRepeatTarget(null); setRepeatRemoval(null);
-      setError('The score changed since this repeat preview. Open it again.'); return;
+      setError('The score changed since this repeat preview. Open it again.'); return null;
     }
     try {
       const { base } = target;
@@ -871,29 +796,36 @@ export function App() {
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection,
         sourceIdentity: nextPreview.sourceIdentity }, description);
       setPreview(nextPreview); setRepeatTarget(null); setRepeatRemoval(null); setError(''); setMessage(status);
-    } catch (failure) { setRepeatApplyError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
-  function confirmRepeat(candidate: string) {
-    if (repeatTarget) commitRepeatChange(repeatTarget, candidate,
+  function confirmRepeat(candidate: string, repeatDraft: RepeatDraft): string | null {
+    return repeatTarget ? commitRepeatChange(repeatTarget, candidate,
       `Repeat measures ${repeatDraft.start}–${repeatDraft.end} ×${repeatDraft.count}`,
-      `Repeat added: measures ${repeatDraft.start}–${repeatDraft.end}, ${repeatDraft.count} plays.`);
+      `Repeat added: measures ${repeatDraft.start}–${repeatDraft.end}, ${repeatDraft.count} plays.`) : null;
   }
-  function previewRepeatRemoval(region: RepeatRegion) {
-    if (!repeatTarget) return;
+  function addRepeatEndings(candidate: string, region: RepeatRegion): string | null {
+    return repeatTarget ? commitRepeatChange(repeatTarget, candidate,
+      `Add endings to measures ${region.start + 1}–${region.end + 1}`,
+      `First and second endings added to measures ${region.start + 1}–${region.end + 1}.`) : null;
+  }
+  function previewRepeatRemoval(region: RepeatRegion): string | null {
+    if (!repeatTarget) return null;
     try {
       const endings = inspectMusicXmlRepeatEndings(repeatTarget.base.source, region.start, region.end);
       removeMusicXmlRepeat(repeatTarget.base.source, repeatTarget.base.score, region.start, region.end);
-      setRepeatRemoval({ ...repeatTarget, region, endings }); setRepeatTarget(null); setRepeatApplyError('');
-    } catch (failure) { setRepeatApplyError((failure as Error).message); }
+      setRepeatRemoval({ ...repeatTarget, region, endings }); setRepeatTarget(null); setRepeatRemovalError('');
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
   function confirmRepeatRemoval() {
     if (!repeatRemoval) return;
     try {
       const { region, base } = repeatRemoval;
       const candidate = removeMusicXmlRepeat(base.source, base.score, region.start, region.end);
-      commitRepeatChange(repeatRemoval, candidate, `Remove repeat measures ${region.start + 1}–${region.end + 1}`,
-        `Repeat in measures ${region.start + 1}–${region.end + 1} removed with its dependent endings.`);
-    } catch (failure) { setRepeatApplyError((failure as Error).message); }
+      setRepeatRemovalError(commitRepeatChange(repeatRemoval, candidate, `Remove repeat measures ${region.start + 1}–${region.end + 1}`,
+        `Repeat in measures ${region.start + 1}–${region.end + 1} removed with its dependent endings.`) ?? '');
+    } catch (failure) { setRepeatRemovalError((failure as Error).message); }
   }
   function openGraceDialog(opener: HTMLElement) {
     if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) {
@@ -1243,16 +1175,14 @@ export function App() {
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
       pickupOpener.current = opener;
-      setPickupApplyError('');
-      setPickupDraft({ numerator: 1, denominator: 8 });
       setPickupTarget({ originalKey: documentKey(currentDocument), base });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function confirmPickupChange(nextSource: string) {
-    if (!pickupTarget) return;
+  function confirmPickupChange(nextSource: string): string | null {
+    if (!pickupTarget) return null;
     if (pickupTarget.originalKey !== documentKey(currentDocument)) {
-      setPickupTarget(null); setError('The score changed since this pickup preview. Open it again.'); return;
+      setPickupTarget(null); setError('The score changed since this pickup preview. Open it again.'); return null;
     }
     try {
       const { base } = pickupTarget;
@@ -1262,7 +1192,8 @@ export function App() {
         sourceIdentity: nextPreview.sourceIdentity }, 'Change pickup length');
       setPreview(nextPreview); setSelection(null); setPickupTarget(null); setPassage(null);
       setMessage('Pickup length changed. Edit and playback selections cleared.'); setError('');
-    } catch (failure) { setPickupApplyError((failure as Error).message); }
+      return null;
+    } catch (failure) { return (failure as Error).message; }
   }
   function beginTransition(kind: TransitionKind) {
     const name = TRANSITION_NAMES[kind];
@@ -1694,46 +1625,6 @@ export function App() {
     try { return inspectMusicXmlTie(preview.source, preview.score, tiePosition(selection)).canRemove; }
     catch { return false; }
   })();
-  const meterPreview = (() => {
-    if (!meterTarget) return null;
-    try {
-      const range = inspectMusicXmlMeterRange(meterTarget.base.source, meterTarget.base.score,
-        meterTarget.measureIndex, meterDraft.scope);
-      try {
-        return { range, candidate: changeMusicXmlMeter(meterTarget.base.source, meterTarget.base.score,
-          meterTarget.measureIndex, meterDraft.numerator, meterDraft.denominator, meterDraft.scope), error: '' };
-      } catch (failure) { return { range, candidate: null, error: (failure as Error).message }; }
-    } catch (failure) { return { range: null, candidate: null, error: (failure as Error).message }; }
-  })();
-  const pickupPreview = (() => {
-    if (!pickupTarget) return null;
-    try {
-      return { source: changeMusicXmlPickup(pickupTarget.base.source, pickupTarget.base.score,
-        pickupDraft.numerator, pickupDraft.denominator), error: '' };
-    } catch (failure) { return { source: null, error: (failure as Error).message }; }
-  })();
-  const repeatPreview = (() => {
-    if (!repeatTarget) return null;
-    try {
-      const existing = inspectMusicXmlRepeats(repeatTarget.base.source);
-      try {
-        return { existing, candidate: addMusicXmlRepeat(repeatTarget.base.source, repeatTarget.base.score,
-          repeatDraft.start - 1, repeatDraft.end - 1, repeatDraft.count), error: '', structureError: false };
-      } catch (failure) { return { existing, candidate: null, error: (failure as Error).message, structureError: false }; }
-    } catch (failure) { return { existing: [], candidate: null, error: (failure as Error).message, structureError: true }; }
-  })();
-  const selectedRepeat = repeatPreview?.existing.find(region => `${region.start}:${region.end}` === repeatSelected);
-  const endingsPreview = (() => {
-    if (!repeatTarget || !selectedRepeat) return null;
-    try {
-      const existing = inspectMusicXmlRepeatEndings(repeatTarget.base.source, selectedRepeat.start, selectedRepeat.end);
-      if (existing) return { existing, candidate: null, error: 'This repeat already has first and second endings.' };
-      try {
-        return { existing: null, candidate: addMusicXmlEndings(repeatTarget.base.source, repeatTarget.base.score,
-          selectedRepeat.start, selectedRepeat.end, endingDraft.firstStart - 1, endingDraft.secondEnd - 1), error: '' };
-      } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
-    } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
-  })();
   const selectedTechniques: NoteTechniqueInfo | null = (() => {
     if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) return null;
     if (!preview) return { picking: 'none', fretting: 'none', bend: 'none' };
@@ -1941,88 +1832,11 @@ export function App() {
       <div ref={setSheetTransportHost} className="edit-sheet-transport" />
       <div className="edit-sheet-body">{editorTools}</div>
     </section>}
-    <dialog ref={deleteMeasureDialog} className="duplicate-dialog" aria-label="Delete measure" onCancel={event => { event.preventDefault(); setPendingMeasureDeletion(null); }}>
-      <h2>Delete measure {pendingMeasureDeletion ? pendingMeasureDeletion.measureIndex + 1 : ''}?</h2>
-      <p>This permanently removes {pendingMeasureDeletion?.noteCount ?? 0} note{pendingMeasureDeletion?.noteCount === 1 ? '' : 's'}, {pendingMeasureDeletion?.restCount ?? 0} rest{pendingMeasureDeletion?.restCount === 1 ? '' : 's'}, and {pendingMeasureDeletion?.labelCount ?? 0} local label{pendingMeasureDeletion?.labelCount === 1 ? '' : 's'} from this score. Undo can restore them during this editing session.</p>
-      <p>Edit and playback selections touching this measure will clear.</p>
-      <div className="duplicate-dialog-actions"><button type="button" data-delete-measure-cancel onClick={() => setPendingMeasureDeletion(null)}>Cancel</button><button type="button" onClick={confirmDeleteMeasure}>Delete measure</button></div>
-    </dialog>
-    <dialog ref={meterDialog} className="duplicate-dialog" aria-label="Time signature" onCancel={event => { event.preventDefault(); setMeterTarget(null); }}>
-      <h2>Time signature</h2>
-      <div className="insert-dialog-fields">
-        <label>Numerator<input data-meter-first type="number" min={1} max={12} step={1} value={meterDraft.numerator}
-          onChange={event => { setMeterApplyError(''); setMeterDraft(current => ({ ...current, numerator: Number(event.target.value) })); }} /></label>
-        <label>Denominator<select value={meterDraft.denominator}
-          onChange={event => { setMeterApplyError(''); setMeterDraft(current => ({ ...current, denominator: Number(event.target.value) as 2 | 4 | 8 | 16 })); }}>
-          {[2, 4, 8, 16].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-        <label>Apply to<select value={meterDraft.scope}
-          onChange={event => { setMeterApplyError(''); setMeterDraft(current => ({ ...current, scope: event.target.value as 'this' | 'from' })); }}>
-          <option value="this">This measure</option><option value="from">From here (until next explicit signature)</option></select></label>
-      </div>
-      {meterPreview?.range && <p>Affects measures {meterPreview.range.firstMeasure}–{meterPreview.range.lastMeasure} ({meterPreview.range.lastMeasure - meterPreview.range.firstMeasure + 1} total).</p>}
-      {meterPreview?.error && <p className="alert" role="alert">{meterPreview.error}</p>}
-      {meterApplyError && <p className="alert" role="alert">{meterApplyError}</p>}
-      <div className="duplicate-dialog-actions"><button type="button" onClick={() => setMeterTarget(null)}>Cancel</button>
-        <button type="button" disabled={!meterPreview?.candidate} onClick={() => { if (meterPreview?.candidate) confirmMeterChange(meterPreview.candidate); }}>Apply</button></div>
-    </dialog>
-    <dialog ref={repeatDialog} className="duplicate-dialog" aria-label="Repeat / endings" onCancel={event => { event.preventDefault(); setRepeatTarget(null); }}>
-      <h2>Repeat / endings</h2>
-      <p>Existing repeats: {repeatPreview?.structureError ? 'unavailable (imported structure is read-only)' : repeatPreview?.existing.length ? repeatPreview.existing.map(region =>
-        `measures ${region.start + 1}–${region.end + 1} ×${region.count}`).join('; ') : 'none'}.</p>
-      <p>Add a non-overlapping repeat. Endings require a two-play repeat and one measure after its backward marker.</p>
-      <div className="insert-dialog-fields">
-        <label>Start measure<input data-repeat-first type="number" min={1} max={repeatTarget?.base.score.masterBars.length ?? 1} step={1}
-          value={repeatDraft.start} onChange={event => { setRepeatAddTouched(true); setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, start: Number(event.target.value) })); }} /></label>
-        <label>End measure<input type="number" min={1} max={repeatTarget?.base.score.masterBars.length ?? 1} step={1}
-          value={repeatDraft.end} onChange={event => { setRepeatAddTouched(true); setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, end: Number(event.target.value) })); }} /></label>
-        <label>Play count<select value={repeatDraft.count}
-          onChange={event => { setRepeatAddTouched(true); setRepeatApplyError(''); setRepeatDraft(current => ({ ...current, count: Number(event.target.value) })); }}>
-          {[2, 3, 4, 5, 6, 7, 8].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-      </div>
-      {repeatPreview?.error && (repeatAddTouched || !repeatPreview.existing.length) && <p className="alert" role="alert">{repeatPreview.error}</p>}
-      {repeatApplyError && <p className="alert" role="alert">{repeatApplyError}</p>}
-      <div className="duplicate-dialog-actions"><button type="button" onClick={() => setRepeatTarget(null)}>Cancel</button>
-        <button type="button" disabled={!repeatPreview?.candidate} onClick={() => { if (repeatPreview?.candidate) confirmRepeat(repeatPreview.candidate); }}>Add repeat</button></div>
-      {!!repeatPreview?.existing.length && <>
-        <h3>Selected repeat</h3>
-        <div className="insert-dialog-fields"><label>Repeat region<select value={repeatSelected} onChange={event => {
-          const region = repeatPreview.existing.find(item => `${item.start}:${item.end}` === event.target.value);
-          setRepeatSelected(event.target.value);
-          if (region) setEndingDraft({ firstStart: region.end + 1, secondEnd: region.end + 2 });
-          setRepeatApplyError('');
-        }}>
-          {repeatPreview.existing.map(region => <option key={`${region.start}:${region.end}`} value={`${region.start}:${region.end}`}>
-            Measures {region.start + 1}–{region.end + 1} · {region.count} plays
-          </option>)}</select></label></div>
-        {selectedRepeat && <>
-          {endingsPreview?.existing && <p>First ending: measures {endingsPreview.existing.firstStart + 1}–{endingsPreview.existing.firstEnd + 1}; second ending: measures {endingsPreview.existing.secondStart + 1}–{endingsPreview.existing.secondEnd + 1}.</p>}
-          {!endingsPreview?.existing && <>
-            <div className="insert-dialog-fields">
-              <label>First ending start<input type="number" min={selectedRepeat.start + 1} max={selectedRepeat.end + 1} step={1}
-                value={endingDraft.firstStart} onChange={event => { setRepeatApplyError(''); setEndingDraft(current => ({ ...current, firstStart: Number(event.target.value) })); }} /></label>
-              <p>First ending end: measure {selectedRepeat.end + 1} (fixed). Second ending start: measure {selectedRepeat.end + 2} (fixed).</p>
-              <label>Second ending end<input type="number" min={selectedRepeat.end + 2} max={repeatTarget?.base.score.masterBars.length ?? 1} step={1}
-                value={endingDraft.secondEnd} onChange={event => { setRepeatApplyError(''); setEndingDraft(current => ({ ...current, secondEnd: Number(event.target.value) })); }} /></label>
-            </div>
-            {endingsPreview?.error && <p className="alert" role="alert">{endingsPreview.error}</p>}
-            <button type="button" disabled={!endingsPreview?.candidate} onClick={() => {
-              if (repeatTarget && selectedRepeat && endingsPreview?.candidate) commitRepeatChange(repeatTarget, endingsPreview.candidate,
-                `Add endings to measures ${selectedRepeat.start + 1}–${selectedRepeat.end + 1}`,
-                `First and second endings added to measures ${selectedRepeat.start + 1}–${selectedRepeat.end + 1}.`);
-            }}>Add first/second endings</button>
-          </>}
-          <button type="button" onClick={() => previewRepeatRemoval(selectedRepeat)}>Clear selected repeat/ending…</button>
-        </>}
-      </>}
-    </dialog>
-    <dialog ref={repeatRemovalDialog} className="duplicate-dialog" aria-label="Clear repeat and endings" onCancel={event => { event.preventDefault(); setRepeatRemoval(null); }}>
-      <h2>Clear repeat in measures {repeatRemoval ? `${repeatRemoval.region.start + 1}–${repeatRemoval.region.end + 1}` : ''}?</h2>
-      {repeatRemoval?.endings ? <p>This also removes dependent first ending in measures {repeatRemoval.endings.firstStart + 1}–{repeatRemoval.endings.firstEnd + 1} and second ending in measures {repeatRemoval.endings.secondStart + 1}–{repeatRemoval.endings.secondEnd + 1}. Notes and rests remain.</p>
-        : <p>The repeat markers will be removed. Notes and rests remain.</p>}
-      {repeatApplyError && <p className="alert" role="alert">{repeatApplyError}</p>}
-      <div className="duplicate-dialog-actions"><button type="button" data-repeat-remove-cancel onClick={() => setRepeatRemoval(null)}>Cancel</button>
-        <button type="button" onClick={confirmRepeatRemoval}>Clear repeat and endings</button></div>
-    </dialog>
+    <DeleteMeasureDialog pending={pendingMeasureDeletion} onConfirm={confirmDeleteMeasure} onClose={() => setPendingMeasureDeletion(null)} returnFocus={deleteMeasureOpener} />
+    <MeterDialog target={meterTarget} onApply={confirmMeterChange} onClose={() => setMeterTarget(null)} returnFocus={meterOpener} />
+    <RepeatDialog target={repeatTarget} onAdd={confirmRepeat} onAddEndings={addRepeatEndings} onRequestRemoval={previewRepeatRemoval}
+      onClose={() => setRepeatTarget(null)} returnFocus={repeatOpener} />
+    <RepeatRemovalDialog removal={repeatRemoval} error={repeatRemovalError} onConfirm={confirmRepeatRemoval} onClose={() => setRepeatRemoval(null)} />
     <GraceDialog target={graceTarget} onApply={confirmGrace} onRemove={removeGraceGroup} onClose={() => setGraceTarget(null)} returnFocus={graceOpener} />
     <AnchorDialog target={anchorTarget} onApply={applyAnchor} onClose={() => setAnchorTarget(null)} returnFocus={anchorOpener} />
     <LyricDialog target={lyricTarget} onApply={applyLyric} onClose={() => setLyricTarget(null)} returnFocus={textOpener} />
@@ -2035,29 +1849,8 @@ export function App() {
     <SettingsDialog target={settingsTarget} onApply={applySettings} onClose={() => setSettingsTarget(null)} returnFocus={textOpener} />
     <TempoDialog target={tempoTarget} onApply={applyTempo} onClose={() => setTempoTarget(null)} returnFocus={textOpener} />
     <BendDialog target={bendTarget} onApply={applyBend} onClose={() => setBendTarget(null)} returnFocus={bendOpener} />
-    <dialog ref={pickupDialog} className="duplicate-dialog" aria-label="Pickup" onCancel={event => { event.preventDefault(); setPickupTarget(null); }}>
-      <h2>Pickup length</h2>
-      <p>Set the first measure’s actual length. It must be shorter than the nominal time signature.</p>
-      <div className="insert-dialog-fields">
-        <label>Numerator<input data-pickup-first type="number" min={1} step={1} value={pickupDraft.numerator}
-          onChange={event => { setPickupApplyError(''); setPickupDraft(current => ({ ...current, numerator: Number(event.target.value) })); }} /></label>
-        <label>Denominator<select value={pickupDraft.denominator}
-          onChange={event => { setPickupApplyError(''); setPickupDraft(current => ({ ...current, denominator: Number(event.target.value) as 2 | 4 | 8 | 16 | 32 | 64 })); }}>
-          {[2, 4, 8, 16, 32, 64].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-      </div>
-      {pickupPreview?.error && <p className="alert" role="alert">{pickupPreview.error}</p>}
-      {pickupApplyError && <p className="alert" role="alert">{pickupApplyError}</p>}
-      <div className="duplicate-dialog-actions"><button type="button" onClick={() => setPickupTarget(null)}>Cancel</button>
-        <button type="button" disabled={!pickupPreview?.source} onClick={() => { if (pickupPreview?.source) confirmPickupChange(pickupPreview.source); }}>Apply</button></div>
-    </dialog>
-    <dialog ref={duplicateDialog} className="duplicate-dialog" aria-label="Duplicate measure" onCancel={event => { event.preventDefault(); setPendingDuplication(null); }}>
-      <h2>Duplicate measure {pendingDuplication ? pendingDuplication.measureIndex + 1 : ''}?</h2>
-      <p>The copy will include {pendingDuplication?.noteCount ?? 0} note{pendingDuplication?.noteCount === 1 ? '' : 's'} and {pendingDuplication?.restCount ?? 0} rest{pendingDuplication?.restCount === 1 ? '' : 's'}, plus local labels and contained techniques.</p>
-      <p>The copy will exclude:</p>
-      {pendingDuplication?.excluded.length ? <ul>{pendingDuplication.excluded.map(item => <li key={item}>{item}</li>)}</ul>
-        : <p>No external spans or repeat markers.</p>}
-      <div className="duplicate-dialog-actions"><button type="button" data-duplicate-cancel onClick={() => setPendingDuplication(null)}>Cancel</button><button type="button" onClick={confirmDuplicateMeasure}>Duplicate measure</button></div>
-    </dialog>
+    <PickupDialog target={pickupTarget} onApply={confirmPickupChange} onClose={() => setPickupTarget(null)} returnFocus={pickupOpener} />
+    <DuplicateMeasureDialog pending={pendingDuplication} onConfirm={confirmDuplicateMeasure} onClose={() => setPendingDuplication(null)} returnFocus={duplicateOpener} />
     <dialog ref={insertDialog} className="insert-dialog" aria-label="Insert event" onCancel={event => { event.preventDefault(); setInsertOpen(false); }}>
       <h2>Insert event</h2>
       <p>Following events move within this voice and measure. Trailing rests make room.</p>
