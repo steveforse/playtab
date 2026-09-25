@@ -11,7 +11,7 @@ test('ED-03 applies a fret field edit and moves a note to another string', async
   const note = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
   const box = (await note.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  const fret = page.getByLabel('Fret');
+  const fret = page.getByLabel('Fret', { exact: true });
   await fret.fill('12');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 12');
@@ -30,7 +30,7 @@ test('ED-03 validates fret field values before mutating the score', async ({ pag
   const note = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
   const box = (await note.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByLabel('Fret').fill('37');
+  await page.getByLabel('Fret', { exact: true }).fill('37');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('0 to 36');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
@@ -49,7 +49,7 @@ test('ED-03 moves an imported note without breaking paired notation', async ({ p
   await page.getByLabel('Move to string').selectOption('2');
   await page.getByRole('button', { name: 'Move', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('String 2');
-  await page.getByLabel('Fret').fill('7');
+  await page.getByLabel('Fret', { exact: true }).fill('7');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 7');
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -72,16 +72,16 @@ test('inspector navigation edits the newly selected imported note, not the previ
   const box = (await note.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.getByLabel('Selection inspector')).toContainText('String 1');
-  await page.getByLabel('Fret').fill('37');
+  await page.getByLabel('Fret', { exact: true }).fill('37');
   await page.getByLabel('Selection event').selectOption('2');
   await expect(page.getByLabel('Selection inspector')).toContainText('Event 1');
   await expect(page.getByRole('alert')).toContainText('0 to 36');
-  await page.getByLabel('Fret').fill('5');
+  await page.getByLabel('Fret', { exact: true }).fill('5');
   await page.getByLabel('Selection event').selectOption('2');
   await page.getByLabel('Selection string').selectOption('3');
   await expect(page.getByLabel('Selection inspector')).toContainText('Event 2');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
-  await page.getByLabel('Fret').fill('7');
+  await page.getByLabel('Fret', { exact: true }).fill('7');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 7');
   await page.getByRole('button', { name: '＋ Save to library' }).click();
@@ -115,7 +115,7 @@ test('ED-09 promotes a native high-fret edit as one undoable change and saves Mu
   const note = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
   const box = (await note.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByLabel('Fret').fill('28');
+  await page.getByLabel('Fret', { exact: true }).fill('28');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 28');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();

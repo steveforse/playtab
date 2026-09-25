@@ -8,7 +8,7 @@ import { readMusicXml } from '../../app/frontend/music/musicxml';
 import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusicXmlEdits, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGrace, removeMusicXmlGraceGroup, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
   inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
   inspectMusicXmlTie, removeMusicXmlTie,
-  inspectMusicXmlMeterRange, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
+  inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -245,6 +245,136 @@ describe('ED-16 grace editing and removal', () => {
     expect(protectedGrace).not.toBe(rich);
     expect(() => removeMusicXmlGrace(protectedGrace, graceTarget(protectedGrace).score, { measure: 0, beat, voice, string: 4 }))
       .toThrow('protected notehead attachment');
+  });
+});
+
+describe('ED-17 bends and independent hand annotations', () => {
+  // Rich fixture TAB voice 2, event 2 (after the grace chord): D on string 4,
+  // fret 0 with fretting 1, picking T and a hammer-on start.
+  const low = { measure: 0, beat: 1, voice: 2, string: 4, fret: 0 };
+  const lowNote = (source: string) => readMusicXml(source, 'rich.musicxml').score.tracks[0].staves[0].bars[0].voices[1].beats[1];
+  const technical = (source: string) => {
+    const note = Array.from(new DOMParser().parseFromString(source, 'application/xml').getElementsByTagName('note'))
+      .find(item => item.getElementsByTagName('staff')[0]?.textContent === '2' && !item.getElementsByTagName('grace').length)!;
+    return Array.from(note.getElementsByTagName('technical')[0].childNodes).filter(item => item.nodeType === 1)
+      .map(node => node as unknown as Element)
+      .map(item => `${item.localName}${item.getAttribute('type') ? `:${item.getAttribute('type')}` : ''}=${item.textContent}`);
+  };
+  const normalized = (source: string) => new XMLSerializer().serializeToString(new DOMParser().parseFromString(source, 'application/xml'));
+
+  it('changes one hand only, keeping the hammer-on and the other hand', () => {
+    const score = readMusicXml(rich, 'rich.musicxml').score;
+    expect(inspectMusicXmlNoteTechniques(rich, score, low)).toEqual({ picking: 'T', fretting: '1', bend: 'none' });
+    const fretted = setMusicXmlHand(rich, score, low, 'fretting', '3');
+    const picked = setMusicXmlHand(fretted, readMusicXml(fretted, 'rich.musicxml').score, low, 'picking', 'I');
+    expect(technical(picked)).toEqual(['string=4', 'fret=0', 'hammer-on:start=H', 'fingering=3', 'other-technical=TEF fingering I']);
+    const cleared = setMusicXmlHand(picked, readMusicXml(picked, 'rich.musicxml').score, low, 'picking', 'none');
+    expect(technical(cleared)).toEqual(['string=4', 'fret=0', 'hammer-on:start=H', 'fingering=3']);
+    expect(setMusicXmlHand(cleared, readMusicXml(cleared, 'rich.musicxml').score, low, 'picking', 'none')).toBe(cleared);
+    const beat = lowNote(picked);
+    expect(beat.notes[0].leftHandFinger).toBe(3);
+    expect(beat.notes[0].isHammerPullOrigin).toBe(true);
+    expect(beat.text).toContain('③');
+    expect((beat as typeof beat & { playtabFingerings?: string[] }).playtabFingerings).toEqual(['I']);
+    expect(inspectMusicXmlNoteTechniques(picked, readMusicXml(picked, 'rich.musicxml').score, low)).toEqual({ picking: 'I', fretting: '3', bend: 'none' });
+  });
+
+  it('renders a fretting thumb and keeps stacked picking labels free of duplicates', () => {
+    const score = readMusicXml(rich, 'rich.musicxml').score;
+    const thumb = setMusicXmlHand(rich, score, low, 'fretting', 'T');
+    expect(technical(thumb)).toContain('fingering=t');
+    expect(lowNote(thumb).notes[0].leftHandFinger).toBe(0);
+    expect(lowNote(thumb).text).toContain('Ⓣ');
+    expect(inspectMusicXmlNoteTechniques(thumb, readMusicXml(thumb, 'rich.musicxml').score, low).fretting).toBe('T');
+    const chord = addMusicXmlNote(rich, score, { measure: 0, beat: 1, voice: 1, string: 5, fret: 0 });
+    const member = { ...low, string: 5 };
+    const both = setMusicXmlHand(chord, readMusicXml(chord, 'rich.musicxml').score, member, 'picking', 'T');
+    const stacked = lowNote(both) as ReturnType<typeof lowNote> & { playtabFingerings?: string[] };
+    expect(stacked.playtabFingerings).toEqual(['T']);
+    const mixed = setMusicXmlHand(both, readMusicXml(both, 'rich.musicxml').score, member, 'picking', 'M');
+    expect((lowNote(mixed) as typeof stacked).playtabFingerings).toEqual(['T', 'M']);
+  });
+
+  it('writes canonical bend curves whose MIDI reaches, holds and releases the declared offset', () => {
+    const source = fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8');
+    const score = readMusicXml(source, 'tie.musicxml').score;
+    const note = score.tracks[0].staves[0].bars[0].voices[0].beats[0];
+    const position = { measure: 0, beat: 0, voice: 1, string: 6 - note.notes[0].string, fret: note.notes[0].fret };
+    const semitone = 134_217_728;
+    const center = 2_147_483_648;
+    const curve = (amount: 1 | 2 | 3 | 4, shape: 'bend' | 'release') => {
+      const written = setMusicXmlBend(source, score, position, { amount, shape });
+      const after = readMusicXml(written, 'tie.musicxml').score;
+      const bent = after.tracks[0].staves[0].bars[0].voices[0].beats[0].notes[0];
+      const file = new midi.MidiFile();
+      new midi.MidiFileGenerator(after, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
+      const events = file.events.filter((event): event is midi.NoteBendEvent => event instanceof midi.NoteBendEvent)
+        .filter(event => event.tick < note.playbackDuration);
+      return { written, points: bent.bendPoints!.map(point => [point.offset, point.value]), events };
+    };
+    const whole = curve(2, 'bend');
+    expect(whole.written).toContain('<bend><bend-alter>2</bend-alter></bend>');
+    expect(whole.points).toEqual([[0, 0], [30, 4], [60, 4]]);
+    const peak = whole.events.find(event => event.value === center + 2 * semitone)!;
+    expect(peak.tick).toBeLessThanOrEqual(note.playbackDuration / 2);
+    expect(whole.events.filter(event => event.tick >= peak.tick).every(event => event.value === center + 2 * semitone)).toBe(true);
+    expect(Math.max(...curve(3, 'bend').events.map(event => event.value))).toBe(center + 3 * semitone);
+    const release = curve(1, 'release');
+    expect(release.written).toContain('<bend><bend-alter>1</bend-alter></bend><bend><bend-alter>1</bend-alter><release/></bend>');
+    expect(release.points).toEqual([[0, 0], [30, 2], [30, 2], [60, 0]]);
+    expect(Math.max(...release.events.map(event => event.value))).toBe(center + semitone);
+    expect(release.events.find(event => event.value === center + semitone)!.tick).toBe(note.playbackDuration / 2);
+    expect(release.events.at(-1)!.value).toBeLessThan(center + semitone / 4);
+    expect(() => setMusicXmlBend(source, score, position, { amount: 5 as 4, shape: 'bend' })).toThrow('Choose a bend of 1/2, 1, 1½ or 2 steps');
+    expect(() => setMusicXmlBend(source, score, { ...position, fret: 9 }, null)).toThrow('cannot be uniquely identified');
+  });
+
+  it('removes a bend without touching techniques, annotations or the notation partner', () => {
+    const score = readMusicXml(rich, 'rich.musicxml').score;
+    const bent = setMusicXmlBend(rich, score, low, { amount: 2, shape: 'release' });
+    expect(bent.match(/<bend>/g)).toHaveLength(4);
+    expect(inspectMusicXmlNoteTechniques(bent, readMusicXml(bent, 'rich.musicxml').score, low).bend).toEqual({ amount: 2, shape: 'release' });
+    expect(setMusicXmlBend(bent, readMusicXml(bent, 'rich.musicxml').score, low, { amount: 2, shape: 'release' })).toBe(bent);
+    const removed = setMusicXmlBend(bent, readMusicXml(bent, 'rich.musicxml').score, low, null);
+    expect(removed).toBe(normalized(rich));
+    expect(setMusicXmlBend(removed, readMusicXml(removed, 'rich.musicxml').score, low, null)).toBe(removed);
+  });
+
+  it('keeps unsupported imported markings read-only until explicitly replaced', () => {
+    const tefBend = rich.replace('<hammer-on type="start">H</hammer-on></technical></notations></note>\n      <note><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>',
+      '<hammer-on type="start">H</hammer-on><bend><bend-alter>2</bend-alter><release/></bend></technical></notations></note>\n      <note><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>');
+    expect(tefBend).toContain('<release/>');
+    const score = readMusicXml(tefBend, 'rich.musicxml').score;
+    const info = inspectMusicXmlNoteTechniques(tefBend, score, low);
+    expect(info).toMatchObject({ picking: 'T', fretting: '1', bend: null,
+      bendReason: 'This imported bend (a release-only bend curve) is kept as written. Applying a bend here replaces it.' });
+    const picked = setMusicXmlHand(tefBend, score, low, 'picking', 'M');
+    expect(picked).toContain('<bend><bend-alter>2</bend-alter><release/></bend>');
+    const replaced = setMusicXmlBend(tefBend, score, low, { amount: 1, shape: 'bend' });
+    expect(replaced).not.toContain('<release/>');
+    expect(inspectMusicXmlNoteTechniques(replaced, readMusicXml(replaced, 'rich.musicxml').score, low).bend).toEqual({ amount: 1, shape: 'bend' });
+    const quarter = tefBend.replace('<bend-alter>2</bend-alter><release/>', '<bend-alter>0.5</bend-alter>');
+    expect(inspectMusicXmlNoteTechniques(quarter, readMusicXml(quarter, 'rich.musicxml').score, low).bendReason).toContain('a 0.5-semitone bend');
+    const reasons = (xml: string) => inspectMusicXmlNoteTechniques(xml, readMusicXml(xml, 'rich.musicxml').score, low);
+    expect(reasons(tefBend.replace('<bend-alter>2</bend-alter><release/>', '<bend-alter>2</bend-alter><pre-bend/>')).bendReason).toContain('a pre-bend');
+    expect(reasons(tefBend.replace('<bend><bend-alter>2</bend-alter><release/></bend>', '<bend><bend-alter>1</bend-alter></bend><bend><bend-alter>1</bend-alter></bend><bend><bend-alter>1</bend-alter><release/></bend>')).bendReason).toContain('a 3-part bend curve');
+    expect(reasons(tefBend.replace('<bend><bend-alter>2</bend-alter><release/></bend>', '<bend shape="curved"><bend-alter>2</bend-alter></bend>')).bendReason).toContain('a styled bend');
+    const fingered = rich.replace('<fingering enclosure="circle">1</fingering>', '<fingering enclosure="circle">5</fingering>');
+    const fingeredInfo = inspectMusicXmlNoteTechniques(fingered, readMusicXml(rich, 'rich.musicxml').score, low);
+    expect(fingeredInfo).toMatchObject({ fretting: null, frettingReason: 'The fretting-hand marking “5” is kept as written.' });
+    expect(() => setMusicXmlHand(fingered, score, low, 'fretting', '2')).toThrow('“5” is kept as written');
+    expect(setMusicXmlHand(fingered, score, low, 'picking', 'I')).toContain('<fingering enclosure="circle">5</fingering>');
+    const doubled = rich.replace('<other-technical>TEF fingering T</other-technical>', '<other-technical>TEF fingering T</other-technical><other-technical>TEF right-hand fingering m</other-technical>')
+      .replace('<fingering enclosure="circle">1</fingering>', '<fingering enclosure="circle">1</fingering><fingering>2</fingering>');
+    expect(inspectMusicXmlNoteTechniques(doubled, score, low)).toMatchObject({ picking: null, fretting: null,
+      pickingReason: 'This note has more than one picking-hand marking; it is kept as written.',
+      frettingReason: 'This note has more than one fretting-hand marking; it is kept as written.' });
+    expect(() => setMusicXmlHand(doubled, score, low, 'picking', 'I')).toThrow('more than one picking-hand marking');
+    const pdfThumb = rich.replace('<other-technical>TEF fingering T</other-technical>', '<other-technical>TEF right-hand fingering p</other-technical>');
+    expect(inspectMusicXmlNoteTechniques(pdfThumb, score, low).picking).toBe('T');
+    const coded = rich.replace('<other-technical>TEF fingering T</other-technical>', '<other-technical>TEF fingering code 6</other-technical>');
+    expect(inspectMusicXmlNoteTechniques(coded, score, low).picking).toBe('T');
+    expect(() => setMusicXmlHand(rich, score, low, 'picking', 'X' as 'T')).toThrow('supported picking-hand value');
   });
 });
 

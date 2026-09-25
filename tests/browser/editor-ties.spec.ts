@@ -26,10 +26,10 @@ test('ED-14 connects a cross-bar tie by pointer, blocks pitch edits, removes it,
   await page.getByRole('button', { name: '＋ Save to library' }).click();
   await expect.poll(() => savedSource).not.toBe('');
   expect(new DOMParser().parseFromString(savedSource, 'application/xml').getElementsByTagName('tie')).toHaveLength(2);
-  await page.getByLabel('Fret').fill('1');
+  await page.getByLabel('Fret', { exact: true }).fill('1');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('This note is tied');
-  await page.getByLabel('Fret').fill('0');
+  await page.getByLabel('Fret', { exact: true }).fill('0');
   await page.getByRole('button', { name: 'Remove tie' }).click();
   await expect(page.getByText('Tie removed.')).toBeVisible();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();

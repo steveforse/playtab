@@ -69,13 +69,13 @@ test('ED-12 keeps original and copied note targets distinct after duplication', 
   await page.getByRole('combobox', { name: 'Selection voice' }).selectOption('2');
   await page.getByRole('combobox', { name: 'Selection string' }).selectOption('4');
   await page.getByRole('combobox', { name: 'Selection event' }).selectOption('2');
-  await page.getByLabel('Fret').fill('7');
+  await page.getByLabel('Fret', { exact: true }).fill('7');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('3');
   await page.getByRole('combobox', { name: 'Selection voice' }).selectOption('2');
   await page.getByRole('combobox', { name: 'Selection string' }).selectOption('4');
   await page.getByRole('combobox', { name: 'Selection event' }).selectOption('2');
-  await page.getByLabel('Fret').fill('9');
+  await page.getByLabel('Fret', { exact: true }).fill('9');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: '＋ Save to library' }).click();

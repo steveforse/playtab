@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -26,8 +26,10 @@ type RepeatTarget = { originalKey: string; base: MusicXmlPreview };
 type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndings | null };
 type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; destination: number; first: number;
   existing: boolean; readOnly: string[]; connections: string[] };
+type BendTarget = { originalKey: string; selection: ScoreSelection; existing: NoteBend | 'none' | null; reason?: string };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
+const BEND_LABELS: Record<BendAmount, string> = { 1: '1/2 step', 2: 'Whole step', 3: '1½ steps', 4: '2 steps' };
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
 const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
@@ -163,6 +165,10 @@ export function App() {
   const repeatOpener = useRef<HTMLElement | null>(null);
   const [graceTarget, setGraceTarget] = useState<GraceTarget | null>(null);
   const [graceEvents, setGraceEvents] = useState<GraceEventSpec[]>([]);
+  const [bendTarget, setBendTarget] = useState<BendTarget | null>(null);
+  const [bendDraft, setBendDraft] = useState<NoteBend>({ amount: 2, shape: 'bend' });
+  const bendDialog = useRef<HTMLDialogElement>(null);
+  const bendOpener = useRef<HTMLElement | null>(null);
   const [graceError, setGraceError] = useState('');
   const graceDialog = useRef<HTMLDialogElement>(null);
   const graceOpener = useRef<HTMLElement | null>(null);
@@ -319,6 +325,14 @@ export function App() {
     if (repeatRemoval && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-repeat-remove-cancel]')?.focus(); }
     else if (!repeatRemoval && dialog.open) dialog.close();
   }, [repeatRemoval]);
+  useEffect(() => {
+    const dialog = bendDialog.current;
+    if (!dialog) return;
+    if (bendTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-bend-first]')?.focus(); }
+    else if (!bendTarget && dialog.open) {
+      dialog.close(); if (bendOpener.current?.isConnected) bendOpener.current.focus({ preventScroll: true });
+    }
+  }, [bendTarget]);
   useEffect(() => {
     const dialog = graceDialog.current;
     if (!dialog) return;
@@ -838,6 +852,46 @@ export function App() {
     setGraceError('');
     setGraceEvents(current => current.map((event, index) => index === eventIndex ? change(event) : event));
   }
+  // Hand annotations and bends are note-local source edits; a native score
+  // is promoted first, exactly like other imported-only techniques.
+  function changeNoteTechnique(target: ScoreSelection, change: (base: MusicXmlPreview, position: TiePosition) => string,
+    description: string, message: string) {
+    if (target.kind !== 'note' || target.string === null || target.fret === null) return false;
+    if (pendingFret) { setError('Apply the pending fret before changing this note’s techniques.'); return false; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const nextSource = change(base, tiePosition(target));
+      if (nextSource === base.source && preview) return true;
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+      const after = selectionAtPosition(target, score, nextPreview, {});
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, description);
+      setPreview(nextPreview); setSelection(after); setError(''); setMessage(message);
+      return true;
+    } catch (failure) { setError((failure as Error).message); return false; }
+  }
+  function changeHand(hand: 'picking' | 'fretting', value: PickingHand | FrettingHand) {
+    if (!selection) return;
+    const label = hand === 'picking' ? 'Picking hand' : 'Fretting hand';
+    const shown = value === 'none' ? 'None' : value === 'T' ? 'Thumb' : value;
+    changeNoteTechnique(selection, (base, position) => setMusicXmlHand(base.source, base.score, position, hand, value),
+      `${label}: ${shown}`, `${label} set to ${shown}.`);
+  }
+  function openBendDialog(opener: HTMLElement) {
+    if (!selection || selection.kind !== 'note') return;
+    if (pendingFret) { setError('Apply the pending fret before changing this note’s techniques.'); return; }
+    bendOpener.current = opener;
+    const existing = selectedTechniques ? selectedTechniques.bend : 'none';
+    setBendDraft(existing && existing !== 'none' ? existing : { amount: 2, shape: 'bend' });
+    setBendTarget({ originalKey: documentKey(currentDocument), selection, existing, reason: selectedTechniques?.bendReason });
+  }
+  function applyBend(bend: NoteBend | null) {
+    if (!bendTarget) return;
+    if (bendTarget.originalKey !== documentKey(currentDocument)) { setBendTarget(null); setError('The score changed since this bend was opened. Open it again.'); return; }
+    const shape = bend ? `${bend.shape === 'release' ? 'Bend and release' : 'Bend'} ${BEND_LABELS[bend.amount]}` : '';
+    if (changeNoteTechnique(bendTarget.selection, (base, position) => setMusicXmlBend(base.source, base.score, position, bend),
+      bend ? shape : 'Remove bend', bend ? `${shape} applied.` : 'Bend removed.')) setBendTarget(null);
+  }
   function openPickupDialog(opener: HTMLElement) {
     if (!selection || selection.measure !== 1) return;
     if (pendingFret) { setError('Apply the pending fret before changing the pickup.'); return; }
@@ -1266,6 +1320,15 @@ export function App() {
         graceEvents), error: '' };
     } catch (failure) { return { candidate: null, error: (failure as Error).message }; }
   })();
+  const selectedTechniques: NoteTechniqueInfo | null = (() => {
+    if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) return null;
+    if (!preview) return { picking: 'none', fretting: 'none', bend: 'none' };
+    try { return inspectMusicXmlNoteTechniques(preview.source, preview.score, tiePosition(selection)); }
+    catch (failure) {
+      const reason = (failure as Error).message;
+      return { picking: null, pickingReason: reason, fretting: null, frettingReason: reason, bend: null, bendReason: reason };
+    }
+  })();
   const selectedBeats = selection ? preview?.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats : undefined;
   const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || selectedBeats?.[selection.event - 2]?.graceType));
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
@@ -1335,6 +1398,19 @@ export function App() {
               <button type="button" disabled={selection.kind !== 'note'}
                 onClick={event => openGraceDialog(event.currentTarget)}>{selectedHasGrace ? 'Edit grace…' : 'Add grace…'}</button>
               {selection.kind === 'note' && selection.graceIndex !== null && <button type="button" onClick={() => requestRemoval(selection, 'grace')}>Remove grace</button>}
+              {selectedTechniques && <div className="editor-hand-tools">
+                <label>Picking hand<select aria-label="Picking hand" value={selectedTechniques.picking ?? ''} disabled={selectedTechniques.picking === null}
+                  onChange={event => changeHand('picking', event.target.value as PickingHand)}>
+                  {selectedTechniques.picking === null && <option value="">Kept as written</option>}
+                  <option value="none">None</option><option value="T">T</option><option value="I">I</option><option value="M">M</option></select></label>
+                {selectedTechniques.pickingReason && <p className="editor-rhythm-reason">{selectedTechniques.pickingReason}</p>}
+                <label>Fretting hand<select aria-label="Fretting hand" value={selectedTechniques.fretting ?? ''} disabled={selectedTechniques.fretting === null}
+                  onChange={event => changeHand('fretting', event.target.value as FrettingHand)}>
+                  {selectedTechniques.fretting === null && <option value="">Kept as written</option>}
+                  <option value="none">None</option>{['1', '2', '3', '4'].map(value => <option key={value} value={value}>{value}</option>)}<option value="T">Thumb</option></select></label>
+                {selectedTechniques.frettingReason && <p className="editor-rhythm-reason">{selectedTechniques.frettingReason}</p>}
+                <button type="button" onClick={event => openBendDialog(event.currentTarget)}>Bend…</button>
+              </div>}
               <button type="button" disabled={selection.kind !== 'note' || pendingTie !== null} onClick={beginTie}>Tie</button>
               {selectedTie && <button type="button" onClick={removeSelectedTie}>Remove tie</button>}
               {pendingTie && <div className="editor-tie-pending" role="status">
@@ -1541,6 +1617,22 @@ export function App() {
         {graceTarget?.existing && <button type="button" onClick={removeGraceGroup}>Remove grace group</button>}
         {!graceTarget?.readOnly.length && <button type="button" disabled={!gracePreview?.candidate}
           onClick={() => { if (gracePreview?.candidate) confirmGrace(gracePreview.candidate); }}>Apply grace group</button>}
+      </div>
+    </dialog>
+    <dialog ref={bendDialog} className="duplicate-dialog bend-dialog" aria-label="Bend" onCancel={event => { event.preventDefault(); setBendTarget(null); }}>
+      <h2>Bend</h2>
+      <p>Measure {bendTarget?.selection.measure}, event {bendTarget?.selection.event}, string {bendTarget?.selection.string}. The pitch reaches the bend by the middle of the note.</p>
+      {bendTarget?.reason && <p className="grace-read-only" role="note">{bendTarget.reason}</p>}
+      <div className="insert-dialog-fields">
+        <label>Amount<select data-bend-first="" value={bendDraft.amount} onChange={event => setBendDraft(current => ({ ...current, amount: Number(event.target.value) as BendAmount }))}>
+          {([1, 2, 3, 4] as BendAmount[]).map(amount => <option key={amount} value={amount}>{BEND_LABELS[amount]}</option>)}</select></label>
+        <label>Shape<select value={bendDraft.shape} onChange={event => setBendDraft(current => ({ ...current, shape: event.target.value as NoteBend['shape'] }))}>
+          <option value="bend">Bend</option><option value="release">Bend and release</option></select></label>
+      </div>
+      <div className="duplicate-dialog-actions">
+        <button type="button" onClick={() => setBendTarget(null)}>Cancel</button>
+        {bendTarget?.existing !== 'none' && <button type="button" onClick={() => applyBend(null)}>Remove bend</button>}
+        <button type="button" onClick={() => applyBend(bendDraft)}>{bendTarget?.existing === null ? 'Replace bend' : 'Apply bend'}</button>
       </div>
     </dialog>
     <dialog ref={pickupDialog} className="duplicate-dialog" aria-label="Pickup" onCancel={event => { event.preventDefault(); setPickupTarget(null); }}>

@@ -32,6 +32,19 @@ export function extractTechniques(source: string) {
       }
       const technical = child(item, 'notations') && child(child(item, 'notations')!, 'technical');
       if (!technical) continue;
+      // A lone plain <bend> is Playtab's canonical Bend: reach the target by
+      // the note midpoint and hold it. alphaTab would otherwise rise linearly
+      // across the whole note. Bend-and-release pairs already import exactly.
+      const bends = children(technical).filter(tag => tag.localName === 'bend');
+      const bendAlter = bends.length === 1 && !bends[0].attributes.length && children(bends[0]).length === 1
+        ? Number(value(bends[0], 'bend-alter')) : NaN;
+      if ([1, 2, 3, 4].includes(bendAlter)) {
+        markers.push({ bar, tick: onset, staff: Number(value(item, 'staff') || 1) - 1, voice: value(item, 'voice') || '1',
+          string: Number(value(technical, 'string')), fret: Number(value(technical, 'fret')),
+          ghost: child(item, 'notehead')?.getAttribute('parentheses') === 'yes', grace: Boolean(child(item, 'grace')),
+          kind: 'playtab-bend', type: '', number: String(bendAlter) });
+        technical.removeChild(bends[0]);
+      }
       for (const tag of children(technical)) {
         let kind = tag.localName;
         let number = tag.localName === 'fingering' ? tag.textContent?.trim() || '' : tag.getAttribute('number') || '1';
@@ -100,6 +113,21 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
       throw new Error(`Cannot uniquely locate a MusicXML technique note (bar ${marker.bar + 1}, tick ${marker.tick}, string ${marker.string}, fret ${marker.fret}, matches ${notes.length}).`);
     }
     const note = notes[0];
+    if (marker.kind === 'playtab-bend') {
+      const quarterTones = Number(marker.number) * 2;
+      note.bendPoints = null;
+      [[0, 0], [model.BendPoint.MaxPosition / 2, quarterTones], [model.BendPoint.MaxPosition, quarterTones]]
+        .forEach(([offset, amount]) => note.addBendPoint(new model.BendPoint(offset, amount)));
+      // An explicit type keeps finish() from reducing the hold to alphaTab's
+      // linear two-point Bend; playback then follows these three points.
+      note.bendType = model.BendType.Bend;
+      continue;
+    }
+    if (marker.kind === 'fingering' && marker.number.toLowerCase() === 't') {
+      note.leftHandFinger = model.Fingers.Thumb;
+      note.beat.text = [note.beat.text, 'Ⓣ'].filter(Boolean).join(' ');
+      continue;
+    }
     if (marker.kind === 'fingering') {
       // MusicXML's numeric fretting-hand fingers are not piano finger numbers.
       const finger = Number(marker.number);
