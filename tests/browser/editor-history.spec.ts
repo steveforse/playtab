@@ -36,6 +36,7 @@ for (const imported of [false, true]) {
     await page.getByRole('button', { name: 'Done editing' }).click();
     await page.getByRole('button', { name: 'Edit score', exact: true }).click();
     await expect(undo).toBeEnabled();
+    await page.getByRole('button', { name: 'Done editing' }).click();
     await page.getByRole('button', { name: '＋ Import a tab' }).click();
     await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/techniques.musicxml');
     await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toBeVisible();

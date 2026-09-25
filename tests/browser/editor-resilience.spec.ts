@@ -27,11 +27,13 @@ test('ED-24 keeps only the newest revision and one player through rapid edits, v
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 15');
   await expect(page.locator('.save-status')).toHaveText('Unsaved changes');
 
+  await page.getByRole('button', { name: 'View', exact: true }).click();
   await page.getByRole('combobox', { name: 'View' }).selectOption('a4-portrait');
   await page.getByRole('combobox', { name: 'View' }).selectOption('continuous');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
   await expect(notation.locator('svg text').filter({ hasText: /^15$/ })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Done editing' }).click();
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
   const guard = page.getByRole('dialog', { name: 'Unsaved changes' });

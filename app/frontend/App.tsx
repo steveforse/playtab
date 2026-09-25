@@ -59,7 +59,7 @@ import { CutDialog } from './editor/dialogs/CutDialog';
 import { KeyboardHelpDialog } from './editor/dialogs/KeyboardHelpDialog';
 import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
 import { TempoDialog } from './editor/dialogs/TempoDialog';
-import { CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
+import { CommandButton, CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
 import { SelectionInspector } from './editor/sidebar/SelectionInspector';
 import { inspectSelection, tiePosition } from './editor/selectionInfo';
 import { useEditorShortcuts } from './editor/useEditorShortcuts';
@@ -211,7 +211,9 @@ export function App() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuRequest | null>(null);
   const playerControls = useRef<PlayerControls | null>(null);
-  const [sheetTransportHost, setSheetTransportHost] = useState<HTMLElement | null>(null);
+  const [transportHost, setTransportHost] = useState<HTMLElement | null>(null);
+  const [viewHost, setViewHost] = useState<HTMLElement | null>(null);
+  const [exportHost, setExportHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return;
     const query = window.matchMedia('(max-width: 800px)');
@@ -1653,6 +1655,7 @@ export function App() {
         { label: 'Techniques', items: ['tie', 'hammer-on', 'pull-off', 'slide', 'bend', 'grace', 'remove-grace', 'remove-tie'] }, textEntries,
         '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection']
       : ['edit-fret', 'insert-event', '-', durationEntries, textEntries, '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection'];
+  const scoreTitle = preview?.score.title ?? score.title;
   const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
         <p className="editor-selection-empty">Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z redoes. History lasts while this score is open; older actions expire after 100 edits or 32 MB.</p>
@@ -1690,22 +1693,33 @@ export function App() {
       {!libraryCollapsed && <div className="library-list" id="library-list">
         {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={event => requestLeave(() => load(demo, null), event.currentTarget)}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => void openSong(item.id)}>{item.title}</button>)}
       </div>}
-      {editMode && !narrow && editorTools}
       <div id="playback-controls" className="sidebar-playback" />
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
     </aside>
     <main>
-      <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={event => requestLeave(() => signOut().catch(e => setError(e.message)), event.currentTarget)}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
+      {!editMode && <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={event => requestLeave(() => signOut().catch(e => setError(e.message)), event.currentTarget)}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>}
+      {editMode && <div className="edit-chrome"><div className="edit-titlebar">
+        <h1>{scoreTitle}</h1>
+        <p className="save-status edit-save-pill" role="status">{saving ? 'Saving…' : conflicted ? 'Changed in another tab' : saveError ? 'Could not save' : savedId === null ? hasDocumentEdits || pendingFret ? 'Unsaved changes' : 'Not saved to library' : dirty || pendingFret ? 'Unsaved changes' : 'Saved'}</p>
+        <span className="edit-titlebar-spacer" />
+        <span className="edit-titlebar-history"><CommandButton id="undo" command={{ ...commands.undo, iconOnly: true }} /><CommandButton id="redo" command={{ ...commands.redo, iconOnly: true }} /></span>
+        <span ref={setTransportHost} className="edit-titlebar-transport" />
+        <span ref={setExportHost} className="edit-titlebar-export" />
+        <details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details>
+        <button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button>
+        {narrow && <button type="button" className="edit-tools-toggle" aria-expanded={toolsOpen} aria-controls="edit-properties" onClick={() => setToolsOpen(open => !open)}>Properties</button>}
+        <button type="button" className="edit-mode-toggle" aria-pressed={true} onClick={toggleEditMode}>Done editing</button>
+      </div>
+      <div className="edit-ribbon"><EditorToolbar commands={commands} /><span ref={setViewHost} className="edit-ribbon-view" /></div></div>}
       <div className="workspace">
-        <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
-        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={editMode} onClick={toggleEditMode}>{editMode ? 'Done editing' : 'Edit score'}</button>{editMode && narrow && <button type="button" className="edit-tools-toggle" aria-expanded={toolsOpen} aria-controls="edit-tools-sheet" onClick={() => setToolsOpen(open => !open)}>Edit tools</button>}<button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details></div></div>
-        <p className="save-status" role="status">{saving ? 'Saving…' : conflicted ? 'Changed in another tab' : saveError ? 'Could not save' : savedId === null ? hasDocumentEdits || pendingFret ? 'Unsaved changes' : 'Not saved to library' : dirty || pendingFret ? 'Unsaved changes' : 'Saved'}</p>
+        {!editMode && <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>}
+        {!editMode && <div className="title-row"><h1>{scoreTitle}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={false} onClick={toggleEditMode}>Edit score</button><button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details></div></div>}
+        {!editMode && <p className="save-status" role="status">{saving ? 'Saving…' : conflicted ? 'Changed in another tab' : saveError ? 'Could not save' : savedId === null ? hasDocumentEdits || pendingFret ? 'Unsaved changes' : 'Not saved to library' : dirty || pendingFret ? 'Unsaved changes' : 'Saved'}</p>}
         {saveError && <p className="alert" role="alert">{saveError} {conflicted ? <button type="button" onClick={() => setConflictOpen(true)}>Resolve conflict…</button> : <button type="button" disabled={saving} onClick={() => void (failedCopyName ? save(failedCopyName) : saveCurrent())}>Retry save</button>}</p>}
         {error && <p className="alert" role="alert">{error}</p>}
         {message && !editMode && <p className="success" role="status">{message}</p>}
         {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}
-        {showPracticeTip && <aside className="practice-note" role="note" aria-label="Practice tip"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span><button type="button" className="tip-dismiss" aria-label="Dismiss practice tip" onClick={() => setShowPracticeTip(false)}>×</button></aside>}
-        {editMode && !narrow && <EditorToolbar commands={commands} />}
+        {showPracticeTip && !editMode && <aside className="practice-note" role="note" aria-label="Practice tip"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span><button type="button" className="tip-dismiss" aria-label="Dismiss practice tip" onClick={() => setShowPracticeTip(false)}>×</button></aside>}
         <Player
           key="score"
           score={score}
@@ -1734,7 +1748,7 @@ export function App() {
           onSelectionDelete={current => { if (passage) openClearRange(document.activeElement instanceof HTMLElement ? document.activeElement : null); else requestRemoval(current); }}
           exportBlockedReason={pendingFret ? 'Apply or clear the pending fret before exporting.' : null}
           historyRevision={historyRevision}
-          compactTransportHost={editMode && narrow && toolsOpen ? sheetTransportHost : null}
+          editChrome={editMode ? { transport: transportHost, view: viewHost, export: exportHost } : undefined}
           onRenderResult={handleRenderResult}
           sessionKey={session.current}
         />
@@ -1743,15 +1757,14 @@ export function App() {
           {surfaceBuffer && <span className="editor-status-buffer">Fret {fretDraft} typed — Enter applies, Escape cancels</span>}
           {message && <span className="editor-status-message">{message}</span>}
         </div>}
-        <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
+        {!editMode && <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>}
       </div>
     </main>
-    {editMode && narrow && toolsOpen && <section id="edit-tools-sheet" className="edit-sheet" aria-label="Edit tools sheet">
-      <div className="edit-sheet-header"><strong>Edit tools</strong>
-        <button type="button" onClick={() => { setToolsOpen(false); document.querySelector<HTMLElement>('.edit-tools-toggle')?.focus(); }}>Close tools</button></div>
-      <div ref={setSheetTransportHost} className="edit-sheet-transport" />
-      <div className="edit-sheet-body"><EditorToolbar commands={commands} />{editorTools}</div>
-    </section>}
+    {editMode && (!narrow || toolsOpen) && <aside id="edit-properties" className={narrow ? 'edit-properties edit-properties-sheet' : 'edit-properties'} aria-label="Properties">
+      {narrow && <div className="edit-sheet-header"><strong>Properties</strong>
+        <button type="button" onClick={() => { setToolsOpen(false); document.querySelector<HTMLElement>('.edit-tools-toggle')?.focus(); }}>Close</button></div>}
+      {editorTools}
+    </aside>}
     <DeleteMeasureDialog pending={pendingMeasureDeletion} onConfirm={confirmDeleteMeasure} onClose={() => setPendingMeasureDeletion(null)} returnFocus={deleteMeasureOpener} />
     <MeterDialog target={meterTarget} onApply={confirmMeterChange} onClose={() => setMeterTarget(null)} returnFocus={meterOpener} />
     <RepeatDialog target={repeatTarget} onAdd={confirmRepeat} onAddEndings={addRepeatEndings} onRequestRemoval={previewRepeatRemoval}

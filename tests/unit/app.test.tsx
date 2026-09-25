@@ -1062,21 +1062,21 @@ describe('workspace application', () => {
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
     openImport();
     selectFile('broken.json', '{}');
     await waitFor(() => expect(screen.getAllByRole('alert').some(node => node.textContent?.includes('Unsupported score version'))).toBe(true));
-    expect(screen.getByText('Fret 4')).toBeTruthy();
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: 'Unsaved changes' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close import' }));
     fireEvent.click(screen.getByText('More'));
     fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved changes…' }));
     await screen.findByRole('dialog', { name: 'Discard unsaved changes' });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByText('Fret 4')).toBeTruthy();
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Discard unsaved changes…' }));
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
     await waitFor(() => expect(screen.getByText('Not saved to library')).toBeTruthy());
-    expect(screen.queryByText('Fret 4')).toBeNull();
     expect(screen.getByRole('button', { name: 'Edit score' })).toBeTruthy();
   });
 
@@ -1089,6 +1089,7 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByTestId('choose-note'));
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '4' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done editing' }));
     fireEvent.click(screen.getByRole('link', { name: 'Playtab home' }));
     await screen.findByRole('dialog', { name: 'Unsaved changes' });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -1096,7 +1097,7 @@ describe('workspace application', () => {
     await screen.findByRole('dialog', { name: 'Unsaved changes' });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('Fret 4')).toBeTruthy();
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
   });
 
   it('opens stored native and imported scores and reports load failures', async () => {
@@ -1964,38 +1965,41 @@ describe('workspace application', () => {
     expect(screen.getByTestId('export-blocked').textContent).toBe('');
   });
 
-  it('keeps one set of edit tools that moves between the sidebar and a narrow-screen sheet without losing work', async () => {
+  it('keeps one set of edit tools that moves between the properties column and a narrow-screen sheet without losing work', async () => {
     const listeners: (() => void)[] = [];
     let narrowMatches = true;
     vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ get matches() { return query.includes('max-width: 800px') ? narrowMatches : false; },
       media: query, addEventListener: (_: string, listener: () => void) => listeners.push(listener), removeEventListener: vi.fn() })));
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
-    render(<App />);
-    await screen.findByRole('button', { name: /Practice demo/ });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
-    const toggle = screen.getByRole('button', { name: 'Edit tools' });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByLabelText('Selection inspector')).toBeNull();
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    const sheet = screen.getByRole('region', { name: 'Edit tools sheet' });
-    expect(within(sheet).getByLabelText('Selection inspector')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('choose-note'));
-    fireEvent.change(within(sheet).getByLabelText('Fret'), { target: { value: '7' } });
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Close tools' }));
-    expect(screen.queryByRole('region', { name: 'Edit tools sheet' })).toBeNull();
-    expect(document.activeElement).toBe(toggle);
-    fireEvent.click(toggle);
-    expect(screen.getAllByLabelText('Selection inspector')).toHaveLength(1);
-    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('7');
-    narrowMatches = false;
-    act(() => listeners.forEach(listener => listener()));
-    expect(screen.queryByRole('button', { name: 'Edit tools' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'Edit tools sheet' })).toBeNull();
-    expect(screen.getAllByLabelText('Selection inspector')).toHaveLength(1);
-    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('7');
-    expect(screen.getByText('Measure 1')).toBeTruthy();
-    vi.unstubAllGlobals();
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+      render(<App />);
+      await screen.findByRole('button', { name: /Practice demo/ });
+      fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+      const toggle = screen.getByRole('button', { name: 'Properties' });
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByLabelText('Selection inspector')).toBeNull();
+      fireEvent.click(toggle);
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      const sheet = screen.getByRole('complementary', { name: 'Properties' });
+      expect(within(sheet).getByLabelText('Selection inspector')).toBeTruthy();
+      fireEvent.click(screen.getByTestId('choose-note'));
+      fireEvent.change(within(sheet).getByLabelText('Fret'), { target: { value: '7' } });
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
+      expect(screen.queryByRole('complementary', { name: 'Properties' })).toBeNull();
+      expect(document.activeElement).toBe(toggle);
+      fireEvent.click(toggle);
+      expect(screen.getAllByLabelText('Selection inspector')).toHaveLength(1);
+      expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('7');
+      narrowMatches = false;
+      act(() => listeners.forEach(listener => listener()));
+      expect(screen.queryByRole('button', { name: 'Properties' })).toBeNull();
+      expect(screen.getByRole('complementary', { name: 'Properties' })).toBeTruthy();
+      expect(screen.getAllByLabelText('Selection inspector')).toHaveLength(1);
+      expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('7');
+      expect(screen.getByText('Measure 1')).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('saves with Ctrl/Cmd+S from anywhere in the workspace instead of the browser save dialog', async () => {

@@ -39,7 +39,7 @@ test('ED-06 Shift-click selects a written passage and Loop does not change its e
   await page.keyboard.down('Shift');
   await page.mouse.click(third.x + third.width / 2, third.y + third.height / 2);
   await page.keyboard.up('Shift');
-  await expect(page.getByText('Passage: M1 E1–M1 E3')).toBeVisible();
+  await expect(page.locator('.editor-range-summary')).toHaveText('M1 E1 – M1 E3 selected');
   await expect(notation.locator('.editor-passage-selection')).toHaveCount(1);
   await expect(notation.locator('.editor-range-endpoint')).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath('edit-passage.png') });
@@ -65,13 +65,13 @@ test('ED-06 sets passage endpoints through keyboard-accessible inspector control
   await notation.press('ArrowRight');
   await notation.press('ArrowRight');
   await page.getByRole('button', { name: 'Set range end' }).click();
-  await expect(page.getByText('Passage: M1 E1–M1 E3')).toBeVisible();
+  await expect(page.locator('.editor-range-summary')).toHaveText('M1 E1 – M1 E3 selected');
   await expect(notation.locator('.editor-passage-selection')).toHaveCount(1);
   await expect(notation.locator('.editor-range-endpoint')).toHaveCount(2);
   await page.getByRole('button', { name: 'Play selection' }).click();
   await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
   await page.getByRole('button', { name: 'Clear passage' }).click();
-  await expect(page.getByText('Passage: M1 E1–M1 E3')).toHaveCount(0);
+  await expect(page.locator('.editor-range-summary')).toHaveCount(0);
   await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
 });
 
@@ -86,10 +86,10 @@ test('ED-06 drags a passage only after crossing the pointer threshold', async ({
   await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
   await page.mouse.down();
   await page.mouse.move(first.x + first.width / 2 + 3, first.y + first.height / 2);
-  await expect(page.getByText(/Passage: M/)).toHaveCount(0);
+  await expect(page.locator('.editor-range-summary')).toHaveCount(0);
   await page.mouse.move(third.x + third.width / 2, third.y + third.height / 2, { steps: 4 });
   await page.mouse.up();
-  await expect(page.getByText('Passage: M1 E1–M1 E3')).toBeVisible();
+  await expect(page.locator('.editor-range-summary')).toHaveText('M1 E1 – M1 E3 selected');
 });
 
 test('ED-06 stops selection audio on an edit and retains playback settings and endpoints', async ({ page }) => {

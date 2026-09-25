@@ -25,6 +25,7 @@ test('ED-08 guards leaving an edited score and saves the final draft before cont
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('4');
   await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Done editing' }).click();
   await page.getByRole('button', { name: '＋ New score' }).click();
   await page.getByRole('dialog', { name: 'New score' }).getByRole('button', { name: 'Create score' }).click();
   await expect(page.getByRole('dialog', { name: 'Unsaved changes' })).toBeVisible();

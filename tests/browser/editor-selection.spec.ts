@@ -26,6 +26,7 @@ test('ED-02 selects a rendered note and keeps its identity through layout change
   await page.getByLabel('Selection event').selectOption('1');
   await expect(inspector).toContainText('Event 1');
 
+  await page.getByRole('button', { name: 'View', exact: true }).click();
   await page.getByLabel('Score view', { exact: true }).selectOption('a4-portrait');
   await expect(page.locator('.score-paper')).toHaveClass(/score-paper-paginated/);
   await expect(inspector).toContainText('Measure 2');

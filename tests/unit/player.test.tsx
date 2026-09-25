@@ -827,31 +827,42 @@ describe('notation player', () => {
     expect(screen.getByRole('button', { name: 'Export file', exact: true, hidden: true }).hasAttribute('disabled')).toBe(true);
   });
 
-  it('drives the same player from the narrow-screen sheet and moves the playback panel across the breakpoint', () => {
-    const listeners: (() => void)[] = [];
-    let narrow = false;
-    vi.stubGlobal('matchMedia', vi.fn(() => ({ get matches() { return narrow; }, addEventListener: (_: string, listener: () => void) => listeners.push(listener), removeEventListener: vi.fn() })));
+  it('moves playback, view options and Export into the edit workspace hosts and back', () => {
     const sidebarHost = document.createElement('div');
     sidebarHost.id = 'playback-controls';
     document.body.appendChild(sidebarHost);
-    const sheet = document.createElement('div');
-    document.body.appendChild(sheet);
+    const hosts = { transport: document.createElement('div'), view: document.createElement('div'), export: document.createElement('div') };
+    Object.values(hosts).forEach(host => document.body.appendChild(host));
     const selection = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note' as const, noteId: 1, graceIndex: null, graceGroupId: null };
-    render(<Player score={demo} editing selection={selection} compactTransportHost={sheet} />);
+    const onPreferencesChange = vi.fn();
+    const { rerender } = render(<Player score={demo} editing selection={selection} editChrome={hosts} onPreferencesChange={onPreferencesChange} />);
     const api = alphaTab.FakeAlphaTabApi.latest;
     act(() => { api.playerReady.emit(); api.renderFinished.emit(); });
-    expect(sidebarHost.querySelector('[aria-label="Playback settings"]')).toBeTruthy();
-    const compact = within(sheet);
-    fireEvent.click(compact.getByRole('button', { name: 'Play' }));
-    expect(api.playPause).toHaveBeenCalled();
-    expect(compact.getByRole('button', { name: 'Play selection' }).hasAttribute('disabled')).toBe(false);
-    narrow = true;
-    act(() => listeners.forEach(listener => listener()));
     expect(sidebarHost.querySelector('[aria-label="Playback settings"]')).toBeNull();
-    expect(screen.getAllByRole('region', { name: 'Playback settings' })).toHaveLength(1);
-    expect(alphaTab.FakeAlphaTabApi.latest).toBe(api);
-    sidebarHost.remove(); sheet.remove();
-    vi.unstubAllGlobals();
+    expect(document.querySelector('.score-toolbar')).toBeNull();
+    const transport = within(hosts.transport);
+    fireEvent.click(transport.getByRole('button', { name: 'Play' }));
+    expect(api.playPause).toHaveBeenCalled();
+    fireEvent.click(transport.getByRole('button', { name: 'Loop' }));
+    expect(onPreferencesChange).toHaveBeenCalledWith({ loop: true });
+    expect(transport.getByRole('button', { name: 'Play selection' }).hasAttribute('disabled')).toBe(false);
+    fireEvent.click(transport.getByRole('button', { name: 'Playback settings' }));
+    expect(transport.getByRole('dialog', { name: 'Playback settings' })).toBeTruthy();
+    fireEvent.change(transport.getByLabelText('Playback speed'), { target: { value: '0.5' } });
+    expect(onPreferencesChange).toHaveBeenCalledWith({ speed: 0.5 });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(transport.queryByRole('dialog', { name: 'Playback settings' })).toBeNull();
+    const view = within(hosts.view);
+    fireEvent.click(view.getByRole('button', { name: /View/ }));
+    fireEvent.change(view.getByLabelText('Measures per line'), { target: { value: '2' } });
+    expect(onPreferencesChange).toHaveBeenCalledWith({ barsPerRow: 2 });
+    fireEvent.pointerDown(document.body);
+    expect(view.queryByRole('dialog', { name: 'View options' })).toBeNull();
+    expect(within(hosts.export).getByRole('button', { name: 'Export' })).toBeTruthy();
+    rerender(<Player score={demo} selection={selection} editChrome={hosts} />);
+    expect(hosts.transport.childElementCount).toBe(0);
+    expect(document.querySelector('.score-toolbar')).toBeTruthy();
+    sidebarHost.remove(); Object.values(hosts).forEach(host => host.remove());
   });
 
   it('reports render success, render errors and a failed re-render to its owner', () => {

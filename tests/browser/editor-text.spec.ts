@@ -100,6 +100,7 @@ test('ED-18 edits a timed lyric verse and the separate Lyrics & chords text', as
   await dialog.getByLabel('Lyrics and chords text').fill('VERSE 1\n  C       G\nLow and high\n\nCHORUS\nSing it again');
   await dialog.getByRole('button', { name: 'Apply text' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Lyrics & chords text updated.' })).toBeVisible();
+  await page.getByRole('button', { name: 'View', exact: true }).click();
   await page.getByRole('tab', { name: 'Lyrics & chords' }).click();
   await expect(page.getByRole('tabpanel', { name: 'Lyrics & chords' })).toContainText('Sing it again');
   await page.getByRole('tab', { name: 'Tablature' }).click();
