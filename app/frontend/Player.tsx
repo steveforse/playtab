@@ -531,7 +531,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -543,6 +543,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   onPassageChange?: (passage: PlaybackEndpoints | null) => void;
   onFretInput?: (selection: ScoreSelection, fret: number, group?: string) => void;
   exportBlockedReason?: string | null;
+  compactTransportHost?: HTMLElement | null;
   onSelectionDelete?: (selection: ScoreSelection) => void;
   historyRevision?: number;
   sessionKey?: number;
@@ -571,6 +572,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const playbackEndpointsRef = useRef<PlaybackEndpoints | null>(null);
   const usingLinearMidi = useRef(false);
   const [updatingScore, setUpdatingScore] = useState(false);
+  const updatingScoreRef = useRef(false);
+  updatingScoreRef.current = updatingScore;
   const [playbackMessage, setPlaybackMessage] = useState('');
   playbackEndpointsRef.current = playbackEndpoints;
   if (previousHistoryRevision.current !== historyRevision) {
@@ -620,8 +623,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     setPlaybackMessage('');
   }, [sessionKey]);
   useLayoutEffect(() => {
-    const narrowScreen = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches;
-    setPlaybackHost(narrowScreen ? null : document.getElementById('playback-controls'));
+    // Crossing the 800 px breakpoint moves the one playback panel between the
+    // sidebar and the inline position without recreating the player.
+    if (typeof window.matchMedia !== 'function') { setPlaybackHost(document.getElementById('playback-controls')); return; }
+    const query = window.matchMedia('(max-width: 800px)');
+    const update = () => setPlaybackHost(query.matches ? null : document.getElementById('playback-controls'));
+    update();
+    query.addEventListener?.('change', update);
+    return () => query.removeEventListener?.('change', update);
   }, []);
   // Renderer configuration changes need a new instance; score edits do not.
   useEffect(() => {
@@ -850,9 +859,11 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   function navigateSelection(direction: 'left' | 'right' | 'up' | 'down') {
     fretInputRef.current = '';
     const current = selectionRef.current;
-    if (!editingRef.current || !current) return;
+    if (!editingRef.current) return;
     const targets = selectionTargetsForNavigation();
     if (targets.length === 0) return;
+    // A keyboard-only user starts from the first event of the score.
+    if (!current) { selectionCallbackRef.current?.(targets[0].selection); return; }
     const sameEvent = (target: SelectionTarget) => sameLocation(target.selection, current);
     if (direction === 'up' || direction === 'down') {
       const currentString = current.string ?? 1;
@@ -876,9 +887,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     selectionCallbackRef.current?.((sameString ?? nextLocation).selection);
   }
 
-  function handleEditorKeyDown(event: { key: string; preventDefault: () => void }) {
+  function handleEditorKeyDown(event: { key: string; preventDefault: () => void; target?: EventTarget | null }) {
     if (!editingRef.current) return;
     const key = event.key.toLowerCase();
+    if (key === ' ' && event.target instanceof Node && element.current?.contains(event.target)) {
+      event.preventDefault();
+      if (updatingScoreRef.current) api.current?.pause(); else api.current?.playPause();
+      return;
+    }
     if (key === 'arrowleft' || key === 'arrowright' || key === 'arrowup' || key === 'arrowdown') {
       event.preventDefault();
       navigateSelection(key.slice(5) as 'left' | 'right' | 'up' | 'down');
@@ -1012,7 +1028,13 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       </select>
     </label>}
   </section>;
-  const playbackControls = playbackHost ? createPortal(playbackPanel, playbackHost) : <div className="playback-inline-fallback">{playbackPanel}</div>;
+  const playbackControls = <>
+    {playbackHost ? createPortal(playbackPanel, playbackHost) : <div className="playback-inline-fallback">{playbackPanel}</div>}
+    {compactTransportHost && createPortal(<div className="compact-transport" aria-label="Sheet playback">
+      <button type="button" disabled={!transport.ready} onClick={transport.onPlayPause}>{playing ? 'Pause' : 'Play'}</button>
+      <button type="button" disabled={!selection || !ready || updatingScore || Boolean(error)} onClick={playSelection}>Play selection</button>
+    </div>, compactTransportHost)}
+  </>;
   function printPreviewWithLyrics() {
     const paper = scorePaper.current!;
     const lyrics = lyricsSection.current!;
