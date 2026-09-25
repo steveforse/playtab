@@ -1,0 +1,136 @@
+/* Score viewport and paper layouts. */
+.score-viewport {
+  max-width: 100%;
+  min-width: 0;
+}
+.score-viewport-horizontal {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.score-paper-continuous {
+  width: 100%;
+  max-width: none;
+}
+.score-paper-a4-portrait {
+  width: 210mm;
+  min-height: 297mm;
+  max-width: none;
+  margin-left: auto;
+  margin-right: auto;
+}
+.score-paper-a4-landscape {
+  width: 297mm;
+  min-height: 210mm;
+  max-width: none;
+  margin-left: auto;
+  margin-right: auto;
+}
+.score-paper-letter-portrait {
+  width: 8.5in;
+  min-height: 11in;
+  max-width: none;
+  margin-left: auto;
+  margin-right: auto;
+}
+.score-paper-letter-landscape {
+  width: 11in;
+  min-height: 8.5in;
+  max-width: none;
+  margin-left: auto;
+  margin-right: auto;
+}
+.score-paper-horizontal {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  overflow: visible;
+}
+.score-paper-horizontal .paper-topline,
+.score-paper-horizontal .paper-footer {
+  min-width: 100%;
+}
+.score-paper-paginated {
+  padding: 0 27px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+.score-paper-paginated>.paper-topline {
+  width: calc(100% + 54px);
+  margin-left: -27px;
+  padding: 24px 27px 18px;
+  background: white;
+}
+.score-paper-paginated>.paper-footer {
+  width: calc(100% + 54px);
+  margin-left: -27px;
+  background: white;
+}
+.score-paper-paginated .at-surface {
+  overflow: visible!important;
+}
+.score-paper-paginated .score-page {
+  position: relative;
+  width: calc(100% + 54px);
+  margin-left: -27px;
+  margin-bottom: 24px;
+  background: white;
+  border: 1px solid #e2e3d9;
+  box-shadow: 0 4px 15px #37402208;
+  box-sizing: border-box;
+  overflow: hidden;
+  break-after: page;
+  page-break-after: always;
+}
+.score-paper-paginated .score-page:last-child {
+  margin-bottom: 0;
+  break-after: auto;
+  page-break-after: auto;
+}
+.score-paper-paginated.score-paper-horizontal.score-paper-a4-portrait {
+  width: 210mm;
+}
+.score-paper-paginated.score-paper-horizontal.score-paper-a4-landscape {
+  width: 297mm;
+}
+.score-paper-paginated.score-paper-horizontal.score-paper-letter-portrait {
+  width: 8.5in;
+}
+.score-paper-paginated.score-paper-horizontal.score-paper-letter-landscape {
+  width: 11in;
+}
+.score-paper-paginated.score-paper-horizontal {
+  min-width: 0;
+  margin-left: 0;
+  margin-right: 0;
+}
+.score-viewport-horizontal .score-paper-paginated .at-surface {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  width: max-content!important;
+  height: max-content!important;
+  margin-left: -27px;
+}
+.score-viewport-horizontal .score-paper-paginated .score-page {
+  flex: 0 0 auto;
+  margin-left: 0;
+  margin-bottom: 0;
+  break-after: auto;
+  page-break-after: auto;
+}
+@media (max-width:800px) {
+  .score-viewport-vertical .score-paper-a4-portrait {
+    width: min(210mm,100%);
+  }
+  .score-viewport-vertical .score-paper-a4-landscape {
+    width: min(297mm,100%);
+  }
+  .score-viewport-vertical .score-paper-letter-portrait {
+    width: min(8.5in,100%);
+  }
+  .score-viewport-vertical .score-paper-letter-landscape {
+    width: min(11in,100%);
+  }
+}
