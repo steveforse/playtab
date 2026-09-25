@@ -7,6 +7,7 @@ import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
 const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), addMusicXmlRepeat: vi.fn(), addMusicXmlEndings: vi.fn(), inspectMusicXmlRepeats: vi.fn(() => []), inspectMusicXmlRepeatEndings: vi.fn(() => null), removeMusicXmlRepeat: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), changeMusicXmlMeter: vi.fn(), changeMusicXmlPickup: vi.fn(), connectMusicXmlTie: vi.fn(), inspectMusicXmlTie: vi.fn(() => ({ canRemove: false })), removeMusicXmlTie: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), inspectMusicXmlMeterRange: vi.fn(() => ({ firstMeasure: 1, lastMeasure: 2 })), insertMusicXmlEvent: vi.fn(), createMusicXmlTriplet: vi.fn(), removeMusicXmlTriplet: vi.fn(), inspectMusicXmlTriplet: vi.fn(() => ({ triplet: false, canRemove: false })), insertMusicXmlMeasure: vi.fn(), duplicateMusicXmlMeasure: vi.fn(), deleteMusicXmlMeasure: vi.fn(), sourceTabNoteRecords: vi.fn(() => []) }));
+const { copyMusicXmlMeasures, pasteMusicXmlMeasures } = vi.hoisted(() => ({ copyMusicXmlMeasures: vi.fn(), pasteMusicXmlMeasures: vi.fn() }));
 const { connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition } = vi.hoisted(() => ({
   connectMusicXmlTransition: vi.fn(), inspectMusicXmlTransitions: vi.fn(() => []), removeMusicXmlTransition: vi.fn() }));
 const { inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo } = vi.hoisted(() => ({
@@ -41,7 +42,7 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, inspectMusicXmlTransitions, removeMusicXmlTransition,
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, copyMusicXmlMeasures, pasteMusicXmlMeasures, inspectMusicXmlTransitions, removeMusicXmlTransition,
   connectMusicXmlTransition: (source: string, score: unknown, kind: string, origin: unknown, destination: unknown) =>
     kind === 'tie' ? connectMusicXmlTie(source, score, origin, destination) : connectMusicXmlTransition(source, score, kind, origin, destination),
   inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo,
@@ -81,7 +82,7 @@ describe('workspace application', () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); addMusicXmlRepeat.mockReset(); inspectMusicXmlRepeats.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); changeMusicXmlMeter.mockReset(); changeMusicXmlPickup.mockReset(); connectMusicXmlTie.mockReset(); inspectMusicXmlTie.mockReset(); removeMusicXmlTie.mockReset(); inspectMusicXmlDuration.mockReset(); inspectMusicXmlMeterRange.mockReset(); insertMusicXmlEvent.mockReset(); createMusicXmlTriplet.mockReset(); removeMusicXmlTriplet.mockReset(); inspectMusicXmlTriplet.mockReset(); insertMusicXmlMeasure.mockReset(); duplicateMusicXmlMeasure.mockReset(); deleteMusicXmlMeasure.mockReset(); sourceTabNoteRecords.mockReset(); sourceTabNoteRecords.mockReturnValue([]); inspectMusicXmlRepeats.mockReturnValue([]); inspectMusicXmlTie.mockReturnValue({ canRemove: false }); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); inspectMusicXmlMeterRange.mockReturnValue({ firstMeasure: 1, lastMeasure: 2 }); inspectMusicXmlTriplet.mockReturnValue({ triplet: false, canRemove: false }); });
   afterEach(() => { addMusicXmlEndings.mockReset(); inspectMusicXmlRepeatEndings.mockReset(); inspectMusicXmlRepeatEndings.mockReturnValue(null); removeMusicXmlRepeat.mockReset(); });
-  afterEach(() => { connectMusicXmlTransition.mockReset(); removeMusicXmlTransition.mockReset(); inspectMusicXmlTransitions.mockReset(); inspectMusicXmlTransitions.mockReturnValue([]); inspectMusicXmlScoreSettings.mockReset(); applyMusicXmlScoreSettings.mockReset(); inspectMusicXmlTempo.mockReset(); setMusicXmlLocalTempo.mockReset(); inspectMusicXmlAnchor.mockReset(); changeMusicXmlAnchor.mockReset(); inspectMusicXmlLyrics.mockReset(); setMusicXmlLyric.mockReset(); setMusicXmlStandaloneLyrics.mockReset(); inspectMusicXmlNoteTechniques.mockReset(); inspectMusicXmlNoteTechniques.mockReturnValue({ picking: 'none', fretting: 'none', bend: 'none' }); setMusicXmlBend.mockReset(); setMusicXmlHand.mockReset(); applyMusicXmlGraceGroup.mockReset(); inspectMusicXmlGraceGroup.mockReset(); removeMusicXmlGraceGroup.mockReset(); removeMusicXmlGrace.mockReset(); });
+  afterEach(() => { copyMusicXmlMeasures.mockReset(); pasteMusicXmlMeasures.mockReset(); connectMusicXmlTransition.mockReset(); removeMusicXmlTransition.mockReset(); inspectMusicXmlTransitions.mockReset(); inspectMusicXmlTransitions.mockReturnValue([]); inspectMusicXmlScoreSettings.mockReset(); applyMusicXmlScoreSettings.mockReset(); inspectMusicXmlTempo.mockReset(); setMusicXmlLocalTempo.mockReset(); inspectMusicXmlAnchor.mockReset(); changeMusicXmlAnchor.mockReset(); inspectMusicXmlLyrics.mockReset(); setMusicXmlLyric.mockReset(); setMusicXmlStandaloneLyrics.mockReset(); inspectMusicXmlNoteTechniques.mockReset(); inspectMusicXmlNoteTechniques.mockReturnValue({ picking: 'none', fretting: 'none', bend: 'none' }); setMusicXmlBend.mockReset(); setMusicXmlHand.mockReset(); applyMusicXmlGraceGroup.mockReset(); inspectMusicXmlGraceGroup.mockReset(); removeMusicXmlGraceGroup.mockReset(); removeMusicXmlGrace.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -1705,6 +1706,73 @@ describe('workspace application', () => {
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '3' } });
     fireEvent.click(screen.getByRole('button', { name: 'Remove pull-off to m2 e1' }));
     expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret before removing a pull-off');
+  });
+
+  it('copies whole measures without history and pastes them as one undoable insertion', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    const beats = [{ notes: [{ string: 3, fret: 0, id: 1 }], playbackStart: 0, graceType: 0, isRest: false },
+      { notes: [{ string: 3, fret: 2, id: 2 }], playbackStart: 960, graceType: 0, isRest: false }];
+    readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, score: { ...preview.score, masterBars: [{}, {}],
+      tracks: [{ staves: [{ bars: [{ voices: [{ beats }] }, { voices: [{ beats }] }] }] }] } }));
+    copyMusicXmlMeasures.mockReturnValue({ title: 'ignored', measures: ['<measure/>'], meters: ['4/4'], staves: [1], tabStaff: 1, tuning: [62, 59, 55, 50, 67],
+      excluded: ['a tie that crosses the passage edge'] });
+    pasteMusicXmlMeasures.mockImplementation((_source: string, _score: unknown, _clip: unknown, _measure: number, _mode: string, pitch: string) => `<score-partwise pasted="${pitch}"/>`);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByText('Select passage', { selector: 'summary' }));
+    expect(screen.getByRole('button', { name: 'Paste passage…' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Set range start' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Set range end' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy passage' }));
+    expect(screen.getByRole('alert').textContent).toContain('Select whole measures to copy.');
+    expect(copyMusicXmlMeasures).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Measure', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select measure' }));
+    expect(screen.getByText('Measure 1 selected as a passage.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy passage' }));
+    expect(copyMusicXmlMeasures).toHaveBeenLastCalledWith(source, expect.anything(), 0, 0);
+    expect(screen.getByText('Copied 1 measure (1).')).toBeTruthy();
+    expect(screen.getByText('Clipboard: 1 measure from “Imported tune”.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste passage…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Paste passage' });
+    expect(dialog.textContent).toContain('Destination: before measure 1. Source: 1 measure from “Imported tune” (4/4). The score will grow by 1 measure.');
+    expect(within(dialog).getByRole('note').textContent).toContain('Not pasted: a tie that crosses the passage edge.');
+    fireEvent.click(within(dialog).getByLabelText('Keep pitches (frets change)'));
+    expect(pasteMusicXmlMeasures).toHaveBeenLastCalledWith(source, expect.anything(), expect.objectContaining({ title: 'Imported tune' }), 0, 'insert', 'pitches');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Paste passage…' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Paste' }));
+    expect(screen.getByText('Pasted 1 measure before measure 1; they are now measures 1–1.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    pasteMusicXmlMeasures.mockImplementation(() => { throw new Error('The copied measures use staves 1, 2 with tablature on staff 2.'); });
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Paste passage…' }));
+    expect(within(dialog).getByRole('alert').textContent).toContain('staves 1, 2');
+    expect(within(dialog).getByRole('button', { name: 'Paste' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    copyMusicXmlMeasures.mockImplementationOnce(() => { throw new Error('Cannot safely inherit unsupported transpose attributes.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Select measure' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy passage' }));
+    expect(screen.getByRole('alert').textContent).toContain('transpose');
+    pasteMusicXmlMeasures.mockReturnValue('<score-partwise pasted="yes"/>');
+    fireEvent.click(screen.getByRole('button', { name: 'Paste passage…' }));
+    readMusicXml.mockImplementationOnce(() => { throw new Error('Paste preview could not be rendered.'); });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Paste' }));
+    expect(within(dialog).getAllByRole('alert').at(-1)!.textContent).toContain('could not be rendered');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Paste passage…' }));
+    expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret before pasting');
   });
 
   it('blocks an imported deletion with a protected attachment', async () => {
