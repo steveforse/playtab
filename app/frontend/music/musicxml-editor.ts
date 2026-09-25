@@ -2583,3 +2583,206 @@ export function setMusicXmlBend(source: string, score: model.Score, position: Ti
   }
   return new XMLSerializer().serializeToString(document);
 }
+
+export type ChordQuality = 'major' | 'minor' | 'dominant' | 'major-seventh' | 'minor-seventh' | 'diminished' | 'augmented' | 'suspended-fourth';
+export type ChordRoot = { step: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'; alter: -1 | 0 | 1 };
+export type ChordSpelling = ChordRoot & { quality: ChordQuality; bass: ChordRoot | null };
+export type AnchorKind = 'chord' | 'words' | 'section';
+// An anchored item may be written once per staff (TEF imports duplicate
+// chords and words on the notation and TAB staves); edits touch every copy.
+export type AnchorItem = { text: string; chord?: ChordSpelling; reason?: string };
+export type AnchorInfo = { chords: AnchorItem[]; words: AnchorItem[]; sections: AnchorItem[] };
+export const ANCHOR_TEXT_LIMIT = 160;
+
+const CHORD_SUFFIX: Record<ChordQuality, string> = { major: '', minor: 'm', dominant: '7', 'major-seventh': 'maj7', 'minor-seventh': 'm7',
+  diminished: 'dim', augmented: 'aug', 'suspended-fourth': 'sus4' };
+const rootName = (root: ChordRoot) => `${root.step}${root.alter === 1 ? '♯' : root.alter === -1 ? '♭' : ''}`;
+export function chordSpellingName(chord: ChordSpelling) {
+  return `${rootName(chord)}${CHORD_SUFFIX[chord.quality]}${chord.bass ? `/${rootName(chord.bass)}` : ''}`;
+}
+
+function measureTimeline(part: Element, measureIndex: number) {
+  const measure = directMeasures(part)[measureIndex];
+  const divisions = sourceDivisions(part, measureIndex);
+  const onsets = new Map<Element, Rational>();
+  let position = rational(0n);
+  let last = position;
+  const amount = (item: Element, name: string) => {
+    const value = text(child(item, name));
+    return /^-?\d+$/.test(value) ? rational(BigInt(value), divisions) : value ? null : rational(0n);
+  };
+  for (const item of children(measure)) {
+    if (item.localName === 'backup' || item.localName === 'forward') {
+      const duration = amount(item, 'duration') ?? rational(0n);
+      position = item.localName === 'backup' ? subtractTime(position, duration) : addTime(position, duration);
+    } else if (item.localName === 'harmony' || item.localName === 'direction') {
+      const offset = amount(item, 'offset');
+      if (offset) onsets.set(item, addTime(position, offset));
+    } else if (item.localName === 'note') {
+      const start = child(item, 'chord') ? last : position;
+      onsets.set(item, start);
+      last = start;
+      if (!child(item, 'chord') && !child(item, 'grace')) position = addTime(position, amount(item, 'duration') ?? rational(0n));
+    }
+  }
+  return { measure, onsets };
+}
+
+const sameTime = (left: Rational | undefined, right: Rational) => Boolean(left && left[0] * right[1] === right[0] * left[1]);
+
+function readChord(harmony: Element): { text: string; chord?: ChordSpelling; reason?: string } {
+  const root = child(harmony, 'root');
+  const kind = child(harmony, 'kind');
+  const readRoot = (node: Element | undefined, prefix: 'root' | 'bass'): ChordRoot | null => {
+    if (!node || children(node).some(item => ![`${prefix}-step`, `${prefix}-alter`].includes(item.localName))) return null;
+    const step = text(child(node, `${prefix}-step`)).toUpperCase();
+    const alterText = text(child(node, `${prefix}-alter`)) || '0';
+    if (!/^[A-G]$/.test(step) || !['-1', '0', '1'].includes(alterText)) return null;
+    return { step: step as ChordRoot['step'], alter: Number(alterText) as ChordRoot['alter'] };
+  };
+  const spelledRoot = readRoot(root, 'root');
+  const quality = text(kind) as ChordQuality;
+  const displayed = kind?.getAttribute('text');
+  const rawText = `${text(child(root ?? harmony, 'root-step'))}${({ '1': '♯', '-1': '♭' } as Record<string, string>)[text(child(root ?? harmony, 'root-alter'))] ?? ''}${displayed ?? quality}`;
+  const bassNode = child(harmony, 'bass');
+  const bass = bassNode ? readRoot(bassNode, 'bass') : null;
+  const extra = children(harmony).find(item => !['root', 'kind', 'bass', 'offset', 'staff'].includes(item.localName));
+  const extraAttribute = Array.from(harmony.attributes).find(attribute => attribute.name !== 'placement' && !attribute.name.startsWith('data-playtab-'));
+  const known = Object.hasOwn(CHORD_SUFFIX, quality);
+  if (!spelledRoot || !known || (bassNode && !bass) || extra || extraAttribute
+    || (displayed !== null && displayed !== undefined && displayed !== CHORD_SUFFIX[quality])
+    || Array.from(kind!.attributes).some(attribute => attribute.name !== 'text')) {
+    return { text: rawText || 'Unnamed chord', reason: `The imported chord “${rawText || 'unnamed'}” uses a spelling or quality this dialog cannot rewrite faithfully; it is kept until you replace it.` };
+  }
+  const chord = { ...spelledRoot, quality, bass };
+  return { text: chordSpellingName(chord), chord };
+}
+
+function anchorGroups(part: Element, measureIndex: number, onset: Rational) {
+  const { measure, onsets } = measureTimeline(part, measureIndex);
+  const group = <T extends { key: string; element: Element }>(entries: T[]) => {
+    const grouped = new Map<string, T[]>();
+    entries.forEach(entry => grouped.set(entry.key, [...(grouped.get(entry.key) ?? []), entry]));
+    return [...grouped.values()];
+  };
+  const harmonies = children(measure).filter(item => item.localName === 'harmony' && sameTime(onsets.get(item), onset));
+  const words = children(measure).filter(item => item.localName === 'direction' && sameTime(onsets.get(item), onset))
+    .flatMap(direction => children(direction).filter(type => type.localName === 'direction-type').flatMap(type => children(type).filter(item => item.localName === 'words' && text(item))));
+  const sections = descendants(measure, 'rehearsal');
+  return {
+    measure, onsets,
+    chords: group(harmonies.map(element => ({ key: new XMLSerializer().serializeToString(element).replace(/<staff>\d+<\/staff>/, ''), element }))),
+    words: group(words.map(element => ({ key: text(element), element }))),
+    sections: group(sections.map(element => ({ key: text(element), element }))),
+  };
+}
+
+function anchorEvent(document: Document, score: model.Score, position: RhythmPosition) {
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary event to anchor text to it.');
+  const tabStaff = sourceTabStaff(document);
+  const lanes = rhythmLanes(document, measure, tabStaff, String(position.voice + 1), position.beat);
+  const anchors = lanes.map(lane => ({ staff: lane.staff, note: lane.groups[position.beat].find(note => !child(note, 'grace')) }));
+  if (anchors.some(anchor => !anchor.note)) throw new Error('The selected event cannot be anchored safely.');
+  const onset = measureTimeline(part, position.measure).onsets.get(anchors[0].note!);
+  if (!onset) throw new Error('The selected event cannot be anchored safely.');
+  return { part, measure, tabStaff, anchors: anchors as { staff: number; note: Element }[], onset };
+}
+
+export function inspectMusicXmlAnchor(source: string, score: model.Score, position: RhythmPosition): AnchorInfo {
+  const document = parseDocument(source);
+  const { part, onset } = anchorEvent(document, score, position);
+  const groups = anchorGroups(part, position.measure, onset);
+  return {
+    chords: groups.chords.map(items => readChord(items[0].element)),
+    words: groups.words.map(items => ({ text: items[0].key })),
+    sections: groups.sections.map(items => ({ text: items[0].key })),
+  };
+}
+
+function validChordRoot(root: ChordRoot | null | undefined) {
+  return Boolean(root && /^[A-G]$/.test(root.step) && [-1, 0, 1].includes(root.alter));
+}
+
+function writeChord(harmony: Element, chord: ChordSpelling) {
+  const document = harmony.ownerDocument!;
+  const kept = children(harmony).filter(item => item.localName === 'offset' || item.localName === 'staff');
+  children(harmony).forEach(item => harmony.removeChild(item));
+  Array.from(harmony.attributes).filter(attribute => attribute.name.startsWith('data-playtab-')).forEach(attribute => harmony.removeAttribute(attribute.name));
+  const root = document.createElement('root');
+  setText(root, 'root-step', chord.step);
+  if (chord.alter) setText(root, 'root-alter', String(chord.alter));
+  harmony.appendChild(root);
+  setText(harmony, 'kind', chord.quality);
+  if (chord.bass) {
+    const bass = document.createElement('bass');
+    setText(bass, 'bass-step', chord.bass.step);
+    if (chord.bass.alter) setText(bass, 'bass-alter', String(chord.bass.alter));
+    harmony.appendChild(bass);
+  }
+  kept.forEach(item => harmony.appendChild(item));
+}
+
+function removeAnchored(element: Element) {
+  const direction = element.localName === 'harmony' ? element : element.parentNode?.parentNode as Element;
+  if (element.localName !== 'harmony') {
+    const type = element.parentNode as Element;
+    const lastType = children(type).length === 1 && children(direction).filter(item => item.localName === 'direction-type').length === 1;
+    // A direction needs a direction-type, and its <sound> (a bar tempo, for
+    // example) only keeps its meaning inside the direction: leave empty words.
+    if (lastType && child(direction, 'sound')) { element.textContent = ''; return; }
+    type.removeChild(element);
+    if (children(type).length) return;
+    direction.removeChild(type);
+    if (children(direction).some(item => item.localName === 'direction-type')) return;
+  }
+  direction.parentNode?.removeChild(direction);
+}
+
+// Adds (index null), replaces, or removes (value null) one anchored item.
+// Chords and annotations anchor at the selected event's onset on every
+// staff lane; sections are rehearsal marks at the measure start.
+export function changeMusicXmlAnchor(source: string, score: model.Score, position: RhythmPosition, kind: AnchorKind,
+  index: number | null, value: ChordSpelling | string | null): string {
+  if (typeof value === 'string' && (!value.trim() || value.trim().length > ANCHOR_TEXT_LIMIT)) {
+    throw new Error(`Text must be 1–${ANCHOR_TEXT_LIMIT} characters.`);
+  }
+  if (value && typeof value !== 'string' && (!validChordRoot(value) || !Object.hasOwn(CHORD_SUFFIX, value.quality) || (value.bass && !validChordRoot(value.bass)))) {
+    throw new Error('Choose a chord root, accidental, quality, and optional bass.');
+  }
+  if (value !== null && (kind === 'chord') === (typeof value === 'string')) throw new Error('This anchored item needs a matching value.');
+  if (index === null && value === null) throw new Error('Choose an existing item to remove.');
+  const document = parseDocument(source);
+  const { part, measure, anchors, onset } = anchorEvent(document, score, position);
+  const groups = anchorGroups(part, position.measure, onset);
+  const list = kind === 'chord' ? groups.chords : kind === 'words' ? groups.words : groups.sections;
+  if (index !== null) {
+    const elements = list[index]?.map(item => item.element);
+    if (!elements) throw new Error('The selected item is no longer at this position. Open the dialog again.');
+    for (const element of elements) {
+      if (value === null) removeAnchored(element);
+      else if (kind === 'chord') writeChord(element, value as ChordSpelling);
+      else element.textContent = (value as string).trim();
+    }
+    return new XMLSerializer().serializeToString(document);
+  }
+  if (kind === 'section') {
+    const direction = document.createElement('direction');
+    const type = ensure(direction, 'direction-type');
+    setText(type, 'rehearsal', (value as string).trim());
+    const first = children(measure).find(item => item.localName === 'note' || item.localName === 'backup' || item.localName === 'forward'
+      || item.localName === 'harmony' || item.localName === 'direction');
+    measure.insertBefore(direction, first ?? null);
+    return new XMLSerializer().serializeToString(document);
+  }
+  for (const anchor of anchors) {
+    const element = document.createElement(kind === 'chord' ? 'harmony' : 'direction');
+    if (kind === 'chord') writeChord(element, value as ChordSpelling);
+    else setText(ensure(element, 'direction-type'), 'words', (value as string).trim());
+    setText(element, 'staff', String(anchor.staff));
+    measure.insertBefore(element, anchor.note);
+  }
+  return new XMLSerializer().serializeToString(document);
+}
