@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -30,6 +30,8 @@ type BendTarget = { originalKey: string; selection: ScoreSelection; existing: No
 type AnchorTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; kind: AnchorKind; items: AnchorItem[] };
 type LyricTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; lyrics: EventLyric[] };
 type StandaloneTarget = { originalKey: string; base: MusicXmlPreview };
+type SettingsTarget = { originalKey: string; base: MusicXmlPreview; info: ScoreSettingsInfo };
+type TempoTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; info: LocalTempoInfo };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 const BEND_LABELS: Record<BendAmount, string> = { 1: '1/2 step', 2: 'Whole step', 3: '1½ steps', 4: '2 steps' };
@@ -39,6 +41,8 @@ const CHORD_QUALITIES: [ChordQuality, string][] = [['major', 'Major'], ['minor',
   ['minor-seventh', 'm7'], ['diminished', 'dim'], ['augmented', 'aug'], ['suspended-fourth', 'sus4']];
 const CHORD_STEPS: ChordRoot['step'][] = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
 const DEFAULT_CHORD: ChordSpelling = { step: 'C', alter: 0, quality: 'major', bass: null };
+const NOTE_NAMES = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+const midiName = (midi: number) => Number.isInteger(midi) ? `${NOTE_NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}` : '—';
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 const initialText = exportAscii(demo);
 const userEmail = () => document.getElementById('playtab-root')?.dataset.userEmail ?? '';
@@ -190,6 +194,14 @@ export function App() {
   const [standaloneError, setStandaloneError] = useState('');
   const standaloneDialog = useRef<HTMLDialogElement>(null);
   const textOpener = useRef<HTMLElement | null>(null);
+  const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<{ title: string; tempo: string; tuning: string[]; mode: TuningMode }>({ title: '', tempo: '', tuning: [], mode: 'frets' });
+  const [settingsError, setSettingsError] = useState('');
+  const settingsDialog = useRef<HTMLDialogElement>(null);
+  const [tempoTarget, setTempoTarget] = useState<TempoTarget | null>(null);
+  const [tempoDraft, setTempoDraft] = useState('');
+  const [tempoError, setTempoError] = useState('');
+  const tempoDialog = useRef<HTMLDialogElement>(null);
   const [bendTarget, setBendTarget] = useState<BendTarget | null>(null);
   const [bendDraft, setBendDraft] = useState<NoteBend>({ amount: 2, shape: 'bend' });
   const bendDialog = useRef<HTMLDialogElement>(null);
@@ -359,12 +371,13 @@ export function App() {
     }
   }, [anchorTarget]);
   useEffect(() => {
-    for (const [dialog, open] of [[lyricDialog.current, lyricTarget !== null], [standaloneDialog.current, standaloneTarget !== null]] as const) {
+    for (const [dialog, open] of [[lyricDialog.current, lyricTarget !== null], [standaloneDialog.current, standaloneTarget !== null],
+      [settingsDialog.current, settingsTarget !== null], [tempoDialog.current, tempoTarget !== null]] as const) {
       if (!dialog) continue;
       if (open && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-text-first]')?.focus(); }
       else if (!open && dialog.open) { dialog.close(); if (textOpener.current?.isConnected) textOpener.current.focus({ preventScroll: true }); }
     }
-  }, [lyricTarget, standaloneTarget]);
+  }, [lyricTarget, standaloneTarget, settingsTarget, tempoTarget]);
   useEffect(() => {
     const dialog = bendDialog.current;
     if (!dialog) return;
@@ -1037,6 +1050,58 @@ export function App() {
       setStandaloneTarget(null);
     } catch (failure) { setStandaloneError((failure as Error).message); }
   }
+  function openSettingsDialog(opener: HTMLElement) {
+    if (pendingFret) { setError('Apply the pending fret before changing score settings.'); return; }
+    try {
+      const base = textBase();
+      const info = inspectMusicXmlScoreSettings(base.source, base.score);
+      textOpener.current = opener;
+      setSettingsDraft({ title: base.score.title, tempo: String(info.tempo), tuning: info.tuning.map(String), mode: 'frets' });
+      setSettingsError('');
+      setSettingsTarget({ originalKey: documentKey(currentDocument), base, info });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function applySettings(candidate: { source: string; tuningRange: { first: number; last: number } }) {
+    if (!settingsTarget) return;
+    const { base, info } = settingsTarget;
+    if (settingsTarget.originalKey !== documentKey(currentDocument)) { setSettingsTarget(null); setError('The score changed since settings were opened. Open them again.'); return; }
+    try {
+      const title = settingsDraft.title.trim();
+      const tuningChanged = settingsDraft.tuning.some((value, index) => Number(value) !== info.tuning[index]);
+      const nextPreview = withPreviewTitle(readMusicXml(candidate.source, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), title);
+      const after = selection ? selectionAtPosition(selection, score, nextPreview, {}) : null;
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, 'Change score settings');
+      setPreview(nextPreview); setSelection(after); setSettingsTarget(null); setError('');
+      setMessage(tuningChanged ? `Score settings applied. Tuning changed for measures ${candidate.tuningRange.first}–${candidate.tuningRange.last}.` : 'Score settings applied.');
+    } catch (failure) { setSettingsError((failure as Error).message); }
+  }
+  function openTempoDialog(opener: HTMLElement) {
+    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to set its tempo.'); return; }
+    if (pendingFret) { setError('Apply the pending fret before changing the tempo.'); return; }
+    try {
+      const base = textBase();
+      const info = inspectMusicXmlTempo(base.source, base.score, anchorPosition(selection));
+      textOpener.current = opener;
+      setTempoDraft(String(info.local ?? info.inherited)); setTempoError('');
+      setTempoTarget({ originalKey: documentKey(currentDocument), base, selection, info });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function applyTempo(remove: boolean) {
+    if (!tempoTarget) return;
+    const { base, selection: target } = tempoTarget;
+    if (tempoTarget.originalKey !== documentKey(currentDocument)) { setTempoTarget(null); setError('The score changed since this tempo was opened. Open it again.'); return; }
+    try {
+      const tempo = remove ? null : Number(tempoDraft);
+      const nextSource = setMusicXmlLocalTempo(base.source, base.score, anchorPosition(target), tempo);
+      const where = `measure ${target.measure}, event ${target.event}`;
+      commitText(base, target, nextSource, remove ? `Remove local tempo at ${where}` : `Set tempo ${tempo} BPM at ${where}`,
+        remove ? `Local tempo removed at ${where}; ${tempoTarget.info.inherited} BPM continues.` : `Tempo ${tempo} BPM set at ${where}.`);
+      setTempoTarget(null);
+    } catch (failure) { setTempoError((failure as Error).message); }
+  }
   function openPickupDialog(opener: HTMLElement) {
     if (!selection || selection.measure !== 1) return;
     if (pendingFret) { setError('Apply the pending fret before changing the pickup.'); return; }
@@ -1531,6 +1596,7 @@ export function App() {
               <button type="button" className="editor-split-rest" disabled={!selectedRhythm.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0 || selectedTupletLocked}
                 onClick={() => changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false)}>Split rest</button>
               <button type="button" className="editor-insert-event" onClick={event => openInsertEvent(event.currentTarget)}>Insert event…</button>
+              <button type="button" className="editor-insert-event" disabled={selection.graceIndex !== null} onClick={event => openTempoDialog(event.currentTarget)}>Set tempo here…</button>
               <button type="button" className="editor-triplet-button" disabled={selectedTupletLocked || selectedRhythm.denominator === null
                 || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0}
                 onClick={() => changeSelectedTriplet(false)}>Triplet</button>
@@ -1593,6 +1659,9 @@ export function App() {
             </details>
           </>}
         </div>
+        <details className="editor-score-tools"><summary>Score</summary>
+          <button type="button" onClick={event => openSettingsDialog(event.currentTarget)}>Score settings…</button>
+        </details>
       </section>}
       <div id="playback-controls" className="sidebar-playback" />
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
@@ -1853,6 +1922,62 @@ export function App() {
         <button type="button" onClick={() => setStandaloneTarget(null)}>Cancel</button>
         <button type="button" onClick={applyStandalone}>Apply text</button>
       </div>
+    </dialog>
+    <dialog ref={settingsDialog} className="duplicate-dialog settings-dialog" aria-label="Score settings" onCancel={event => { event.preventDefault(); setSettingsTarget(null); }}>
+      {settingsTarget && (() => {
+        const { base, info } = settingsTarget;
+        const tuning = settingsDraft.tuning.map(Number);
+        const tuningChanged = tuning.some((value, index) => value !== info.tuning[index]);
+        let candidate: { source: string; tuningRange: { first: number; last: number } } | null = null;
+        let problem = '';
+        try {
+          candidate = applyMusicXmlScoreSettings(base.source, base.score, { title: settingsDraft.title, tempo: Number(settingsDraft.tempo), tuning, mode: settingsDraft.mode });
+        } catch (failure) { problem = (failure as Error).message; }
+        const last = info.tuningRange.last;
+        const measures = base.score.masterBars.length;
+        return <>
+          <h2>Score settings</h2>
+          <label className="anchor-text">Title<input aria-label="Title" data-text-first="" maxLength={ANCHOR_TEXT_LIMIT} value={settingsDraft.title}
+            onChange={event => { setSettingsError(''); setSettingsDraft(draft => ({ ...draft, title: event.target.value })); }} /></label>
+          <label className="anchor-text">Opening tempo (BPM)<input aria-label="Opening tempo" type="number" inputMode="numeric" min={TEMPO_LIMITS.min} max={TEMPO_LIMITS.max}
+            value={settingsDraft.tempo} onChange={event => { setSettingsError(''); setSettingsDraft(draft => ({ ...draft, tempo: event.target.value })); }} /></label>
+          <fieldset className="settings-tuning"><legend>Tuning (open-string MIDI pitch)</legend>
+            {settingsDraft.tuning.map((value, index) => <label key={index}>String {index + 1}<input aria-label={`String ${index + 1} pitch`} type="number" inputMode="numeric"
+              min={TUNING_LIMITS.min} max={TUNING_LIMITS.max} value={value} onChange={event => { setSettingsError('');
+                setSettingsDraft(draft => ({ ...draft, tuning: draft.tuning.map((item, at) => at === index ? event.target.value : item) })); }} />
+              <span aria-label={`String ${index + 1} note`}>{midiName(Number(value))}</span></label>)}
+          </fieldset>
+          <fieldset className="settings-mode"><legend>When tuning changes</legend>
+            <label><input type="radio" name="tuning-mode" checked={settingsDraft.mode === 'frets'} onChange={() => setSettingsDraft(draft => ({ ...draft, mode: 'frets' }))} />Keep frets (pitches change)</label>
+            <label><input type="radio" name="tuning-mode" checked={settingsDraft.mode === 'pitches'} onChange={() => setSettingsDraft(draft => ({ ...draft, mode: 'pitches' }))} />Keep pitches (frets change)</label>
+          </fieldset>
+          <p className="editor-rhythm-reason">{tuningChanged ? 'Tuning applies to' : 'A tuning change would apply to'} measures 1–{last}{last < measures ? `; measure ${last + 1} changes tuning again and is not affected` : ''}.</p>
+          {problem && <p className="alert" role="alert">{problem}</p>}
+          {settingsError && <p className="alert" role="alert">{settingsError}</p>}
+          <div className="duplicate-dialog-actions">
+            <button type="button" onClick={() => setSettingsTarget(null)}>Cancel</button>
+            <button type="button" disabled={!candidate} onClick={() => { if (candidate) applySettings(candidate); }}>Apply settings</button>
+          </div>
+        </>;
+      })()}
+    </dialog>
+    <dialog ref={tempoDialog} className="duplicate-dialog" aria-label="Set tempo here" onCancel={event => { event.preventDefault(); setTempoTarget(null); }}>
+      {tempoTarget && <>
+        <h2>Set tempo here</h2>
+        {tempoTarget.info.opening ? <p>The first event uses the opening tempo ({tempoTarget.info.local ?? tempoTarget.info.inherited} BPM). Change it in Score settings.</p> : <>
+          <p>Measure {tempoTarget.selection.measure}, event {tempoTarget.selection.event}. {tempoTarget.info.local !== null
+            ? `A local tempo of ${tempoTarget.info.local} BPM starts here; without it, ${tempoTarget.info.inherited} BPM continues.`
+            : `${tempoTarget.info.inherited} BPM continues here from earlier in the score.`}</p>
+          <label className="anchor-text">Tempo (BPM)<input aria-label="Tempo" data-text-first="" type="number" inputMode="numeric" min={TEMPO_LIMITS.min} max={TEMPO_LIMITS.max}
+            value={tempoDraft} onChange={event => { setTempoError(''); setTempoDraft(event.target.value); }} /></label>
+        </>}
+        {tempoError && <p className="alert" role="alert">{tempoError}</p>}
+        <div className="duplicate-dialog-actions">
+          <button type="button" data-text-first={tempoTarget.info.opening ? '' : undefined} onClick={() => setTempoTarget(null)}>Cancel</button>
+          {!tempoTarget.info.opening && tempoTarget.info.local !== null && <button type="button" onClick={() => applyTempo(true)}>Remove local tempo</button>}
+          {!tempoTarget.info.opening && <button type="button" onClick={() => applyTempo(false)}>Apply tempo</button>}
+        </div>
+      </>}
     </dialog>
     <dialog ref={bendDialog} className="duplicate-dialog bend-dialog" aria-label="Bend" onCancel={event => { event.preventDefault(); setBendTarget(null); }}>
       <h2>Bend</h2>
