@@ -1,0 +1,27 @@
+import type { RefObject } from 'react';
+import type { MeasureCut } from '../../music/musicxml-editor';
+import { useModalDialog } from '../useModalDialog';
+
+// Confirms a whole-measure Cut, listing what will be removed.
+export function CutDialog({ target, onConfirm, onClose, returnFocus }: {
+  target: { first: number; last: number; cut: MeasureCut } | null; onConfirm: () => void; onClose: () => void; returnFocus?: RefObject<HTMLElement | null>;
+}) {
+  const ref = useModalDialog(target !== null, returnFocus);
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  return <dialog ref={ref} className="duplicate-dialog" aria-label="Cut passage" onCancel={event => { event.preventDefault(); onClose(); }}>
+    {target && <>
+      <h2>Cut {target.first === target.last ? `measure ${target.first}` : `measures ${target.first}–${target.last}`}?</h2>
+      <p>The measures are copied to the clipboard and left as rests at the same beats. The bar count, meter, tempo and later timing do not change.</p>
+      <ul>
+        <li>{plural(target.cut.notes, 'note')}</li>
+        {target.cut.labels > 0 && <li>{plural(target.cut.labels, 'chord or text label')}</li>}
+        {target.cut.lyrics > 0 && <li>{plural(target.cut.lyrics, 'lyric syllable')}</li>}
+        {target.cut.spans.length > 0 && <li>Connected techniques inside: {target.cut.spans.join(', ')}</li>}
+      </ul>
+      <div className="duplicate-dialog-actions">
+        <button type="button" data-dialog-first="" onClick={onClose}>Cancel</button>
+        <button type="button" onClick={onConfirm}>Cut</button>
+      </div>
+    </>}
+  </dialog>;
+}
