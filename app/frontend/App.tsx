@@ -59,9 +59,10 @@ import { CutDialog } from './editor/dialogs/CutDialog';
 import { KeyboardHelpDialog } from './editor/dialogs/KeyboardHelpDialog';
 import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
 import { TempoDialog } from './editor/dialogs/TempoDialog';
-import { CommandButtons, CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
+import { CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
 import { SelectionInspector } from './editor/sidebar/SelectionInspector';
 import { ContextMenu, type MenuEntry } from './editor/ContextMenu';
+import { EditorToolbar } from './editor/EditorToolbar';
 import { DURATION_COMMANDS, RhythmTools } from './editor/sidebar/RhythmTools';
 import { TechniqueTools, TRANSITION_COMMANDS } from './editor/sidebar/TechniqueTools';
 import { InsertEventDialog, type InsertEventDraft } from './editor/dialogs/InsertEventDialog';
@@ -1683,7 +1684,7 @@ export function App() {
       run: onSelection(current => updateSelectionFret(current, Number(fretDraft))) },
     'move-string': { label: 'Move', disabled: !moveOutcome || Boolean(moveOutcome.reason), run: () => moveSelectedString() },
     'remove-note': { label: 'Remove note', shortcut: 'Delete', className: 'editor-remove-note', disabled: !noteSelected, run: onSelection(current => requestRemoval(current)) },
-    'make-rest': { label: 'Make rest', hidden: !noteSelected || selection?.graceIndex !== null, run: onSelection(current => requestRemoval(current, 'rest')) },
+    'make-rest': { label: 'Make rest', hidden: !noteSelected || selection?.graceIndex !== null, reason: 'Select a note first', run: onSelection(current => requestRemoval(current, 'rest')) },
     ...Object.fromEntries(DURATION_DENOMINATORS.map(value => [`duration-${value}`, {
       label: value === 1 ? '1' : `1/${value}`, iconOnly: true, ariaLabel: value === 1 ? 'Whole note duration' : `1/${value} duration`,
       pressed: selectedRhythm ? selectedRhythm.denominator === value && selectedRhythm.dots === 0 : undefined,
@@ -1734,7 +1735,7 @@ export function App() {
     'time-signature': { label: 'Time signature…', disabled: !selection, run: opener => openMeterDialog(opener) },
     repeat: { label: 'Repeat / endings…', disabled: !selection, run: opener => openRepeatDialog(opener) },
     pickup: { label: 'Pickup…', disabled: selection?.measure !== 1, reason: 'Only the first measure can be a pickup', run: opener => openPickupDialog(opener) },
-    'edit-fret': { label: noteSelected ? 'Edit fret…' : 'Add note…', icon: noteSelected ? 'edit-tools' : 'add-note', disabled: selection?.string == null,
+    'edit-fret': { label: noteSelected ? 'Edit fret…' : 'Add a note…', icon: noteSelected ? 'edit-tools' : 'add-note', disabled: selection?.string == null,
       reason: 'Select a string position first', run: () => focusFretEntry() },
     'play-from-here': { label: 'Play from here', icon: 'play', disabled: !selection || Boolean(playReason), reason: playReason, run: () => playerControls.current?.playFrom() },
     'play-selection': { label: passage ? 'Play range' : 'Play selection', icon: 'play', disabled: !selection || Boolean(playReason), reason: playReason, run: () => playerControls.current?.playSelection() },
@@ -1753,7 +1754,6 @@ export function App() {
       : ['edit-fret', 'insert-event', '-', durationEntries, textEntries, '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection'];
   const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
-        <div className="editor-history"><CommandButtons commands={commands} ids={['undo', 'redo']} /></div>
         <p className="editor-selection-empty">Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z redoes. History lasts while this score is open; older actions expire after 100 edits or 32 MB.</p>
         <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note or empty string position to begin editing.'}</span></p>
         <div className="editor-selection" aria-label="Selection inspector">
@@ -1767,13 +1767,12 @@ export function App() {
               onRemoveTransition={removeTransition} pendingTransition={pendingTie} onCompleteTransition={() => completeTransition(selection)}
               onCancelTransition={() => { if (!pendingTie) return; const name = TRANSITION_NAMES[pendingTie.kind]; setPendingTie(null); setError(''); setMessage(`${capitalized(name)} cancelled.`); }}
               commands={commands} />
-            <CommandGroup className="editor-text-tools" summary="Text" commands={commands} ids={['chord', 'section', 'words', 'lyric', 'lyrics-chords']} />
+            <CommandGroup className="editor-text-tools" summary="Text" commands={commands} ids={['lyrics-chords']} />
             <CommandGroup className="editor-passage-tools" summary="Select passage" commands={commands}
-              ids={['range-start', 'range-end', 'clear-passage', 'copy-passage', 'cut-passage', 'paste-passage', 'clear-range']}>
+              ids={['range-start', 'range-end', 'clear-passage', 'clear-range']}>
               {clipboard && <p className="editor-rhythm-reason">Clipboard: {clipboard.measures.length} measure{clipboard.measures.length === 1 ? '' : 's'} from “{clipboard.title}”.</p>}
             </CommandGroup>
-            <CommandGroup className="editor-measure-tools" summary="Measure" commands={commands} ids={['select-measure', 'insert-measure-before', 'insert-measure-after',
-              'duplicate-measure', 'delete-measure', 'time-signature', 'repeat', 'pickup']}>
+            <CommandGroup className="editor-measure-tools" summary="Measure" commands={commands} ids={['select-measure', 'insert-measure-before', 'pickup']}>
               {measureCount <= 1 && <p>The last remaining measure cannot be deleted.</p>}
               {selection.measure !== 1 && <p>Pickup length is available only in the first measure.</p>}
             </CommandGroup>
@@ -1805,6 +1804,7 @@ export function App() {
         {message && <p className="success" role="status">{message}</p>}
         {warnings.length > 0 && showWarnings && <aside className="import-notice" role="note" aria-label="Import warnings"><div className="notice-heading"><strong>Check your import</strong><button type="button" className="notice-dismiss" aria-label="Dismiss import warnings" onClick={() => setShowWarnings(false)}>×</button></div>{warnings.map(warning => <p key={warning}>{warning}</p>)}</aside>}
         {showPracticeTip && <aside className="practice-note" role="note" aria-label="Practice tip"><span className="note-icon">✦</span><p><strong>Make it your pace.</strong> Slow down a tricky passage, loop it, and find your rhythm.</p><span className="practice-badge">PRACTICE MODE</span><button type="button" className="tip-dismiss" aria-label="Dismiss practice tip" onClick={() => setShowPracticeTip(false)}>×</button></aside>}
+        {editMode && !narrow && <EditorToolbar commands={commands} />}
         <Player
           key="score"
           score={score}
@@ -1844,7 +1844,7 @@ export function App() {
       <div className="edit-sheet-header"><strong>Edit tools</strong>
         <button type="button" onClick={() => { setToolsOpen(false); document.querySelector<HTMLElement>('.edit-tools-toggle')?.focus(); }}>Close tools</button></div>
       <div ref={setSheetTransportHost} className="edit-sheet-transport" />
-      <div className="edit-sheet-body">{editorTools}</div>
+      <div className="edit-sheet-body"><EditorToolbar commands={commands} />{editorTools}</div>
     </section>}
     <DeleteMeasureDialog pending={pendingMeasureDeletion} onConfirm={confirmDeleteMeasure} onClose={() => setPendingMeasureDeletion(null)} returnFocus={deleteMeasureOpener} />
     <MeterDialog target={meterTarget} onApply={confirmMeterChange} onClose={() => setMeterTarget(null)} returnFocus={meterOpener} />

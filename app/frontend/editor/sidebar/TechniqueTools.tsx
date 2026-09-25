@@ -1,6 +1,6 @@
 import type { ScoreSelection } from '../../Player';
 import type { FrettingHand, NoteTechniqueInfo, NoteTransition, PickingHand, TransitionKind } from '../../music/musicxml-editor';
-import { CommandButton, CommandButtons, type EditorCommands } from '../commands';
+import { CommandButton, type EditorCommands } from '../commands';
 import { capitalized, TRANSITION_NAMES } from '../labels';
 
 export const TRANSITION_COMMANDS: readonly TransitionKind[] = ['hammer-on', 'pull-off', 'slide', 'tie'];
@@ -14,7 +14,7 @@ export function TechniqueTools({ selection, techniques, onHand, transitions, onR
   onCompleteTransition: () => void; onCancelTransition: () => void; commands: EditorCommands;
 }) {
   return <details className="editor-technique-tools"><summary>Techniques</summary>
-    <CommandButtons commands={commands} ids={['grace', 'remove-grace']} />
+    <CommandButton id="remove-grace" command={commands['remove-grace']} />
     {techniques && <div className="editor-hand-tools">
       <label>Picking hand<select aria-label="Picking hand" value={techniques.picking ?? ''} disabled={techniques.picking === null}
         onChange={event => onHand('picking', event.target.value as PickingHand)}>
@@ -26,9 +26,7 @@ export function TechniqueTools({ selection, techniques, onHand, transitions, onR
         {techniques.fretting === null && <option value="">Kept as written</option>}
         <option value="none">None</option>{['1', '2', '3', '4'].map(value => <option key={value} value={value}>{value}</option>)}<option value="T">Thumb</option></select></label>
       {techniques.frettingReason && <p className="editor-rhythm-reason">{techniques.frettingReason}</p>}
-      <CommandButton id="bend" command={commands.bend} />
     </div>}
-    <div className="editor-transition-buttons"><CommandButtons commands={commands} ids={TRANSITION_COMMANDS} /></div>
     <CommandButton id="remove-tie" command={commands['remove-tie']} />
     {transitions.map(item => <button key={`${item.kind}:${item.direction}`} type="button" onClick={() => onRemoveTransition(item)}>
       Remove {TRANSITION_NAMES[item.kind]} {item.direction === 'outgoing' ? 'to' : 'from'} {item.other ? `m${item.other.measure} e${item.other.event}` : 'its other note'}</button>)}

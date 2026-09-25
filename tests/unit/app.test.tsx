@@ -163,7 +163,7 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByTestId('choose-empty'));
     fireEvent.click(screen.getByTestId('context-event'));
     const frame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callback(0); return 0; });
-    fireEvent.click(within(screen.getByRole('menu', { name: 'Score actions' })).getByRole('menuitem', { name: /Add note/ }));
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Score actions' })).getByRole('menuitem', { name: /Add a note/ }));
     expect(document.activeElement).toBe(screen.getByLabelText('Add fret'));
     frame.mockRestore();
     delete (window as any).__played;
@@ -259,8 +259,8 @@ describe('workspace application', () => {
     const dialog = screen.getByRole('dialog', { name: 'Insert event' });
     fireEvent.change(screen.getByLabelText('Position'), { target: { value: 'before' } });
     fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'note' } });
-    fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '8' } });
-    fireEvent.click(screen.getByLabelText('Dotted'));
+    fireEvent.change(within(dialog).getByLabelText('Duration'), { target: { value: '8' } });
+    fireEvent.click(within(dialog).getByLabelText('Dotted'));
     fireEvent.change(within(dialog).getByLabelText('String'), { target: { value: '2' } });
     fireEvent.change(within(dialog).getByLabelText('Fret'), { target: { value: '3' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Insert', exact: true }));
