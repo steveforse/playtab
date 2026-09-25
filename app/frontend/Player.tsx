@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { AlphaTabApi, PlayerOutputMode, model } from '@coderline/alphatab';
 import { toAlphaTab } from './music/alphatab';
@@ -145,6 +145,14 @@ export function resolveSelectionTarget(score: model.Score, selection: ScoreSelec
 
 function selectionSortKey(selection: ScoreSelection) {
   return [selection.track, selection.staff, selection.measure, selection.event, selection.voice, selection.graceIndex ?? -1];
+}
+
+// Whether an event lies inside a range, whichever string was clicked.
+function withinRange(range: PlaybackEndpoints | null, selection: ScoreSelection) {
+  if (!range) return false;
+  const at = (item: ScoreSelection) => [item.measure, item.event] as const;
+  const before = (a: readonly [number, number], b: readonly [number, number]) => a[0] < b[0] || a[0] === b[0] && a[1] <= b[1];
+  return before(at(range.start), at(selection)) && before(at(selection), at(range.end));
 }
 
 function compareSelections(a: ScoreSelection, b: ScoreSelection) {
@@ -361,8 +369,11 @@ function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat
 }
 
 export type SelectionScope = 'event' | 'measure';
+export type ContextMenuRequest = { x: number; y: number; scope: SelectionScope | 'range' };
+export type PlayerControls = { playFrom: () => void; playSelection: () => void; canPlay: boolean };
 
-export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection, extend: boolean, scope?: SelectionScope) => void) {
+export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection, extend: boolean, scope?: SelectionScope) => void,
+  onContext?: (selection: ScoreSelection, scope: SelectionScope, x: number, y: number) => boolean, suppressKeyboardMenu: () => boolean = () => false) {
   let dragStart: { x: number; y: number } | null = null;
   const hitAt = (event: MouseEvent): { selection: ScoreSelection; scope: SelectionScope } | null => {
     const point = scorePoint(root, event, view);
@@ -403,11 +414,57 @@ export function createEditingStaffInteractionHandler(root: HTMLElement, api: Alp
     onSelection(hit.selection, true, hit.scope);
   };
   const onMouseUp = () => { dragStart = null; };
+  // Right-click (and a touch long-press) opens the editor menu for a score
+  // target; elsewhere the browser's own menu still opens.
+  let pressTimer: number | undefined;
+  let pressStart: { x: number; y: number } | null = null;
+  let pressedAt = 0;
+  const openContext = (event: MouseEvent, point: { x: number; y: number } = { x: event.clientX, y: event.clientY }) => {
+    const hit = onContext && hitAt(event);
+    return Boolean(hit && onContext!(hit.selection, hit.scope, point.x, point.y));
+  };
+  const onContextMenu = (event: MouseEvent) => {
+    if (Date.now() - pressedAt < 800) { event.preventDefault(); return; }
+    if (pressStart) {
+      // A long-press that the browser reports itself (Android) opens once.
+      const point = pressStart;
+      cancelPress();
+      if (openContext(event, point)) { pressedAt = Date.now(); event.preventDefault(); }
+      return;
+    }
+    // The ContextMenu key and Shift+F10 already opened the menu at the selection.
+    if (event.button !== 2) { if (suppressKeyboardMenu()) event.preventDefault(); return; }
+    if (openContext(event)) event.preventDefault();
+  };
+  const cancelPress = () => { window.clearTimeout(pressTimer); pressTimer = undefined; pressStart = null; };
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.pointerType !== 'touch' || !onContext) return;
+    cancelPress();
+    pressStart = { x: event.clientX, y: event.clientY };
+    pressTimer = window.setTimeout(() => {
+      pressTimer = undefined;
+      if (openContext(event)) pressedAt = Date.now();
+    }, 550);
+  };
+  const onPointerMove = (event: PointerEvent) => {
+    if (pressStart && Math.hypot(event.clientX - pressStart.x, event.clientY - pressStart.y) > 10) cancelPress();
+  };
   root.addEventListener('mousedown', onMouseDown, true);
+  root.addEventListener('contextmenu', onContextMenu, true);
+  root.addEventListener('pointerdown', onPointerDown, true);
+  root.addEventListener('pointermove', onPointerMove, true);
+  root.addEventListener('pointerup', cancelPress, true);
+  root.addEventListener('pointercancel', cancelPress, true);
   window.addEventListener('mousemove', onMouseMove, true);
   window.addEventListener('mouseup', onMouseUp, true);
   return () => {
+    cancelPress();
     root.removeEventListener('mousedown', onMouseDown, true);
+    root.removeEventListener('contextmenu', onContextMenu, true);
+    root.removeEventListener('pointerdown', onPointerDown, true);
+    root.removeEventListener('pointermove', onPointerMove, true);
+    root.removeEventListener('pointerup', cancelPress, true);
+    root.removeEventListener('pointercancel', cancelPress, true);
     window.removeEventListener('mousemove', onMouseMove, true);
     window.removeEventListener('mouseup', onMouseUp, true);
   };
@@ -539,7 +596,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null, onRenderResult }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null, onRenderResult, onContextMenu, controlsRef }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -556,6 +613,10 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   exportBlockedReason?: string | null;
   compactTransportHost?: HTMLElement | null;
   onRenderResult?: (result: { ok: true } | { ok: false; message: string }) => void;
+  // Opens the editor's context menu for what was right-clicked, long-pressed
+  // or reached with the ContextMenu key; the selection is already updated.
+  onContextMenu?: (request: ContextMenuRequest) => void;
+  controlsRef?: MutableRefObject<PlayerControls | null>;
   onSelectionDelete?: (selection: ScoreSelection) => void;
   historyRevision?: number;
   sessionKey?: number;
@@ -586,6 +647,9 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const updatingScoreRef = useRef(false);
   const renderResultRef = useRef(onRenderResult);
   renderResultRef.current = onRenderResult;
+  const contextMenuRef = useRef(onContextMenu);
+  const keyboardMenuAt = useRef(0);
+  contextMenuRef.current = onContextMenu;
   updatingScoreRef.current = updatingScore;
   const [playbackMessage, setPlaybackMessage] = useState('');
   playbackEndpointsRef.current = playbackEndpoints;
@@ -685,7 +749,25 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
         else { rangeAnchor.current = null; passageCallbackRef.current?.(null); }
         selectionCallbackRef.current?.(span.start === selection ? selection : span.start);
       }
-    });
+    }, (selection, scope, x, y) => {
+      if (!editingRef.current || !contextMenuRef.current) return false;
+      element.current?.focus({ preventScroll: true });
+      const passage = passageRef.current;
+      if (withinRange(passage, selection) && scope === 'event') { contextMenuRef.current({ x, y, scope: 'range' }); return true; }
+      if (scope === 'measure') {
+        const span = measureSpan(selection);
+        if (!span) return false;
+        rangeAnchor.current = span;
+        passageCallbackRef.current?.(span);
+        selectionCallbackRef.current?.(span.start);
+      } else {
+        rangeAnchor.current = null;
+        passageCallbackRef.current?.(null);
+        selectionCallbackRef.current?.(selection);
+      }
+      contextMenuRef.current({ x, y, scope });
+      return true;
+    }, () => Date.now() - keyboardMenuAt.current < 1000);
     let detachPaginatedInteraction: (() => void) | undefined;
     let detachPaginatedSelection: (() => void) | undefined;
     if (scoreView !== 'continuous') {
@@ -1005,6 +1087,17 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       selectAllEvents();
       return;
     }
+    if (key === 'contextmenu' || (event.shiftKey && key === 'f10')) {
+      if (!contextMenuRef.current || !selectionRef.current) return;
+      event.preventDefault();
+      keyboardMenuAt.current = Date.now();
+      const anchor = element.current?.querySelector('.editor-note-selection')?.getBoundingClientRect()
+        ?? element.current?.getBoundingClientRect();
+      const current = selectionRef.current;
+      const passage = passageRef.current;
+      contextMenuRef.current({ x: anchor ? anchor.left + anchor.width / 2 : 0, y: anchor ? anchor.bottom : 0, scope: withinRange(passage, current) ? 'range' : 'event' });
+      return;
+    }
     if (event.shiftKey && (key === 'arrowleft' || key === 'arrowright')) {
       event.preventDefault();
       extendByKeyboard(key === 'arrowleft' ? 'left' : 'right', command);
@@ -1050,7 +1143,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       if (!editingRef.current) return;
       const target = event.target instanceof HTMLElement ? event.target : document.activeElement;
       if (target instanceof HTMLElement && (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'SUMMARY', 'A'].includes(target.tagName)
-        || target.closest('[role="button"], [contenteditable="true"], dialog'))) return;
+        || target.closest('[role="button"], [role="menu"], [contenteditable="true"], dialog'))) return;
       handleEditorKeyDown(event);
     };
     document.addEventListener('keydown', onDocumentKeyDown, true);
@@ -1095,6 +1188,20 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     setPlaybackMessage('');
     instance.play();
   }
+  // Plays from the selected event to the end of the score.
+  function playFrom() {
+    const instance = api.current;
+    const current = selectionRef.current;
+    if (!instance?.score || !current || !ready || updatingScore) return;
+    const ticks = writtenPlaybackRange(instance.score, { start: current, end: current });
+    if (!ticks) { setError('The selected event cannot be mapped to a playable position.'); return; }
+    if (playing) instance.stop();
+    clearPlaybackRange();
+    instance.tickPosition = ticks.startTick;
+    setPlaybackMessage('');
+    instance.play();
+  }
+  if (controlsRef) controlsRef.current = { playFrom, playSelection, canPlay: Boolean(ready && !updatingScore && !error) };
   function clearPlaybackRange() {
     const instance = api.current;
     if (instance) {

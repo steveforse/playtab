@@ -328,6 +328,62 @@ describe('notation player', () => {
     expect(onSelection).toHaveBeenCalledTimes(count);
   });
 
+  it('opens the editor menu from a right-click, a long-press or the keyboard, and leaves other menus alone', () => {
+    vi.useFakeTimers();
+    try {
+      const root = document.createElement('div');
+      const surface = document.createElement('div');
+      surface.className = 'at-surface';
+      vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 200, bottom: 200 } as DOMRect);
+      root.append(surface);
+      document.body.append(root);
+      const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
+      const beat = { index: 0, isRest: false, notes: [], voice: { index: 0, bar } } as any;
+      const api = new alphaTab.FakeAlphaTabApi();
+      (api as any).boundsLookup = {
+        staffSystems: [],
+        getBeatAtPos: vi.fn(() => beat),
+        findBeat: vi.fn(() => ({ beat, visualBounds: { y: 0, h: 40 } })),
+        getNoteAtPos: vi.fn(() => null),
+      };
+      const onContext = vi.fn(() => true);
+      let keyboard = false;
+      const detach = createEditingStaffInteractionHandler(root, api as any, 'continuous', vi.fn(), onContext, () => keyboard);
+      const menu = (init: MouseEventInit) => { const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ...init }); root.dispatchEvent(event); return event; };
+      expect(menu({ button: 2, clientX: 20, clientY: 20 }).defaultPrevented).toBe(true);
+      expect(onContext).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, event: 1 }), 'event', 20, 20);
+      expect(menu({ button: 0, clientX: 0, clientY: 0 }).defaultPrevented).toBe(false);
+      keyboard = true;
+      expect(menu({ button: 0, clientX: 0, clientY: 0 }).defaultPrevented).toBe(true);
+      expect(onContext).toHaveBeenCalledTimes(1);
+
+      const pointer = (type: string, x: number, y: number) => {
+        const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y }) as MouseEvent & { pointerType: string };
+        Object.defineProperty(event, 'pointerType', { value: 'touch' });
+        root.dispatchEvent(event);
+      };
+      pointer('pointerdown', 30, 30);
+      pointer('pointermove', 60, 30);
+      vi.advanceTimersByTime(600);
+      expect(onContext).toHaveBeenCalledTimes(1);
+      pointer('pointerdown', 30, 30);
+      vi.advanceTimersByTime(600);
+      expect(onContext).toHaveBeenCalledTimes(2);
+      expect(menu({ button: 0, clientX: 30, clientY: 30 }).defaultPrevented).toBe(true);
+      expect(onContext).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(1000);
+      pointer('pointerdown', 40, 40);
+      keyboard = false;
+      expect(menu({ button: 0, clientX: 40, clientY: 40 }).defaultPrevented).toBe(true);
+      expect(onContext).toHaveBeenLastCalledWith(expect.anything(), 'event', 40, 40);
+      pointer('pointerup', 40, 40);
+      detach();
+      root.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('selects the whole measure from the zone above its top staff', () => {
     const root = document.createElement('div');
     const surface = document.createElement('div');

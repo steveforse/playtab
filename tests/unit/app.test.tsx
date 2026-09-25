@@ -20,7 +20,10 @@ const { inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } = vi.h
 const { applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace } = vi.hoisted(() => ({
   applyMusicXmlGraceGroup: vi.fn(), inspectMusicXmlGraceGroup: vi.fn(), removeMusicXmlGraceGroup: vi.fn(), removeMusicXmlGrace: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
-  Player: ({ onPreferencesChange, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, selection, onSelectionDelete, editing, exportBlockedReason, onRenderResult }: any) => <>
+  Player: ({ onPreferencesChange, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, selection, onSelectionDelete, editing, exportBlockedReason, onRenderResult, onContextMenu, controlsRef }: any) => <>
+    {controlsRef && (controlsRef.current = { canPlay: true, playFrom: () => { (window as any).__played = 'from'; }, playSelection: () => { (window as any).__played = 'selection'; } }) && null}
+    <button type="button" data-testid="context-event" onClick={() => onContextMenu?.({ x: 5, y: 5, scope: 'event' })}>Context event</button>
+    <button type="button" data-testid="context-range" onClick={() => onContextMenu?.({ x: 5, y: 5, scope: 'range' })}>Context range</button>
     <button type="button" data-testid="choose-range" onClick={() => onPassageChange?.({
       start: { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null },
       end: { track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 2, graceIndex: null, graceGroupId: null } })}>Choose range</button>
@@ -138,6 +141,32 @@ describe('workspace application', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Clear', hidden: true }));
     expect(screen.getByText('Cleared M1 E1 – M1 E2; it now holds rests.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Undo' }).getAttribute('title')).toContain('Undo: Clear M1 E1 – M1 E2');
+  });
+
+  it('opens target-specific context menus that run shared commands', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByTestId('context-event'));
+    const menu = screen.getByRole('menu', { name: 'Score actions' });
+    expect(within(menu).getByRole('menuitem', { name: /Edit fret/ })).toBeTruthy();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Play from here/ }));
+    expect((window as any).__played).toBe('from');
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(screen.getByTestId('choose-range'));
+    fireEvent.click(screen.getByTestId('context-range'));
+    const range = screen.getByRole('menu', { name: 'Score actions' });
+    expect(within(range).getByRole('menuitem', { name: /Copy passage/ }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(within(range).getByRole('menuitem', { name: /Play range/ }));
+    expect((window as any).__played).toBe('selection');
+    fireEvent.click(screen.getByTestId('choose-empty'));
+    fireEvent.click(screen.getByTestId('context-event'));
+    const frame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callback(0); return 0; });
+    fireEvent.click(within(screen.getByRole('menu', { name: 'Score actions' })).getByRole('menuitem', { name: /Add note/ }));
+    expect(document.activeElement).toBe(screen.getByLabelText('Add fret'));
+    frame.mockRestore();
+    delete (window as any).__played;
   });
 
   it('loads the library, opens plaintext and saves the native score', async () => {
@@ -1773,8 +1802,8 @@ describe('workspace application', () => {
     expect(screen.getByRole('button', { name: 'Paste passage…' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Set range start' }));
     fireEvent.click(screen.getByRole('button', { name: 'Set range end' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Copy passage' }));
-    expect(screen.getByRole('alert').textContent).toContain('Select whole measures to copy.');
+    expect(screen.getByRole('button', { name: 'Copy passage' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Copy passage' }).getAttribute('title')).toBe('Copy passage — Select whole measures first');
     expect(copyMusicXmlMeasures).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('Measure', { selector: 'summary' }));
     fireEvent.click(screen.getByRole('button', { name: 'Select measure' }));
