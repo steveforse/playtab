@@ -10,7 +10,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures,
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures,
   type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
@@ -251,6 +251,67 @@ describe('ED-16 grace editing and removal', () => {
   });
 });
 
+describe('ED-20 cut and replace whole measures', () => {
+  const score = (source: string) => readMusicXml(source, 'cut.musicxml').score;
+  const withOpaque = rich.replace('<staff-details number="2"><staff-tuning line="1"><tuning-step>A</tuning-step><tuning-octave>4</tuning-octave></staff-tuning></staff-details>', '');
+  const single = withOpaque.replace('<opaque:keep data="unchanged"><opaque:nested>source detail</opaque:nested></opaque:keep>', '');
+  const tabNotes = (source: string, index: number) => Array.from(new DOMParser().parseFromString(source, 'application/xml')
+    .getElementsByTagName('measure')[index].getElementsByTagName('note')).filter(note => note.getElementsByTagName('staff')[0]?.textContent === '2');
+  const frets = (source: string, index: number) => tabNotes(source, index).filter(note => note.getElementsByTagName('fret').length).map(note => note.getElementsByTagName('fret')[0].textContent);
+
+  it('cuts whole measures to rests at the same onsets after copying them', () => {
+    expect(() => cutMusicXmlMeasures(single, score(single), 0, 0)).toThrow('Cutting these measures would split a tie that crosses the passage edge. Remove it first.');
+    const cut = cutMusicXmlMeasures(single, score(single), 0, 1);
+    expect(cut.clipboard.measures).toHaveLength(2);
+    expect(cut).toMatchObject({ labels: 1, lyrics: 2 });
+    expect(cut.notes).toBeGreaterThan(10);
+    expect(cut.spans.sort()).toEqual(['hammer-on', 'slide', 'tie']);
+    const before = score(single);
+    const after = score(cut.source);
+    expect(after.masterBars.map(bar => bar.calculateDuration())).toEqual(before.masterBars.map(bar => bar.calculateDuration()));
+    expect(after.tracks[0].staves[0].bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats)).every(beat => beat.isRest || beat.isEmpty)).toBe(true);
+    const onsets = (value: typeof before) => value.tracks[0].staves[0].bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats.filter(beat => !beat.graceType).map(beat => beat.playbackStart)));
+    expect(onsets(after)).toEqual(onsets(before));
+    expect(cut.source).not.toContain('<harmony');
+    expect(cut.source).toContain('<sound tempo="96"/>');
+    expect(cut.source).toContain('<sound tempo="108"/>');
+    expect(cut.source).not.toContain('<lyric');
+    expect(cut.source).not.toContain('<grace');
+    expect(single).not.toContain('opaque:keep');
+    expect(() => cutMusicXmlMeasures(withOpaque, score(withOpaque), 0, 1)).toThrow('Cutting these measures is blocked by a protected keep attachment that Playtab cannot remove safely.');
+  });
+
+  it('replaces the content of matching measures, keeping their tempo, barlines and bar count', () => {
+    const cut = cutMusicXmlMeasures(single, score(single), 0, 1);
+    const clip = copyMusicXmlMeasures(single, score(single), 0, 0);
+    const replaced = pasteMusicXmlMeasures(cut.source, score(cut.source), clip, 0, 'replace', 'frets');
+    expect(score(replaced).masterBars).toHaveLength(2);
+    expect(frets(replaced, 0)).toEqual(frets(single, 0));
+    expect(frets(replaced, 1)).toEqual([]);
+    expect(replaced.match(/<sound tempo="96"\/>/g)).toHaveLength(1);
+    expect(replaced).toContain('<repeat direction="forward"/>');
+    expect(replaced).toContain('<harmony>');
+    expect(() => pasteMusicXmlMeasures(cut.source, score(cut.source), clip, 1, 'replace', 'frets'))
+      .toThrow('Copied measure 1 is in 4/4, but measure 2 is in 3/4. Replace needs matching meters.');
+    expect(() => pasteMusicXmlMeasures(cut.source, score(cut.source), { ...clip, measures: [clip.measures[0], clip.measures[0]], meters: ['4/4', '4/4'] }, 1, 'replace', 'frets'))
+      .toThrow('Replacing needs 2 measures from measure 2, but the score ends at measure 2.');
+    expect(() => pasteMusicXmlMeasures(single, score(single), clip, 0, 'replace', 'frets')).toThrow('Replacing these measures would split a tie');
+    expect(() => pasteMusicXmlMeasures(cut.source, score(cut.source), clip, 0, 'sideways' as 'insert', 'frets')).toThrow('Choose Insert measures before or Replace selected measures.');
+    const doubled = { ...clip, measures: [clip.measures[0].replace('<divisions>1</divisions>', '<divisions>2</divisions>')
+      .replace(/<duration>(\d+)<\/duration>/g, (_, value) => `<duration>${Number(value) * 2}</duration>`)] };
+    const precise = pasteMusicXmlMeasures(cut.source, score(cut.source), doubled, 0, 'replace', 'frets');
+    const measures = new DOMParser().parseFromString(precise, 'application/xml').getElementsByTagName('measure');
+    expect(measures[0].getElementsByTagName('divisions')[0].textContent).toBe('2');
+    expect(measures[1].getElementsByTagName('divisions')[0].textContent).toBe('1');
+    expect(score(precise).masterBars.map(bar => bar.calculateDuration())).toEqual(score(cut.source).masterBars.map(bar => bar.calculateDuration()));
+    const midBar = cut.source.replace(/(<measure number="1">[\s\S]*?<\/note>)/, '$1<direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>70</per-minute></metronome></direction-type><sound tempo="70"/></direction>');
+    expect(midBar).toContain('tempo="70"');
+    expect(() => pasteMusicXmlMeasures(midBar, score(midBar), clip, 0, 'replace', 'frets')).toThrow('has a tempo or playback direction inside the bar');
+    const dropped = applyMusicXmlScoreSettings(cut.source, score(cut.source), { title: 'Dropped', tempo: 96, tuning: [62, 59, 55, 48, 67], mode: 'pitches' }).source;
+    expect(frets(pasteMusicXmlMeasures(dropped, score(dropped), clip, 0, 'replace', 'pitches'), 0)).toEqual(['2', '0', '2', '4', '6', '6', '0']);
+  });
+});
+
 describe('ED-20 copy and paste whole measures', () => {
   const score = (source: string) => readMusicXml(source, 'paste.musicxml').score;
   const single = rich.replace('<staff-details number="2"><staff-tuning line="1"><tuning-step>A</tuning-step><tuning-octave>4</tuning-octave></staff-tuning></staff-details>', '');
@@ -301,7 +362,6 @@ describe('ED-20 copy and paste whole measures', () => {
     const again = pasteMusicXmlMeasures(tie, score(tie), tieClip, 1, 'insert', 'frets');
     expect(score(again).masterBars).toHaveLength(3);
     expect(() => pasteMusicXmlMeasures(tie, score(tie), { ...tieClip, measures: Array(255).fill(tieClip.measures[0]) }, 0, 'insert', 'frets')).toThrow('256-measure limit');
-    expect(() => pasteMusicXmlMeasures(tie, score(tie), tieClip, 0, 'replace', 'frets')).toThrow('not available yet');
     expect(() => pasteMusicXmlMeasures(tie, score(tie), { ...tieClip, measures: [] }, 0, 'insert', 'frets')).toThrow('clipboard is empty');
   });
 

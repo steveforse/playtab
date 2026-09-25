@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type MeasureClipboard, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -32,7 +32,8 @@ type LyricTarget = { originalKey: string; base: MusicXmlPreview; selection: Scor
 type StandaloneTarget = { originalKey: string; base: MusicXmlPreview };
 type SettingsTarget = { originalKey: string; base: MusicXmlPreview; info: ScoreSettingsInfo };
 type TempoTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; info: LocalTempoInfo };
-type PasteTarget = { originalKey: string; base: MusicXmlPreview; measure: number };
+type PasteTarget = { originalKey: string; base: MusicXmlPreview; measure: number; replaceFrom: number | null; replaceCount: number };
+type CutTarget = { originalKey: string; base: MusicXmlPreview; first: number; last: number; cut: MeasureCut };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection; kind: TransitionKind };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 const BEND_LABELS: Record<BendAmount, string> = { 1: '1/2 step', 2: 'Whole step', 3: '1½ steps', 4: '2 steps' };
@@ -200,6 +201,9 @@ export function App() {
   const [clipboard, setClipboard] = useState<MeasureClipboard | null>(null);
   const [pasteTarget, setPasteTarget] = useState<PasteTarget | null>(null);
   const [pasteMode, setPasteMode] = useState<TuningMode>('frets');
+  const [pastePlacement, setPastePlacement] = useState<PasteMode>('insert');
+  const [cutTarget, setCutTarget] = useState<CutTarget | null>(null);
+  const cutDialog = useRef<HTMLDialogElement>(null);
   const [pasteError, setPasteError] = useState('');
   const pasteDialog = useRef<HTMLDialogElement>(null);
   const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | null>(null);
@@ -381,12 +385,12 @@ export function App() {
   }, [anchorTarget]);
   useEffect(() => {
     for (const [dialog, open] of [[lyricDialog.current, lyricTarget !== null], [standaloneDialog.current, standaloneTarget !== null],
-      [settingsDialog.current, settingsTarget !== null], [tempoDialog.current, tempoTarget !== null], [pasteDialog.current, pasteTarget !== null]] as const) {
+      [settingsDialog.current, settingsTarget !== null], [tempoDialog.current, tempoTarget !== null], [pasteDialog.current, pasteTarget !== null], [cutDialog.current, cutTarget !== null]] as const) {
       if (!dialog) continue;
       if (open && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-text-first]')?.focus(); }
       else if (!open && dialog.open) { dialog.close(); if (textOpener.current?.isConnected) textOpener.current.focus({ preventScroll: true }); }
     }
-  }, [lyricTarget, standaloneTarget, settingsTarget, tempoTarget, pasteTarget]);
+  }, [lyricTarget, standaloneTarget, settingsTarget, tempoTarget, pasteTarget, cutTarget]);
   useEffect(() => {
     const dialog = bendDialog.current;
     if (!dialog) return;
@@ -1121,10 +1125,43 @@ export function App() {
     setPassage({ start: selectionAtPosition(selection, score, preview, { event: 1 }), end: selectionAtPosition(selection, score, preview, { event: Math.max(1, last) }) });
     setMessage(`Measure ${selection.measure} selected as a passage.`); setError('');
   }
+  function wholeMeasurePassage() {
+    if (!passage) return null;
+    const { start, end } = passage;
+    return start.voice === end.voice && start.event === 1 && end.event === measureEventCount(end.measure, end.voice) ? { first: start.measure, last: end.measure } : null;
+  }
+  function openCutDialog(opener: HTMLElement) {
+    const range = wholeMeasurePassage();
+    if (!range) { setError('Select whole measures to cut. Use Select measure, or set the range from a first event to a last event.'); return; }
+    if (pendingFret) { setError('Apply the pending fret before cutting.'); return; }
+    try {
+      const base = textBase();
+      const cut = cutMusicXmlMeasures(base.source, base.score, range.first - 1, range.last - 1);
+      textOpener.current = opener;
+      setCutTarget({ originalKey: documentKey(currentDocument), base, first: range.first, last: range.last, cut });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function confirmCut() {
+    if (!cutTarget) return;
+    const { base, first, last, cut } = cutTarget;
+    setCutTarget(null);
+    if (cutTarget.originalKey !== documentKey(currentDocument)) { setError('The score changed since Cut was opened. Select the measures again.'); return; }
+    try {
+      const nextPreview = withPreviewTitle(readMusicXml(cut.source, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+      const after = selection ? selectionAtPosition(selection, score, nextPreview, {}) : null;
+      const range = first === last ? `measure ${first}` : `measures ${first}–${last}`;
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Cut ${range}`);
+      setClipboard({ ...cut.clipboard, title: base.score.title });
+      setPreview(nextPreview); setSelection(after); setPassage(null); setError('');
+      setMessage(`Cut ${range} to the clipboard; the measures now hold rests.`);
+    } catch (failure) { setError((failure as Error).message); }
+  }
   function copyPassage() {
     if (!passage) return;
     const { start, end } = passage;
-    if (start.voice !== end.voice || start.event !== 1 || end.event !== measureEventCount(end.measure, end.voice)) {
+    if (!wholeMeasurePassage()) {
       setError('Select whole measures to copy. Use Select measure, or set the range from a first event to a last event.'); return;
     }
     try {
@@ -1140,24 +1177,30 @@ export function App() {
     if (pendingFret) { setError('Apply the pending fret before pasting.'); return; }
     try {
       textOpener.current = opener;
-      setPasteMode('frets'); setPasteError('');
-      setPasteTarget({ originalKey: documentKey(currentDocument), base: textBase(), measure: selection.measure });
+      const range = wholeMeasurePassage();
+      setPasteMode('frets'); setPasteError(''); setPastePlacement('insert');
+      setPasteTarget({ originalKey: documentKey(currentDocument), base: textBase(), measure: selection.measure,
+        replaceFrom: range?.first ?? null, replaceCount: range ? range.last - range.first + 1 : 0 });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
   function applyPaste(candidate: string) {
     if (!pasteTarget || !clipboard) return;
-    const { base, measure } = pasteTarget;
+    const { base } = pasteTarget;
+    const replacing = pastePlacement === 'replace' && pasteTarget.replaceFrom !== null;
+    const measure = replacing ? pasteTarget.replaceFrom! : pasteTarget.measure;
     if (pasteTarget.originalKey !== documentKey(currentDocument)) { setPasteTarget(null); setError('The score changed since paste was opened. Open it again.'); return; }
     try {
       const count = clipboard.measures.length;
       const nextPreview = withPreviewTitle(readMusicXml(candidate, base.filename, base.sourceFormat,
-        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries: shiftedMeasureCarries(base, measure - 1) } : undefined), base.score.title);
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries: replacing ? [] : shiftedMeasureCarries(base, measure - 1) } : undefined), base.score.title);
       const first = selectionAtPosition({ ...(selection ?? passage!.start), measure, event: 1 }, score, nextPreview, { measure, event: 1 });
+      const plural = `${count} measure${count === 1 ? '' : 's'}`;
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: first, sourceIdentity: nextPreview.sourceIdentity },
-        `Paste ${count} measure${count === 1 ? '' : 's'} before measure ${measure}`);
+        replacing ? `Paste ${plural} over measure ${measure}` : `Paste ${plural} before measure ${measure}`);
       setPreview(nextPreview); setSelection(first); setPassage(null); setPasteTarget(null); setError('');
-      setMessage(`Pasted ${count} measure${count === 1 ? '' : 's'} before measure ${measure}; they are now measures ${measure}–${measure + count - 1}.`);
+      setMessage(replacing ? `Replaced measures ${measure}–${measure + count - 1} with the copied ${plural}.`
+        : `Pasted ${plural} before measure ${measure}; they are now measures ${measure}–${measure + count - 1}.`);
     } catch (failure) { setPasteError((failure as Error).message); }
   }
   function openPickupDialog(opener: HTMLElement) {
@@ -1731,6 +1774,7 @@ export function App() {
               }}>Set range end</button>
               <button type="button" disabled={!passage} onClick={() => setPassage(null)}>Clear passage</button>
               <button type="button" disabled={!passage} onClick={copyPassage}>Copy passage</button>
+              <button type="button" disabled={!passage} onClick={event => openCutDialog(event.currentTarget)}>Cut passage…</button>
               <button type="button" disabled={!clipboard} onClick={event => openPasteDialog(event.currentTarget)}>Paste passage…</button>
               {clipboard && <p className="editor-rhythm-reason">Clipboard: {clipboard.measures.length} measure{clipboard.measures.length === 1 ? '' : 's'} from “{clipboard.title}”.</p>}
             </details>
@@ -2017,14 +2061,20 @@ export function App() {
       {pasteTarget && clipboard && (() => {
         let candidate: string | null = null;
         let problem = '';
-        try { candidate = pasteMusicXmlMeasures(pasteTarget.base.source, pasteTarget.base.score, clipboard, pasteTarget.measure - 1, 'insert', pasteMode); }
-        catch (failure) { problem = (failure as Error).message; }
         const count = clipboard.measures.length;
+        const canReplace = pasteTarget.replaceFrom !== null && pasteTarget.replaceCount === count;
+        const replacing = pastePlacement === 'replace' && canReplace;
+        try {
+          candidate = pasteMusicXmlMeasures(pasteTarget.base.source, pasteTarget.base.score, clipboard,
+            (replacing ? pasteTarget.replaceFrom! : pasteTarget.measure) - 1, replacing ? 'replace' : 'insert', pasteMode);
+        } catch (failure) { problem = (failure as Error).message; }
         return <>
           <h2>Paste passage</h2>
-          <p>Destination: before measure {pasteTarget.measure}. Source: {count} measure{count === 1 ? '' : 's'} from “{clipboard.title}” ({clipboard.meters.join(', ')}). The score will grow by {count} measure{count === 1 ? '' : 's'}.</p>
+          <p>{replacing ? `Destination: measures ${pasteTarget.replaceFrom}–${pasteTarget.replaceFrom! + count - 1}.` : `Destination: before measure ${pasteTarget.measure}.`} Source: {count} measure{count === 1 ? '' : 's'} from “{clipboard.title}” ({clipboard.meters.join(', ')}). {replacing ? 'The bar count stays the same.' : `The score will grow by ${count} measure${count === 1 ? '' : 's'}.`}</p>
           <fieldset className="settings-mode"><legend>Placement</legend>
-            <label><input type="radio" name="paste-placement" checked readOnly data-text-first="" />Insert measures before</label>
+            <label><input type="radio" name="paste-placement" data-text-first="" checked={!replacing} onChange={() => setPastePlacement('insert')} />Insert measures before measure {pasteTarget.measure}</label>
+            <label><input type="radio" name="paste-placement" disabled={!canReplace} checked={replacing} onChange={() => setPastePlacement('replace')} />Replace selected measures</label>
+            {!canReplace && <p className="editor-rhythm-reason">To replace, select {count} whole measure{count === 1 ? '' : 's'} as the passage first.</p>}
           </fieldset>
           <fieldset className="settings-mode"><legend>If the tuning differs</legend>
             <label><input type="radio" name="paste-mode" checked={pasteMode === 'frets'} onChange={() => setPasteMode('frets')} />Keep frets (pitches follow this score’s tuning)</label>
@@ -2039,6 +2089,22 @@ export function App() {
           </div>
         </>;
       })()}
+    </dialog>
+    <dialog ref={cutDialog} className="duplicate-dialog" aria-label="Cut passage" onCancel={event => { event.preventDefault(); setCutTarget(null); }}>
+      {cutTarget && <>
+        <h2>Cut {cutTarget.first === cutTarget.last ? `measure ${cutTarget.first}` : `measures ${cutTarget.first}–${cutTarget.last}`}?</h2>
+        <p>The measures are copied to the clipboard and left as rests at the same beats. The bar count, meter, tempo and later timing do not change.</p>
+        <ul>
+          <li>{cutTarget.cut.notes} note{cutTarget.cut.notes === 1 ? '' : 's'}</li>
+          {cutTarget.cut.labels > 0 && <li>{cutTarget.cut.labels} chord or text label{cutTarget.cut.labels === 1 ? '' : 's'}</li>}
+          {cutTarget.cut.lyrics > 0 && <li>{cutTarget.cut.lyrics} lyric syllable{cutTarget.cut.lyrics === 1 ? '' : 's'}</li>}
+          {cutTarget.cut.spans.length > 0 && <li>Connected techniques inside: {cutTarget.cut.spans.join(', ')}</li>}
+        </ul>
+        <div className="duplicate-dialog-actions">
+          <button type="button" data-text-first="" onClick={() => setCutTarget(null)}>Cancel</button>
+          <button type="button" onClick={confirmCut}>Cut</button>
+        </div>
+      </>}
     </dialog>
     <dialog ref={settingsDialog} className="duplicate-dialog settings-dialog" aria-label="Score settings" onCancel={event => { event.preventDefault(); setSettingsTarget(null); }}>
       {settingsTarget && (() => {
