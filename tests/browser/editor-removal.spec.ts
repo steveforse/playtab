@@ -122,7 +122,7 @@ test('an overfull imported voice blocks structural removal but permits a fret co
   await page.getByRole('button', { name: 'Remove note', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('extends past the measure boundary');
   await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
-  await page.getByLabel('Fret').fill('1');
+  await page.getByLabel('Fret', { exact: true }).fill('1');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 1');
 });

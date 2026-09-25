@@ -33,7 +33,7 @@ test('ED-11 will not remove a triplet with a sounding later child', async ({ pag
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('button', { name: 'Triplet', exact: true }).click();
   await page.getByRole('combobox', { name: 'Selection event' }).selectOption('2');
-  await page.getByLabel('Fret').fill('5');
+  await page.getByLabel('Fret', { exact: true }).fill('5');
   await page.getByRole('button', { name: 'Add note' }).click();
   await expect(page.getByRole('button', { name: 'Remove triplet' })).toBeDisabled();
   await expect(page.getByText(/Remove the last two notes or protected attachments/)).toBeVisible();

@@ -48,7 +48,7 @@ test('ED-10 inserts a paired note after the selection and undoes it', async ({ p
   await dialog.getByLabel('Type').selectOption('note');
   await dialog.getByLabel('Duration').selectOption('8');
   await dialog.getByLabel('String').selectOption('2');
-  await dialog.getByLabel('Fret').fill('3');
+  await dialog.getByLabel('Fret', { exact: true }).fill('3');
   await dialog.screenshot({ path: testInfo.outputPath('insert-event-dialog.png') });
   await dialog.getByRole('button', { name: 'Insert', exact: true }).click();
   await expect(dialog).not.toBeVisible();

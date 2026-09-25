@@ -22,7 +22,7 @@ test('adds an imported chord tone and rest note on paired staves with an aligned
   expect(caret.width).toBeGreaterThan(8);
   expect(Math.abs(caret.x + caret.width / 2 - currentNoteBox.x - currentNoteBox.width / 2)).toBeLessThan(3);
 
-  await page.getByLabel('Fret').fill('1');
+  await page.getByLabel('Fret', { exact: true }).fill('1');
   await page.getByRole('button', { name: 'Add note' }).click();
   await expect(inspector).toContainText('Fret 1');
   await expect(notation.locator('svg text').filter({ hasText: /^1$/ })).toHaveCount(1);
@@ -32,7 +32,7 @@ test('adds an imported chord tone and rest note on paired staves with an aligned
   await notation.press('ArrowRight');
   await notation.press('ArrowRight');
   await expect(inspector).toContainText('Event 3');
-  await page.getByLabel('Fret').fill('0');
+  await page.getByLabel('Fret', { exact: true }).fill('0');
   await page.getByRole('button', { name: 'Add note' }).click();
   await expect(inspector).toContainText('Fret 0');
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -118,7 +118,7 @@ test('saves an added note to a TEF imported library score and reopens it', async
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await notation.focus();
   await notation.press('ArrowDown');
-  await page.getByLabel('Fret').fill('1');
+  await page.getByLabel('Fret', { exact: true }).fill('1');
   await page.getByRole('button', { name: 'Add note' }).click();
   await expect(notation.locator('svg text').filter({ hasText: /^1$/ })).toHaveCount(1);
   await page.getByRole('button', { name: 'Save changes' }).click();

@@ -2448,3 +2448,138 @@ export function removeMusicXmlGraceGroup(source: string, score: model.Score, pos
   repairAndDeleteNotes(document, part, existing);
   return { source: new XMLSerializer().serializeToString(document), dependencies };
 }
+
+export type PickingHand = 'none' | 'T' | 'I' | 'M';
+export type FrettingHand = 'none' | '1' | '2' | '3' | '4' | 'T';
+export type BendAmount = 1 | 2 | 3 | 4;
+export type NoteBend = { amount: BendAmount; shape: 'bend' | 'release' };
+// A null hand or bend value is a source marking the editor keeps read-only;
+// its reason says exactly what would otherwise be normalized.
+export type NoteTechniqueInfo = {
+  picking: PickingHand | null; pickingReason?: string;
+  fretting: FrettingHand | null; frettingReason?: string;
+  bend: NoteBend | 'none' | null; bendReason?: string;
+};
+
+function annotatedSourceNote(document: Document, score: model.Score, position: TiePosition) {
+  const part = descendants(document.documentElement, 'part')[0];
+  if (!part || directMeasures(part).length !== score.masterBars.length) throw new Error('The source measure count does not match the rendered score.');
+  const matches = sourceTabNoteRecords(document).filter(record => record.measure === position.measure && record.beat === position.beat
+    && record.voice === String(position.voice) && record.string === position.string && record.fret === position.fret);
+  if (matches.length !== 1) throw new Error('The selected note cannot be uniquely identified in the source.');
+  return matches[0].note;
+}
+
+function pickingValue(marker: Element): PickingHand | null {
+  if (marker.localName !== 'other-technical') return null;
+  const value = text(marker);
+  const tef = value.match(/^TEF fingering\s+(T|Thumb|I|M)$/i);
+  if (tef) return tef[1].toUpperCase().startsWith('T') ? 'T' : tef[1].toUpperCase() as PickingHand;
+  if (/^(?:Unresolved TEF fingering annotation code|TEF fingering code)\s+6$/i.test(value)) return 'T';
+  const pdf = value.match(/^TEF right-hand fingering\s+([mpt])$/i);
+  return pdf ? (pdf[1].toLowerCase() === 'm' ? 'M' : 'T') : null;
+}
+
+const pickingMarkers = (technical: Element | undefined) => technical ? children(technical).filter(item => pickingValue(item) !== null) : [];
+const frettingMarkers = (technical: Element | undefined) => technical ? children(technical).filter(item => item.localName === 'fingering') : [];
+
+function readHands(note: Element): Pick<NoteTechniqueInfo, 'picking' | 'pickingReason' | 'fretting' | 'frettingReason'> {
+  const technical = noteTechnical(note);
+  const picking = pickingMarkers(technical);
+  const fretting = frettingMarkers(technical);
+  const result: Pick<NoteTechniqueInfo, 'picking' | 'pickingReason' | 'fretting' | 'frettingReason'> = { picking: 'none', fretting: 'none' };
+  if (picking.length > 1) Object.assign(result, { picking: null, pickingReason: 'This note has more than one picking-hand marking; it is kept as written.' });
+  else if (picking.length) result.picking = pickingValue(picking[0]);
+  const finger = text(fretting[0]);
+  if (fretting.length > 1) Object.assign(result, { fretting: null, frettingReason: 'This note has more than one fretting-hand marking; it is kept as written.' });
+  else if (fretting.length && /^[1-4]$/.test(finger)) result.fretting = finger as FrettingHand;
+  else if (fretting.length && /^t$/i.test(finger)) result.fretting = 'T';
+  else if (fretting.length) Object.assign(result, { fretting: null, frettingReason: `The fretting-hand marking “${finger}” is kept as written.` });
+  return result;
+}
+
+function readBend(note: Element): Pick<NoteTechniqueInfo, 'bend' | 'bendReason'> {
+  const technical = noteTechnical(note);
+  const bends = technical ? children(technical).filter(item => item.localName === 'bend') : [];
+  if (!bends.length) return { bend: 'none' };
+  const plain = (bend: Element, release: boolean) => !bend.attributes.length
+    && children(bend).map(item => item.localName).join(',') === (release ? 'bend-alter,release' : 'bend-alter')
+    && !(release && child(bend, 'release')!.attributes.length);
+  const amount = Number(text(child(bends[0], 'bend-alter'))) as BendAmount;
+  const supported = [1, 2, 3, 4].includes(amount);
+  if (supported && bends.length === 1 && plain(bends[0], false)) return { bend: { amount, shape: 'bend' } };
+  if (supported && bends.length === 2 && plain(bends[0], false) && plain(bends[1], true)
+    && Number(text(child(bends[1], 'bend-alter'))) === amount) return { bend: { amount, shape: 'release' } };
+  const alter = text(child(bends[0], 'bend-alter'));
+  const detail = bends.some(bend => child(bend, 'pre-bend')) ? 'a pre-bend'
+    : bends.length === 1 && child(bends[0], 'release') ? 'a release-only bend curve'
+      : bends.length > 2 ? `a ${bends.length}-part bend curve`
+        : !supported ? `a ${alter || 'unspecified'}-semitone bend` : 'a styled bend';
+  return { bend: null, bendReason: `This imported bend (${detail}) is kept as written. Applying a bend here replaces it.` };
+}
+
+export function inspectMusicXmlNoteTechniques(source: string, score: model.Score, position: TiePosition): NoteTechniqueInfo {
+  const note = annotatedSourceNote(parseDocument(source), score, position);
+  return { ...readHands(note), ...readBend(note) };
+}
+
+function technicalFor(note: Element) {
+  return ensure(ensureNotations(note), 'technical');
+}
+
+// Only the chosen hand's marking changes; techniques, the other hand and
+// unrelated source markings stay exactly as written.
+export function setMusicXmlHand(source: string, score: model.Score, position: TiePosition, hand: 'picking' | 'fretting',
+  value: PickingHand | FrettingHand): string {
+  const document = parseDocument(source);
+  const note = annotatedSourceNote(document, score, position);
+  const current = readHands(note);
+  if (hand === 'picking' ? current.picking === null : current.fretting === null) {
+    throw new Error((hand === 'picking' ? current.pickingReason : current.frettingReason)!);
+  }
+  if ((hand === 'picking' ? current.picking : current.fretting) === value) return source;
+  const allowed = hand === 'picking' ? ['none', 'T', 'I', 'M'] : ['none', '1', '2', '3', '4', 'T'];
+  if (!allowed.includes(value)) throw new Error(`Choose a supported ${hand === 'picking' ? 'picking' : 'fretting'}-hand value.`);
+  const technical = technicalFor(note);
+  (hand === 'picking' ? pickingMarkers(technical) : frettingMarkers(technical)).forEach(item => technical.removeChild(item));
+  if (value !== 'none') {
+    const marker = document.createElement(hand === 'picking' ? 'other-technical' : 'fingering');
+    if (hand === 'picking') marker.textContent = `TEF fingering ${value}`;
+    else { marker.setAttribute('enclosure', 'circle'); marker.textContent = value === 'T' ? 't' : value; }
+    technical.appendChild(marker);
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+// Writes a canonical bend (or removes all bends with null) on the TAB note
+// and its verified notation partner. This explicit action is also the only
+// way an unsupported imported curve is replaced.
+export function setMusicXmlBend(source: string, score: model.Score, position: TiePosition, bend: NoteBend | null): string {
+  if (bend && (![1, 2, 3, 4].includes(bend.amount) || !['bend', 'release'].includes(bend.shape))) {
+    throw new Error('Choose a bend of 1/2, 1, 1½ or 2 steps with a Bend or Bend and release shape.');
+  }
+  const document = parseDocument(source);
+  const note = annotatedSourceNote(document, score, position);
+  const current = readBend(note).bend;
+  if (bend === null ? current === 'none' : current !== null && current !== 'none' && current.amount === bend.amount && current.shape === bend.shape) return source;
+  const paired = linkedStaffNotes(document)(note);
+  for (const target of [note, ...paired]) {
+    const technical = noteTechnical(target);
+    if (technical) children(technical).filter(item => item.localName === 'bend').forEach(item => technical.removeChild(item));
+    if (!bend) {
+      if (technical && !children(technical).length) technical.parentNode!.removeChild(technical);
+      const notations = child(target, 'notations');
+      if (notations && !children(notations).length) target.removeChild(notations);
+      continue;
+    }
+    const destination = technicalFor(target);
+    const shapes = bend.shape === 'release' ? [false, true] : [false];
+    for (const release of shapes) {
+      const element = document.createElement('bend');
+      setText(element, 'bend-alter', String(bend.amount));
+      if (release) element.appendChild(document.createElement('release'));
+      destination.appendChild(element);
+    }
+  }
+  return new XMLSerializer().serializeToString(document);
+}
