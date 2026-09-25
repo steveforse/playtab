@@ -133,3 +133,35 @@ test('ED-09 promotes a native high-fret edit as one undoable change and saves Mu
   await expect(page.getByRole('heading', { name: 'Promoted provenance' })).toBeVisible();
   await expect(notation.locator('svg text').filter({ hasText: /^28$/ })).toHaveCount(1);
 });
+
+test('ED-03 buffers typed frets until Enter, cancels with Escape and commits once before navigation', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-tie.musicxml');
+  const notation = page.getByTestId('notation');
+  const first = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(first).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const box = (await first.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.press('1');
+  await page.keyboard.press('2');
+  await expect(page.getByText('Fret 12 typed — press Enter to apply or Escape to cancel.')).toBeVisible();
+  await expect(notation.locator('svg text').filter({ hasText: /^(1|12)$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await page.keyboard.press('3');
+  await expect(page.getByText('Use a fret from 0 to 36.')).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(notation.locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(1);
+  await page.keyboard.press('Control+z');
+  await expect(notation.locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
+  await page.keyboard.press('4');
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Fret entry cancelled.')).toBeVisible();
+  await expect(notation.locator('svg text').filter({ hasText: /^4$/ })).toHaveCount(0);
+  await page.keyboard.press('7');
+  await page.keyboard.press('ArrowRight');
+  await expect(notation.locator('svg text').filter({ hasText: /^7$/ })).toHaveCount(1);
+  await expect(page.getByLabel('Selection inspector')).toContainText('Measure 2');
+});

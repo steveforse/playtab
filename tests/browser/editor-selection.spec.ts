@@ -56,6 +56,7 @@ test('ED-02 edits and deletes the selected fret with keyboard input', async ({ p
   // should remain keyboard-editable without another score click.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press('2');
+  await page.keyboard.press('Enter');
   await expect(inspector).toContainText('Fret 12');
 
   await page.keyboard.press('Backspace');
@@ -92,6 +93,7 @@ test('editing a fret keeps the rendered score and page position in place', async
   });
   expect(before.y).toBeGreaterThan(0);
   await page.keyboard.press('1');
+  await page.keyboard.press('Enter');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 1');
   await expect(notation.locator('svg text').filter({ hasText: /^1$/ }).first()).toBeVisible();
   const after = await page.evaluate(() => {
@@ -142,6 +144,7 @@ test('ED-02 edits and deletes an existing imported note', async ({ page }) => {
   await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
   await page.keyboard.press('1');
   await page.keyboard.press('2');
+  await page.keyboard.press('Enter');
   await expect(inspector).toContainText('Fret 12');
   await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(1);
   await page.keyboard.press('Backspace');
@@ -163,6 +166,7 @@ test('edits a private multi-row import through direct pointer and keyboard input
   const box = (await frets.first().boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('7');
+  await page.keyboard.press('Enter');
   await expect(frets.first()).toHaveText('7');
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page.keyboard.press('Delete');
@@ -200,6 +204,7 @@ test('edits paired notation in a saved TEF library document and reopens the corr
   const box = (await note.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('7');
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^7$/ })).toHaveCount(1);
   await page.getByRole('button', { name: 'Save changes' }).click();

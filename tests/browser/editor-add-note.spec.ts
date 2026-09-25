@@ -65,6 +65,7 @@ test('clicking an empty string and entering a two-digit fret stays aligned at 20
   await page.screenshot({ path: testInfo.outputPath('empty-string-position.png') });
   await notation.press('1');
   await notation.press('2');
+  await notation.press('Enter');
   await expect(inspector.locator('.editor-selection-summary')).toContainText('Fret 12');
   await expect(inspector.locator('.editor-selection-summary')).toContainText('String 2');
   const marker = page.locator('.editor-note-selection');
@@ -209,6 +210,7 @@ test('two digit insertion keeps the selected string in the saved Wellerman', asy
   await expect(page.getByRole('button', { name: 'Add note' })).toBeVisible();
   await notation.press('1');
   await notation.press('2');
+  await notation.press('Enter');
   await expect(page.getByLabel('Selection inspector')).toContainText('String 5');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 12');
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -265,6 +267,7 @@ test('captures a two-digit edit inside the saved Wellerman zero chord', async ({
   } });
   await notation.press('1');
   await notation.press('2');
+  await notation.press('Enter');
   await expect(page.getByLabel('Selection inspector').locator('.editor-selection-summary')).toContainText('Fret 12');
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(200);

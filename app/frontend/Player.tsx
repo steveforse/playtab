@@ -531,7 +531,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null, onRenderResult }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null, onRenderResult }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -541,7 +541,10 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   passage?: PlaybackEndpoints | null;
   onSelectionChange?: (selection: ScoreSelection | null) => void;
   onPassageChange?: (passage: PlaybackEndpoints | null) => void;
-  onFretInput?: (selection: ScoreSelection, fret: number, group?: string) => void;
+  // The App owns the visible fret buffer; the surface forwards editing keys.
+  // Returns true when the key was consumed (for example Backspace in a buffer).
+  onFretKey?: (selection: ScoreSelection, key: string) => boolean;
+  onBeforeNavigate?: () => boolean;
   exportBlockedReason?: string | null;
   compactTransportHost?: HTMLElement | null;
   onRenderResult?: (result: { ok: true } | { ok: false; message: string }) => void;
@@ -562,11 +565,9 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const passageRef = useRef<PlaybackEndpoints | null>(passage);
   const selectionCallbackRef = useRef(onSelectionChange);
   const passageCallbackRef = useRef(onPassageChange);
-  const fretInputCallbackRef = useRef(onFretInput);
+  const fretKeyCallbackRef = useRef(onFretKey);
+  const beforeNavigateRef = useRef(onBeforeNavigate);
   const selectionDeleteCallbackRef = useRef(onSelectionDelete);
-  const fretInputRef = useRef('');
-  const fretInputSelectionRef = useRef('');
-  const fretGroup = useRef(0);
   const previousHistoryRevision = useRef(historyRevision);
   const previousSessionKey = useRef(sessionKey);
   const [playbackEndpoints, setPlaybackEndpoints] = useState<PlaybackEndpoints | null>(null);
@@ -579,18 +580,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   updatingScoreRef.current = updatingScore;
   const [playbackMessage, setPlaybackMessage] = useState('');
   playbackEndpointsRef.current = playbackEndpoints;
-  if (previousHistoryRevision.current !== historyRevision) {
-    previousHistoryRevision.current = historyRevision;
-    fretInputRef.current = '';
-    fretInputSelectionRef.current = '';
-    fretGroup.current++;
-  }
+  if (previousHistoryRevision.current !== historyRevision) previousHistoryRevision.current = historyRevision;
   editingRef.current = editing;
   selectionRef.current = selection;
   passageRef.current = passage;
   selectionCallbackRef.current = onSelectionChange;
   passageCallbackRef.current = onPassageChange;
-  fretInputCallbackRef.current = onFretInput;
+  fretKeyCallbackRef.current = onFretKey;
+  beforeNavigateRef.current = onBeforeNavigate;
   selectionDeleteCallbackRef.current = onSelectionDelete;
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -656,7 +653,6 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     api.current = instance;
     const selectNote = (note: model.Note) => {
       if (editingRef.current) {
-        fretInputRef.current = '';
         element.current?.focus({ preventScroll: true });
         const source = note as model.Note & { playtabMappingReason?: string };
         selectionCallbackRef.current?.(selectionFromNote(note, source.playtabMappingReason));
@@ -672,7 +668,6 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
     const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, (selection, extend) => {
       if (editingRef.current) {
-        fretInputRef.current = '';
         element.current?.focus({ preventScroll: true });
         if (extend && selectionRef.current) {
           const anchor = passageRef.current?.start ?? selectionRef.current;
@@ -870,9 +865,11 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   }
 
   function navigateSelection(direction: 'left' | 'right' | 'up' | 'down') {
-    fretInputRef.current = '';
-    const current = selectionRef.current;
     if (!editingRef.current) return;
+    // A valid buffered fret is committed once before moving; an invalid one
+    // keeps the selection so the error can be corrected.
+    if (beforeNavigateRef.current && !beforeNavigateRef.current()) return;
+    const current = selectionRef.current;
     const targets = selectionTargetsForNavigation();
     if (targets.length === 0) return;
     // A keyboard-only user starts from the first event of the score.
@@ -913,30 +910,21 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       navigateSelection(key.slice(5) as 'left' | 'right' | 'up' | 'down');
       return;
     }
+    const current = selectionRef.current;
+    if (!current) return;
     if (key === 'backspace' || key === 'delete') {
-      const current = selectionRef.current;
-      if (!current) return;
       event.preventDefault();
-      fretInputRef.current = '';
-      fretInputSelectionRef.current = '';
+      if (key === 'backspace' && fretKeyCallbackRef.current?.(current, 'Backspace')) return;
       selectionDeleteCallbackRef.current?.(current);
       return;
     }
-    if (/^[0-9]$/.test(event.key)) {
-      const current = selectionRef.current;
-      if (!current || current.string === null) return;
-      event.preventDefault();
-      const identity = `${current.track}:${current.staff}:${current.measure}:${current.event}:${current.voice}:${current.graceIndex ?? ''}:${current.string}`;
-      if (fretInputSelectionRef.current !== identity || fretInputRef.current.length === 2) fretInputRef.current = '';
-      if (!fretInputRef.current) fretGroup.current++;
-      const nextBuffer = `${fretInputRef.current}${event.key}`.slice(0, 2);
-      const fret = Number(nextBuffer);
-      if (fret <= 22) {
-        fretInputRef.current = nextBuffer;
-        fretInputSelectionRef.current = identity;
-        fretInputCallbackRef.current?.(current, fret, `fret-${fretGroup.current}`);
-      }
+    if (/^[0-9]$/.test(event.key) || key === 'enter' || key === 'escape') {
+      if (current.string === null) return;
+      if (fretKeyCallbackRef.current?.(current, event.key)) event.preventDefault();
+      return;
     }
+    // Tab leaves the surface normally after committing a buffered fret.
+    if (key === 'tab') fretKeyCallbackRef.current?.(current, 'Tab');
   }
 
   useEffect(() => {
@@ -945,7 +933,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const onDocumentKeyDown = (event: globalThis.KeyboardEvent) => {
       if (!editingRef.current) return;
       const target = event.target instanceof HTMLElement ? event.target : document.activeElement;
-      if (target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)) return;
+      if (target instanceof HTMLElement && (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'SUMMARY', 'A'].includes(target.tagName)
+        || target.closest('[role="button"], [contenteditable="true"], dialog'))) return;
       handleEditorKeyDown(event);
     };
     document.addEventListener('keydown', onDocumentKeyDown, true);

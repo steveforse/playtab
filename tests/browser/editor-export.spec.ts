@@ -28,6 +28,7 @@ test('ED-22 exports exactly the unsaved draft and leaves the draft untouched', a
   const box = (await first.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('5');
+  await page.keyboard.press('Enter');
   await expect(notation.locator('svg text').filter({ hasText: /^5$/ })).toHaveCount(1);
 
   await page.getByLabel('Fret', { exact: true }).fill('7');

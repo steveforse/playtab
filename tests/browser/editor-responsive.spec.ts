@@ -82,6 +82,7 @@ test('ED-23 keeps selection, draft, range and history when crossing the 800 px b
   expect(small).toEqual([]);
   await tap(page, first);
   await page.keyboard.press('4');
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
   await page.locator('summary', { hasText: /^Select passage$/ }).click();
   await page.getByRole('button', { name: 'Set range start' }).click();
@@ -127,6 +128,7 @@ test('ED-23 completes correction, audition, a technique and save with the keyboa
   await expect(inspector.locator('.editor-selection-summary')).toContainText('Fret 0');
   await expect(inspector.locator('.editor-selection-summary')).toHaveAttribute('aria-live', 'polite');
   await page.keyboard.press('1');
+  await page.keyboard.press('Enter');
   await expect(notation.locator('svg text').filter({ hasText: /^1$/ })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Play', exact: true }).first()).toBeEnabled({ timeout: 45000 });
   await expect(notation).toBeFocused();

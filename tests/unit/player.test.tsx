@@ -291,17 +291,30 @@ describe('notation player', () => {
     expect(onSelection).toHaveBeenCalledTimes(count);
   });
 
-  it('commits multi-digit frets and delegates deletion keys', () => {
-    const onFretInput = vi.fn();
+  it('forwards fret keys to the buffer owner and deletes only when Backspace is not consumed', () => {
+    const consumed = new Set(['1', '2', 'Enter', 'Escape']);
+    const onFretKey = vi.fn((_: unknown, key: string) => consumed.has(key));
     const onSelectionDelete = vi.fn();
+    const onBeforeNavigate = vi.fn(() => false);
     const initial = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null } as any;
-    render(<Player score={demo} editing selection={initial} onFretInput={onFretInput} onSelectionDelete={onSelectionDelete} />);
+    const onSelection = vi.fn();
+    render(<Player score={demo} editing selection={initial} onFretKey={onFretKey} onBeforeNavigate={onBeforeNavigate} onSelectionChange={onSelection} onSelectionDelete={onSelectionDelete} />);
     const notation = screen.getByTestId('notation');
     fireEvent.keyDown(notation, { key: '1' });
     fireEvent.keyDown(notation, { key: '2' });
-    expect(onFretInput).toHaveBeenLastCalledWith(initial, 12, expect.any(String));
+    fireEvent.keyDown(notation, { key: 'Enter' });
+    fireEvent.keyDown(notation, { key: 'Escape' });
+    fireEvent.keyDown(notation, { key: 'Tab' });
+    expect(onFretKey.mock.calls.map(call => call[1])).toEqual(['1', '2', 'Enter', 'Escape', 'Tab']);
+    consumed.add('Backspace');
+    fireEvent.keyDown(notation, { key: 'Backspace' });
+    expect(onSelectionDelete).not.toHaveBeenCalled();
+    consumed.delete('Backspace');
     fireEvent.keyDown(notation, { key: 'Backspace' });
     expect(onSelectionDelete).toHaveBeenCalledWith(initial);
+    fireEvent.keyDown(notation, { key: 'ArrowRight' });
+    expect(onBeforeNavigate).toHaveBeenCalled();
+    expect(onSelection).not.toHaveBeenCalled();
   });
 
   it('initializes alphaTab, drives transport, speed, loop and metronome controls', () => {

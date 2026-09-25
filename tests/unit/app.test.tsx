@@ -20,7 +20,9 @@ const { inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } = vi.h
 const { applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace } = vi.hoisted(() => ({
   applyMusicXmlGraceGroup: vi.fn(), inspectMusicXmlGraceGroup: vi.fn(), removeMusicXmlGraceGroup: vi.fn(), removeMusicXmlGrace: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
-  Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing, exportBlockedReason, onRenderResult }: any) => <>
+  Player: ({ onPreferencesChange, onSelectionChange, onFretKey, onBeforeNavigate, selection, onSelectionDelete, editing, exportBlockedReason, onRenderResult }: any) => <>
+    {['1', '2', '3', '4', '0', 'Enter', 'Escape', 'Backspace', 'Tab'].map(key => <button key={key} type="button" data-testid={`key-${key}`} onClick={() => { if (!onFretKey?.(selection, key) && key === 'Backspace') onSelectionDelete?.(selection); }}>{`Key ${key}`}</button>)}
+    <button type="button" data-testid="navigate" onClick={() => onBeforeNavigate?.()}>Navigate</button>
     <button type="button" data-testid="render-ok" onClick={() => onRenderResult?.({ ok: true })}>Rendered</button>
     <button type="button" data-testid="render-fail" onClick={() => onRenderResult?.({ ok: false, message: 'Layout failed.' })}>Render failed</button>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
@@ -1973,6 +1975,109 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByTestId('render-ok'));
     fireEvent.click(screen.getByTestId('render-fail'));
     expect(screen.getByText('Fret 0')).toBeTruthy();
+  });
+
+  it('buffers typed frets until Enter and commits them once before moving elsewhere', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByTestId('key-1'));
+    fireEvent.click(screen.getByTestId('key-2'));
+    expect(screen.getByText('Fret 12 typed — press Enter to apply or Escape to cancel.')).toBeTruthy();
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByTestId('key-3'));
+    expect(screen.getByText('Use a fret from 0 to 36.')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('key-Backspace'));
+    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('1');
+    fireEvent.click(screen.getByTestId('key-2'));
+    fireEvent.click(screen.getByTestId('key-Enter'));
+    expect(screen.getByText('Fret 12')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByTestId('key-4'));
+    fireEvent.click(screen.getByTestId('key-Escape'));
+    expect(screen.getByText('Fret entry cancelled.')).toBeTruthy();
+    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('0');
+    fireEvent.click(screen.getByTestId('key-Backspace'));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByTestId('key-4'));
+    fireEvent.click(screen.getByTestId('key-Backspace'));
+    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('0');
+    fireEvent.click(screen.getByTestId('key-3'));
+    fireEvent.click(screen.getByTestId('choose-next-note'));
+    expect(screen.getByText('Measure 2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('key-4'));
+    fireEvent.click(screen.getByTestId('key-0'));
+    fireEvent.click(screen.getByTestId('key-Enter'));
+    expect(screen.getByRole('alert').textContent).toContain('Frets must be whole numbers from 0 to 36.');
+    fireEvent.click(screen.getByTestId('choose-next-note'));
+    expect(screen.getAllByText('Measure 1').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByTestId('key-Tab'));
+  });
+
+  it('shows offset and pitch, moves notes keeping fret or pitch, and lists keyboard shortcuts', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    const summary = () => screen.getByLabelText('Selection inspector').querySelector('.editor-selection-summary')!.textContent;
+    expect(summary()).toContain('Offset 0');
+    expect(summary()).toContain('G3');
+    fireEvent.change(screen.getByLabelText('Move to string'), { target: { value: '4' } });
+    expect(screen.getByText('Result: string 4, fret 0, D3.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Move keeps'), { target: { value: 'pitch' } });
+    expect(screen.getByText('Result: string 4, fret 5, G3.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Move to string'), { target: { value: '1' } });
+    expect(screen.getByText('Keeping the pitch would need fret -7 on string 1, outside 0–36.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Move' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(screen.getByLabelText('Move to string'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Move' }));
+    expect(summary()).toContain('String 4');
+    expect(summary()).toContain('Fret 5');
+    expect(summary()).toContain('G3');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    fireEvent.click(screen.getByText('Score', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keyboard help…' }));
+    const help = screen.getByRole('dialog', { name: 'Keyboard help' });
+    expect(help.textContent).toContain('Ctrl/Cmd+S');
+    fireEvent.click(within(help).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Keyboard help' })).toBeNull();
+  });
+
+  it('offers a grace selector and exact offsets on an imported event', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    const beats = [{ notes: [{ string: 3, fret: 2, realValue: 57, id: 5 }], playbackStart: 480, graceType: 1, graceIndex: 0, isRest: false },
+      { notes: [{ string: 3, fret: 0, realValue: 55, id: 1 }], playbackStart: 480, graceType: 0, isRest: false },
+      { notes: [], playbackStart: 1440, graceType: 0, isRest: true }];
+    readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, score: { ...preview.score,
+      tracks: [{ staves: [{ tuning: [62, 59, 55, 50, 67], bars: [{ voices: [{ beats }] }] }] }] } }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-grace'));
+    const summary = () => screen.getByLabelText('Selection inspector').querySelector('.editor-selection-summary')!.textContent;
+    expect(summary()).toContain('Offset 1/2 quarter note');
+    expect(summary()).toContain('A3');
+    const grace = screen.getByLabelText<HTMLSelectElement>('Selection grace');
+    expect(Array.from(grace.options).map(option => option.textContent)).toEqual(['Grace 1', 'Main']);
+    fireEvent.change(grace, { target: { value: '2' } });
+    expect(summary()).toContain('Event 2');
+    expect(summary()).toContain('G3');
+    fireEvent.change(screen.getByLabelText('Selection event'), { target: { value: '3' } });
+    expect(summary()).toContain('Offset 3/2 quarter notes');
+    expect(summary()).toContain('Rest / empty string');
+    expect(screen.queryByLabelText('Selection grace')).toBeNull();
   });
 
   it('blocks an imported deletion with a protected attachment', async () => {

@@ -159,8 +159,19 @@ export function App() {
   const [libraryCollapsed, setLibraryCollapsed] = useState(false);
   const [selection, setSelection] = useState<ScoreSelection | null>(null);
   const [passage, setPassage] = useState<PlaybackEndpoints | null>(null);
-  const [fretDraft, setFretDraft] = useState('');
+  // A fret draft belongs to the selection it was typed for. Keying it this
+  // way means a new selection never inherits the previous note's draft, even
+  // for the render before any effect runs.
+  const selectionFretKey = selection ? `${selection.measure}:${selection.event}:${selection.voice}:${selection.graceIndex ?? ''}:${selection.string}:${selection.noteId}:${selection.fret}` : '';
+  const selectionFretText = selection?.fret === null || selection?.fret === undefined ? '' : String(selection.fret);
+  const [fretEdit, setFretEdit] = useState<{ key: string; value: string; buffer: boolean } | null>(null);
+  const fretDraft = fretEdit?.key === selectionFretKey ? fretEdit.value : selectionFretText;
+  const surfaceBuffer = fretEdit?.key === selectionFretKey && fretEdit.buffer;
+  const setFretDraft = (value: string, buffer = false) => setFretEdit({ key: selectionFretKey, value, buffer });
   const [moveString, setMoveString] = useState('');
+  const [moveMode, setMoveMode] = useState<'fret' | 'pitch'>('fret');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const helpDialog = useRef<HTMLDialogElement>(null);
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
   const [pendingDuplication, setPendingDuplication] = useState<PendingDuplication | null>(null);
   const [pendingMeasureDeletion, setPendingMeasureDeletion] = useState<PendingMeasureDeletion | null>(null);
@@ -414,6 +425,12 @@ export function App() {
     else if (!newScoreOpen && dialog.open) { dialog.close(); if (newScoreOpener.current?.isConnected) newScoreOpener.current.focus({ preventScroll: true }); }
   }, [newScoreOpen]);
   useEffect(() => {
+    const dialog = helpDialog.current;
+    if (!dialog) return;
+    if (helpOpen && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('button')?.focus(); }
+    else if (!helpOpen && dialog.open) dialog.close();
+  }, [helpOpen]);
+  useEffect(() => {
     const dialog = bendDialog.current;
     if (!dialog) return;
     if (bendTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-bend-first]')?.focus(); }
@@ -476,13 +493,45 @@ export function App() {
       return next;
     });
   }
+  // Digits typed on the score build a visible buffer; nothing changes until
+  // Enter, Tab, navigation or another editor action commits it.
+  const fretDraftRef = useRef(fretDraft);
+  fretDraftRef.current = fretDraft;
   useEffect(() => {
-    setFretDraft(selection?.fret === null || selection?.fret === undefined ? '' : String(selection.fret));
     setMoveString(selection?.string ? String(selection.string) : '');
   }, [selection?.noteId, selection?.measure, selection?.event, selection?.string, selection?.fret]);
+  function handleFretKey(target: ScoreSelection, key: string): boolean {
+    const original = target.fret === null ? '' : String(target.fret);
+    if (/^[0-9]$/.test(key)) {
+      if (!surfaceBuffer) { setFretDraft(key, true); setError(''); return true; }
+      if (fretDraftRef.current.length >= 2) { setMessage('Use a fret from 0 to 36.'); return true; }
+      setFretDraft(fretDraftRef.current + key, true);
+      return true;
+    }
+    if (key === 'Escape') {
+      if (!surfaceBuffer && fretDraftRef.current === original) return false;
+      setFretEdit(null); setMessage('Fret entry cancelled.');
+      return true;
+    }
+    if (key === 'Backspace') {
+      if (!surfaceBuffer) return false;
+      const shorter = fretDraftRef.current.slice(0, -1);
+      if (shorter) setFretDraft(shorter, true); else setFretEdit(null);
+      return true;
+    }
+    if (key === 'Enter' || key === 'Tab') {
+      if (fretDraftRef.current === original) return false;
+      const value = fretDraftRef.current;
+      setFretDraft(value);
+      updateSelectionFret(target, Number(value));
+      return true;
+    }
+    return false;
+  }
   function remember(after: Snapshot, description: string, group?: string) {
     setHistory(current => record(current, { before: { document: currentDocument, selection, sourceIdentity: preview?.sourceIdentity }, after, description, group }));
     setDirty(documentKey(after.document) !== savedBaseline.current);
+    setFretEdit(null);
   }
   // The newest revision that the notation actually rendered. A revision that
   // fails to render is undone so the draft, playback and exports stay usable.
@@ -514,6 +563,7 @@ export function App() {
       setPendingTie(null);
       setHistory(result.history);
       setHistoryRevision(value => value + 1);
+      setFretEdit(null);
       setDirty(documentKey(document) !== savedBaseline.current);
       setError(''); setMessage(result.description);
       documentRefocus();
@@ -1376,13 +1426,17 @@ export function App() {
     if (!selection || selection.kind !== 'note' || selection.string === null) return;
     const destination = Number(moveString);
     if (!Number.isInteger(destination) || destination < 1 || destination > 5 || destination === selection.string) return;
-    const after = { ...selection, string: destination };
+    if (!moveOutcome || moveOutcome.reason) { if (moveOutcome?.reason) setError(moveOutcome.reason); return; }
+    const fret = moveOutcome.fret;
+    const after = { ...selection, string: destination, fret };
     if (!updateSelectedScore(selection, notes => {
       const existing = notes.find(note => note.string === selection.string);
       if (!existing) return;
       existing.string = destination;
+      existing.fret = fret;
       notes.sort((left, right) => left.string - right.string);
-    }, note => { note.string = destination; }, after, `Move note to string ${destination}`, undefined, destination)) return;
+    }, note => { note.string = destination; note.fret = fret; }, after,
+    `Move note to string ${destination}${moveMode === 'pitch' ? ` keeping pitch (fret ${fret})` : ''}`, undefined, destination)) return;
     setSelection(after);
   }
   function commitImportedRemoval(nextSource: string, selectionToDelete: ScoreSelection, mode: RemovalMode) {
@@ -1515,7 +1569,7 @@ export function App() {
       return false;
     }
     if (Number(pending.value) === pending.selection.fret) {
-      flushSync(() => setFretDraft(String(pending.selection.fret)));
+      flushSync(() => setFretEdit(null));
       return true;
     }
     const before = documentKey(currentDocumentRef.current);
@@ -1662,6 +1716,54 @@ export function App() {
       requestLeave(() => { load(result.score, text, result.warnings); dialog.current?.close(); });
     } catch (e) { setImportError((e as Error).message); }
   }
+  // Read-only facts about the selected location: exact offset from the bar
+  // start, sounding pitch, grace-group navigation, and string-move outcome.
+  const selectedBeats = selection ? preview?.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats : undefined;
+  const selectedDetails = (() => {
+    if (!selection) return null;
+    const gcd = (left: number, right: number): number => right ? gcd(right, left % right) : left;
+    let numerator = 0; let denominator = 1; let pitch: number | null = null; const tuning = preview ? preview.score.tracks?.[0]?.staves?.[0]?.tuning ?? [] : score.tuning;
+    if (preview) {
+      const beat = selectedBeats?.[selection.event - 1];
+      if (!beat) return null;
+      const ticks = Math.round(beat.playbackStart);
+      const divisor = gcd(ticks, 960) || 960;
+      numerator = ticks / divisor; denominator = 960 / divisor;
+      const note = beat.notes.find(item => selection.string !== null && 6 - item.string === selection.string);
+      pitch = note ? note.realValue : null;
+    } else {
+      const beats = score.measures[selection.measure - 1]?.beats ?? [];
+      const sixteenths = beats.slice(0, selection.event - 1).reduce((sum, beat) => sum + 16 / beat.duration, 0);
+      const divisor = gcd(sixteenths, 4) || 4;
+      numerator = sixteenths / divisor; denominator = 4 / divisor;
+      const note = beats[selection.event - 1]?.notes.find(item => item.string === selection.string);
+      pitch = note ? tuning[note.string - 1] + note.fret : null;
+    }
+    const offset = numerator === 0 ? 'Offset 0' : `Offset ${denominator === 1 ? numerator : `${numerator}/${denominator}`} quarter note${numerator / denominator > 1 ? 's' : ''}`;
+    let grace: { options: { label: string; event: number }[] } | null = null;
+    if (selectedBeats) {
+      const index = selection.event - 1;
+      let destination = index;
+      while (selectedBeats[destination]?.graceType) destination++;
+      let start = destination;
+      while (start > 0 && selectedBeats[start - 1]?.graceType) start--;
+      if (start < destination && selectedBeats[destination]) {
+        grace = { options: [...Array.from({ length: destination - start }, (_, at) => ({ label: `Grace ${at + 1}`, event: start + at + 1 })), { label: 'Main', event: destination + 1 }] };
+      }
+    }
+    return { offset, pitch: pitch === null ? 'Rest / empty string' : midiName(pitch), pitchValue: pitch, tuning, grace };
+  })();
+  const moveOutcome = (() => {
+    if (!selection || selection.kind !== 'note' || selection.fret === null || !selectedDetails || selectedDetails.pitchValue === null) return null;
+    const destination = Number(moveString);
+    if (!Number.isInteger(destination) || destination === selection.string) return null;
+    const fret = moveMode === 'fret' ? selection.fret : selectedDetails.pitchValue - selectedDetails.tuning[destination - 1];
+    const occupied = preview ? selectedBeats?.[selection.event - 1]?.notes.some(note => 6 - note.string === destination)
+      : score.measures[selection.measure - 1]?.beats[selection.event - 1]?.notes.some(note => note.string === destination);
+    const reason = occupied ? `String ${destination} already has a note in this event.`
+      : !Number.isInteger(fret) || fret < 0 || fret > 36 ? `Keeping the pitch would need fret ${fret} on string ${destination}, outside 0–36.` : null;
+    return { destination, fret, pitch: midiName(selectedDetails.tuning[destination - 1] + fret), reason };
+  })();
   const selectedEventCount = selection ? (preview
     ? preview.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats.length ?? 1
     : score.measures[selection.measure - 1]?.beats.length ?? 1) : 1;
@@ -1740,7 +1842,6 @@ export function App() {
       return { picking: null, pickingReason: reason, fretting: null, frettingReason: reason, bend: null, bendReason: reason };
     }
   })();
-  const selectedBeats = selection ? preview?.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats : undefined;
   const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || selectedBeats?.[selection.event - 2]?.graceType));
   const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
@@ -1756,6 +1857,8 @@ export function App() {
               <span>Measure {selection.measure}</span>
               <span>Event {selection.event}</span>
               <span>String {selection.string ?? '—'}</span>
+              {selectedDetails && <span>{selectedDetails.offset}</span>}
+              {selectedDetails && <span>{selectedDetails.pitch}</span>}
               {selection.fret !== null && <span>Fret {selection.fret}</span>}
             </div>
             <div className="editor-selection-fields">
@@ -1763,14 +1866,21 @@ export function App() {
               <label>Event<select aria-label="Selection event" value={selection.event} onChange={event => navigateInspector({ event: Number(event.target.value) })}>{Array.from({ length: Math.max(1, selectedEventCount) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
               <label>Voice<select aria-label="Selection voice" value={selection.voice} onChange={event => navigateInspector({ voice: Number(event.target.value) })}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
               <label>String<select aria-label="Selection string" value={selection.string ?? ''} onChange={event => navigateInspector({ string: event.target.value ? Number(event.target.value) : null })}><option value="">—</option>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+              {selectedDetails?.grace && <label>Grace<select aria-label="Selection grace" value={selection.event}
+                onChange={event => navigateInspector({ event: Number(event.target.value) })}>
+                {selectedDetails.grace.options.map(option => <option key={option.event} value={option.event}>{option.label}</option>)}</select></label>}
             </div>
             {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
             {selection.string !== null && <div className="editor-note-tools">
               <label>{selection.kind === 'note' ? 'Fret' : 'Add fret'}<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => setFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); updateSelectionFret(selection, Number(fretDraft)); } }} /></label>
               <button type="button" onClick={() => updateSelectionFret(selection, Number(fretDraft))}>{selection.kind === 'note' ? 'Apply' : 'Add note'}</button>
+              {surfaceBuffer && <p className="editor-fret-buffer" role="status">Fret {fretDraft} typed — press Enter to apply or Escape to cancel.</p>}
               {selection.kind === 'note' && <>
                 <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => setMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
-                <button type="button" onClick={moveSelectedString} disabled={!moveString || Number(moveString) === selection.string}>Move</button>
+                <label>When moving<select aria-label="Move keeps" value={moveMode} onChange={event => setMoveMode(event.target.value as 'fret' | 'pitch')}>
+                  <option value="fret">Keep fret</option><option value="pitch">Keep pitch</option></select></label>
+                {moveOutcome && <p className="editor-rhythm-reason" role="status">{moveOutcome.reason ?? `Result: string ${moveOutcome.destination}, fret ${moveOutcome.fret}, ${moveOutcome.pitch}.`}</p>}
+                <button type="button" onClick={moveSelectedString} disabled={!moveOutcome || Boolean(moveOutcome.reason)}>Move</button>
                 <button type="button" className="editor-remove-note" onClick={() => requestRemoval(selection)}>Remove note</button>
               </>}
             </div>}
@@ -1861,6 +1971,7 @@ export function App() {
         </div>
         <details className="editor-score-tools"><summary>Score</summary>
           <button type="button" onClick={event => openSettingsDialog(event.currentTarget)}>Score settings…</button>
+          <button type="button" onClick={() => setHelpOpen(true)}>Keyboard help…</button>
         </details>
       </section>;
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
@@ -1902,11 +2013,15 @@ export function App() {
               sourceMeasureId: preview?.sourceIdentity?.measureIds[next.measure - 1],
               sourceEventId: preview?.sourceEventIdByAddress?.get(`${next.measure - 1}:${next.voice}:${next.event - 1}`),
             } : null;
+            // Moving to another location commits a valid buffered fret once;
+            // an invalid one keeps the current selection and its error.
+            if (addressed && pendingFretRef.current && !commitPendingFret()) return;
             setSelection(addressed);
             if (pendingTie && addressed) completeTransition(addressed);
           }}
           onPassageChange={setPassage}
-          onFretInput={updateSelectionFret}
+          onFretKey={handleFretKey}
+          onBeforeNavigate={commitPendingFret}
           onSelectionDelete={requestRemoval}
           exportBlockedReason={pendingFret ? 'Apply or clear the pending fret before exporting.' : null}
           historyRevision={historyRevision}
@@ -2221,6 +2336,23 @@ export function App() {
         <button type="button" onClick={createNewScore}>Create score</button>
       </div>
       </>}
+    </dialog>
+    <dialog ref={helpDialog} className="duplicate-dialog keyboard-help" aria-label="Keyboard help" onCancel={event => { event.preventDefault(); setHelpOpen(false); }}>
+      <h2>Keyboard help</h2>
+      <p>With the score focused in edit mode:</p>
+      <dl>
+        <dt>Arrow keys</dt><dd>Move between events (Left/Right) and strings (Up/Down). The first arrow selects the first event.</dd>
+        <dt>0–9</dt><dd>Type a fret of up to two digits; it is shown but not applied yet.</dd>
+        <dt>Enter or Tab</dt><dd>Apply the typed fret.</dd>
+        <dt>Escape</dt><dd>Cancel the typed fret, or close a dialog.</dd>
+        <dt>Backspace</dt><dd>Remove the last typed digit; with nothing typed, remove the selected note.</dd>
+        <dt>Delete</dt><dd>Remove the selected note.</dd>
+        <dt>Space</dt><dd>Play or pause.</dd>
+        <dt>Shift-click</dt><dd>Extend the passage to the clicked event.</dd>
+        <dt>Ctrl/Cmd+Z</dt><dd>Undo. Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo.</dd>
+        <dt>Ctrl/Cmd+S</dt><dd>Apply a typed fret and save.</dd>
+      </dl>
+      <div className="duplicate-dialog-actions"><button type="button" onClick={() => setHelpOpen(false)}>Close</button></div>
     </dialog>
     <dialog ref={settingsDialog} className="duplicate-dialog settings-dialog" aria-label="Score settings" onCancel={event => { event.preventDefault(); setSettingsTarget(null); }}>
       {settingsTarget && (() => {

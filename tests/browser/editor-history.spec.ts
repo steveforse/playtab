@@ -17,6 +17,7 @@ for (const imported of [false, true]) {
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await page.keyboard.press('1');
     await page.keyboard.press('2');
+    await page.keyboard.press('Enter');
     await expect(frets.filter({ hasText: /^12$/ })).toHaveCount(1);
     await page.keyboard.press('Control+z');
     await expect(frets.filter({ hasText: /^12$/ })).toHaveCount(0);
@@ -28,6 +29,7 @@ for (const imported of [false, true]) {
     await undo.click();
     await expect(frets.filter({ hasText: /^12$/ })).toHaveCount(1);
     await page.keyboard.press('7');
+    await page.keyboard.press('Enter');
     await expect(frets.filter({ hasText: /^7$/ })).toHaveCount(1);
     await expect(redo).toBeDisabled();
     await expect(page.getByRole('alert')).toHaveCount(0);
@@ -54,6 +56,7 @@ test('ED-05 keeps history through saves and tracks the saved baseline', async ({
   const box = (await note.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.keyboard.press('4');
+  await page.keyboard.press('Enter');
   await page.getByRole('button', { name: /Save to library/ }).click();
   await expect(page.getByRole('button', { name: '✓ Saved' })).toBeDisabled();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();

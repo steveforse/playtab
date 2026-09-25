@@ -88,3 +88,5 @@ main{margin-left:300px}
 @media(max-width:800px) and (max-height:600px){.shell.edit-mode:has(.edit-sheet) main{padding-bottom:0;padding-right:min(300px,85vw)}}
 .editor-sidebar button,.editor-sidebar select,.editor-sidebar input{min-height:32px}
 @media(pointer:coarse){.editor-sidebar button,.editor-sidebar select,.editor-sidebar input,.edit-tools-toggle,.edit-mode-toggle,.compact-transport button,.sidebar-playback button{min-height:44px}}
+.editor-fret-buffer{grid-column:1/-1;margin:2px 0 0;font-size:12px;font-weight:600;color:#2c5f8a}
+.keyboard-help dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;margin:8px 0}.keyboard-help dt{font-weight:600;white-space:nowrap}.keyboard-help dd{margin:0}
