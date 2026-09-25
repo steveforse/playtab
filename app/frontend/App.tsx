@@ -484,6 +484,21 @@ export function App() {
     setHistory(current => record(current, { before: { document: currentDocument, selection, sourceIdentity: preview?.sourceIdentity }, after, description, group }));
     setDirty(documentKey(after.document) !== savedBaseline.current);
   }
+  // The newest revision that the notation actually rendered. A revision that
+  // fails to render is undone so the draft, playback and exports stay usable.
+  const lastRenderedKey = useRef<string | null>(null);
+  function handleRenderResult(result: { ok: true } | { ok: false; message: string }) {
+    const key = documentKey(currentDocumentRef.current);
+    if (result.ok) { lastRenderedKey.current = key; return; }
+    if (lastRenderedKey.current !== null && key !== lastRenderedKey.current && history.undo.length) {
+      const description = history.undo.at(-1)!.description;
+      moveHistory('undo');
+      setMessage('');
+      setError(`“${description}” could not be displayed, so it was undone: ${result.message}`);
+      return;
+    }
+    setError(result.message);
+  }
   function moveHistory(direction: 'undo' | 'redo') {
     const result = travel(history, direction);
     if (!result) return;
@@ -1896,6 +1911,7 @@ export function App() {
           exportBlockedReason={pendingFret ? 'Apply or clear the pending fret before exporting.' : null}
           historyRevision={historyRevision}
           compactTransportHost={editMode && narrow && toolsOpen ? sheetTransportHost : null}
+          onRenderResult={handleRenderResult}
           sessionKey={session.current}
         />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>

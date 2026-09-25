@@ -20,7 +20,9 @@ const { inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } = vi.h
 const { applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace } = vi.hoisted(() => ({
   applyMusicXmlGraceGroup: vi.fn(), inspectMusicXmlGraceGroup: vi.fn(), removeMusicXmlGraceGroup: vi.fn(), removeMusicXmlGrace: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
-  Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing, exportBlockedReason }: any) => <>
+  Player: ({ onPreferencesChange, onSelectionChange, onFretInput, onSelectionDelete, editing, exportBlockedReason, onRenderResult }: any) => <>
+    <button type="button" data-testid="render-ok" onClick={() => onRenderResult?.({ ok: true })}>Rendered</button>
+    <button type="button" data-testid="render-fail" onClick={() => onRenderResult?.({ ok: false, message: 'Layout failed.' })}>Render failed</button>
     <button type="button" data-testid="player" onClick={() => onPreferencesChange?.({ speed: 1.1 })}>Player</button>
     <span data-testid="export-blocked">{exportBlockedReason ?? ''}</span>
     {editing && <>
@@ -1950,6 +1952,27 @@ describe('workspace application', () => {
     const other = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
     act(() => { document.body.dispatchEvent(other); });
     expect(other.defaultPrevented).toBe(false);
+  });
+
+  it('undoes a committed edit that fails to render and keeps the last renderable draft', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByTestId('render-fail'));
+    expect(screen.getByRole('alert').textContent).toContain('Layout failed.');
+    fireEvent.click(screen.getByTestId('render-ok'));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply', exact: true }));
+    expect(screen.getByText('Fret 5')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('render-fail'));
+    expect(screen.getByRole('alert').textContent).toContain('“Change fret to 5” could not be displayed, so it was undone: Layout failed.');
+    expect(screen.getByText('Fret 0')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByTestId('render-ok'));
+    fireEvent.click(screen.getByTestId('render-fail'));
+    expect(screen.getByText('Fret 0')).toBeTruthy();
   });
 
   it('blocks an imported deletion with a protected attachment', async () => {
