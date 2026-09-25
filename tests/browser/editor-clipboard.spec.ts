@@ -60,3 +60,66 @@ test('ED-20 copies a whole measure and pastes it before another, keeping interna
   await page.getByRole('button', { name: 'Paste passage…' }).click();
   await expect(dialog.getByRole('alert')).toContainText('The copied measures use staves 1, 2 with tablature on staff 2; this score uses staves 1 with tablature on staff 1.');
 });
+
+test('ED-20 cuts a measure to rests and pastes it over another selected measure', async ({ page }, testInfo) => {
+  let savedSource = '';
+  await page.route('**/api/songs**', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: [] });
+    savedSource = route.request().postDataJSON().score.source;
+    return route.fulfill({ status: 201, json: { id: 93, title: 'Tie exercise', revision: 0 } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
+  const notation = page.getByTestId('notation');
+  let note = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(note).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  let box = (await note.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByRole('combobox', { name: 'Selection voice' }).selectOption('2');
+  await page.locator('summary', { hasText: /^Measure$/ }).click();
+  await page.locator('summary', { hasText: /^Select passage$/ }).click();
+  await page.getByRole('button', { name: 'Set range start' }).click();
+  await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('2');
+  await page.getByRole('combobox', { name: 'Selection event' }).selectOption('3');
+  await page.getByRole('button', { name: 'Set range end' }).click();
+  await page.getByRole('button', { name: 'Cut passage…' }).click();
+  await expect(page.getByRole('alert')).toContainText('Cutting these measures is blocked by a protected keep attachment');
+
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-tie.musicxml');
+  await expect(page.getByRole('heading', { name: 'Tie exercise', level: 1 })).toBeVisible({ timeout: 45000 });
+  if (await page.getByRole('button', { name: 'Edit score', exact: true }).count()) await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  note = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
+  box = (await note.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.locator('summary', { hasText: /^Measure$/ }).click();
+  await page.getByRole('button', { name: 'Select measure' }).click();
+  await page.locator('summary', { hasText: /^Select passage$/ }).click();
+  await page.getByRole('button', { name: 'Cut passage…' }).click();
+  const cut = page.getByRole('dialog', { name: 'Cut passage' });
+  await expect(cut).toContainText('Cut measure 1?');
+  await expect(cut).toContainText('1 note');
+  await cut.screenshot({ path: testInfo.outputPath('cut-dialog.png') });
+  await cut.getByRole('button', { name: 'Cut' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Cut measure 1 to the clipboard; the measures now hold rests.' })).toBeVisible();
+  await expect(notation.locator('svg text').filter({ hasText: /^0$/ })).toHaveCount(1);
+
+  await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('2');
+  await page.getByRole('button', { name: 'Select measure' }).click();
+  await page.getByRole('button', { name: 'Paste passage…' }).click();
+  const paste = page.getByRole('dialog', { name: 'Paste passage' });
+  await paste.getByLabel('Replace selected measures').check();
+  await expect(paste).toContainText('Destination: measures 2–2.');
+  await paste.getByRole('button', { name: 'Paste' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Replaced measures 2–2 with the copied 1 measure.' })).toBeVisible();
+  await page.getByRole('button', { name: '＋ Save to library' }).click();
+  await expect.poll(() => savedSource).not.toBe('');
+  const measures = new DOMParser().parseFromString(savedSource, 'application/xml').getElementsByTagName('measure');
+  expect(measures).toHaveLength(2);
+  expect(measures[0].getElementsByTagName('pitch')).toHaveLength(0);
+  expect(measures[0].getElementsByTagName('rest').length).toBeGreaterThan(0);
+  expect(measures[1].getElementsByTagName('fret')[0].textContent).toBe('0');
+  expect(measures[1].getElementsByTagName('type')[0].textContent).toBe('whole');
+});

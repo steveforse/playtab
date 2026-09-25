@@ -3353,8 +3353,9 @@ function attributeValues(attributes: Element | undefined) {
 // the timing that was in effect before.
 export function pasteMusicXmlMeasures(source: string, score: model.Score, clipboard: MeasureClipboard, measureIndex: number,
   mode: PasteMode, pitchMode: TuningMode): string {
-  if (mode !== 'insert') throw new Error('Replacing measures is not available yet.');
+  if (mode !== 'insert' && mode !== 'replace') throw new Error('Choose Insert measures before or Replace selected measures.');
   if (pitchMode !== 'frets' && pitchMode !== 'pitches') throw new Error('Choose Keep frets or Keep pitches.');
+  if (mode === 'replace') return replaceMusicXmlMeasures(source, score, clipboard, measureIndex, pitchMode);
   const document = parseDocument(source);
   const part = descendants(document.documentElement, 'part')[0];
   const measures = part ? directMeasures(part) : [];
@@ -3407,7 +3408,12 @@ export function pasteMusicXmlMeasures(source: string, score: model.Score, clipbo
     }
   }
   if (sequential) directMeasures(part).forEach((measure, index) => measure.setAttribute('number', String(index + 1)));
-  const pastedSet = new Set(pasted);
+  convertPastedTuning(document, new Set(pasted), clipboard, destinationTuning, pitchMode, measureIndex);
+  return new XMLSerializer().serializeToString(document);
+}
+
+function convertPastedTuning(document: Document, pastedSet: Set<Element>, clipboard: MeasureClipboard, destinationTuning: number[],
+  pitchMode: TuningMode, measureIndex: number) {
   const linked = linkedStaffNotes(document);
   const changes: (() => void)[] = [];
   for (const record of sourceTabNoteRecords(document).filter(item => pastedSet.has(item.note.parentNode as Element))) {
@@ -3427,7 +3433,109 @@ export function pasteMusicXmlMeasures(source: string, score: model.Score, clipbo
     }
   }
   changes.forEach(change => change());
+}
+
+const MUSIC_CONTENT = new Set(['note', 'backup', 'forward', 'harmony', 'figured-bass']);
+// Directions that only carry text or labels are musical content; tempo and
+// other playback directions belong to the measure and stay.
+function isLabelDirection(item: Element) {
+  if (item.localName !== 'direction') return false;
+  const types = children(item).filter(entry => entry.localName === 'direction-type').flatMap(entry => children(entry));
+  return types.length > 0 && types.every(entry => entry.localName === 'words' || entry.localName === 'rehearsal')
+    && !child(item, 'sound');
+}
+
+function rangeGuard(measures: Element[], first: number, last: number, action: string) {
+  const range = measures.slice(first, last + 1);
+  const crossing = crossingSpans(range, range.map(measure => measure.cloneNode(true) as Element));
+  if (crossing.length) throw new Error(`${action} would split ${crossing.join(' and ')}. Remove it first.`);
+  for (const note of range.flatMap(measure => children(measure).filter(item => item.localName === 'note'))) {
+    const attachment = protectedNoteAttachment(note);
+    if (attachment && attachment !== 'lyric') throw new Error(`${action} is blocked by a protected ${attachment} attachment that Playtab cannot remove safely.`);
+  }
+}
+
+function replaceMusicXmlMeasures(source: string, score: model.Score, clipboard: MeasureClipboard, first: number, pitchMode: TuningMode): string {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measures = part ? directMeasures(part) : [];
+  const last = first + clipboard.measures.length - 1;
+  if (!part || measures.length !== score.masterBars.length || !measures[first]) throw new Error('The destination measure cannot be identified safely.');
+  if (!clipboard.measures.length) throw new Error('The clipboard is empty.');
+  if (last >= measures.length) throw new Error(`Replacing needs ${clipboard.measures.length} measures from measure ${first + 1}, but the score ends at measure ${measures.length}.`);
+  const tabStaff = sourceTabStaff(document);
+  const staves = staffNumbers(measures);
+  if (clipboard.tabStaff !== tabStaff || staves.join(',') !== clipboard.staves.join(',')) {
+    throw new Error(`The copied measures use staves ${clipboard.staves.join(', ')} with tablature on staff ${clipboard.tabStaff}; this score uses staves ${staves.join(', ')} with tablature on staff ${tabStaff}.`);
+  }
+  clipboard.meters.forEach((meter, index) => {
+    const bar = score.masterBars[first + index];
+    const destination = `${bar.timeSignatureNumerator}/${bar.timeSignatureDenominator}`;
+    if (meter !== destination) throw new Error(`Copied measure ${index + 1} is in ${meter}, but measure ${first + index + 1} is in ${destination}. Replace needs matching meters.`);
+  });
+  rangeGuard(measures, first, last, 'Replacing these measures');
+  const destinationTuning = effectiveTabTuning(measures, first, tabStaff, [...(score.tracks?.[0]?.staves?.[0]?.tuning ?? [])]);
+  let clipDivisions: bigint | null = null;
+  const replaced: Element[] = [];
+  clipboard.measures.forEach((xml, index) => {
+    const incoming = parseMeasure(xml);
+    const ownDivisions = text(descendants(incoming, 'divisions')[0]);
+    if (ownDivisions) clipDivisions = BigInt(ownDivisions);
+    const target = measures[first + index];
+    const destinationDivisions = sourceDivisions(part, first + index);
+    const kept = children(target).filter(item => !MUSIC_CONTENT.has(item.localName) && !isLabelDirection(item));
+    const onsets = measureTimeline(part, first + index).onsets;
+    if (kept.some(item => item.localName === 'direction' && onsets.get(item) && onsets.get(item)![0] !== 0n)) {
+      throw new Error(`Measure ${first + index + 1} has a tempo or playback direction inside the bar; replacing its notes would move it.`);
+    }
+    if (clipDivisions !== destinationDivisions && kept.some(item => child(item, 'offset'))) {
+      throw new Error(`Measure ${first + index + 1} has a positioned direction in different timing units; it cannot be replaced safely.`);
+    }
+    children(target).filter(item => !kept.includes(item)).forEach(item => target.removeChild(item));
+    const anchor = children(target).find(item => item.localName === 'barline' && item.getAttribute('location') === 'right') ?? null;
+    // The destination keeps its own tempo and playback directions.
+    for (const item of children(incoming).filter(entry => !['attributes', 'barline', 'print', 'sound'].includes(entry.localName)
+      && (entry.localName !== 'direction' || isLabelDirection(entry)))) {
+      target.insertBefore(document.importNode(item, true), anchor);
+    }
+    if (clipDivisions !== destinationDivisions) {
+      setMeasureDivisions(target, clipDivisions!);
+      const next = measures[first + index + 1];
+      if (next && !descendants(next, 'divisions').length) setMeasureDivisions(next, destinationDivisions);
+    }
+    replaced.push(target);
+  });
+  convertPastedTuning(document, new Set(replaced), clipboard, destinationTuning, pitchMode, first);
   return new XMLSerializer().serializeToString(document);
+}
+
+export type MeasureCut = { source: string; clipboard: MeasureClipboard; notes: number; labels: number; lyrics: number; spans: string[] };
+
+// Cut copies whole measures, then leaves rests of the same length at the
+// same onsets, so bar count, meter and later timing do not move.
+export function cutMusicXmlMeasures(source: string, score: model.Score, first: number, last: number): MeasureCut {
+  const clipboard = copyMusicXmlMeasures(source, score, first, last);
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0]!;
+  const measures = directMeasures(part);
+  rangeGuard(measures, first, last, 'Cutting these measures');
+  let notes = 0; let labels = 0; let lyrics = 0;
+  const spans = new Set<string>();
+  for (const measure of measures.slice(first, last + 1)) {
+    for (const item of children(measure)) {
+      if (item.localName === 'harmony' || isLabelDirection(item)) { labels++; measure.removeChild(item); continue; }
+      if (item.localName !== 'note') continue;
+      if (!child(item, 'rest')) notes++;
+      lyrics += children(item).filter(entry => entry.localName === 'lyric').length;
+      attachedDependencies([item]).forEach(label => spans.add(label));
+      if (child(item, 'grace') || child(item, 'chord')) { measure.removeChild(item); continue; }
+      if (child(item, 'rest')) { children(item).filter(entry => entry.localName === 'lyric').forEach(entry => item.removeChild(entry)); continue; }
+      children(item).filter(entry => !['duration', 'voice', 'type', 'dot', 'time-modification', 'staff'].includes(entry.localName))
+        .forEach(entry => item.removeChild(entry));
+      item.insertBefore(document.createElement('rest'), children(item)[0] ?? null);
+    }
+  }
+  return { source: new XMLSerializer().serializeToString(document), clipboard, notes, labels, lyrics, spans: [...spans] };
 }
 
 function parseMeasure(xml: string) {
