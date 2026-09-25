@@ -676,6 +676,29 @@ describe('notation player', () => {
     expect(screen.getByRole('alert').textContent).toContain('print preview window was blocked');
   });
 
+  it('exports only a finished draft, names MusicXML with plain spaces, and explains a blocked export', () => {
+    const { rerender } = render(<Player score={demo} preview={{ ...preview, source: '<score-partwise edited="yes"/>', score: { ...preview.score, title: 'Tie exercise' } }} />);
+    const button = screen.getByRole('button', { name: 'Export', exact: true });
+    expect(button.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText('Export is available once the score finishes rendering.')).toBeTruthy();
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    act(() => { api.playerReady.emit(); api.renderFinished.emit(); });
+    expect(button.hasAttribute('disabled')).toBe(false);
+    expect(screen.queryByText('Export is available once the score finishes rendering.')).toBeNull();
+    const names: string[] = [];
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:draft') });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { names.push(this.download); });
+    fireEvent.click(button);
+    expect(screen.getByRole('option', { name: 'MusicXML (.musicxml)' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Export format'), { target: { value: 'musicxml' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Export file', exact: true }));
+    expect(names).toEqual(['Tie exercise.musicxml']);
+    rerender(<Player score={demo} preview={{ ...preview, score: { ...preview.score, title: 'Tie exercise' } }} exportBlockedReason="Apply or clear the pending fret before exporting." />);
+    expect(screen.getByRole('button', { name: 'Export', exact: true }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText('Apply or clear the pending fret before exporting.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export file', exact: true, hidden: true }).hasAttribute('disabled')).toBe(true);
+  });
+
   it('offers chord diagrams separately from imported chord names', () => {
     const chordPreview = { ...preview, chordDiagrams: [{ name: 'C', strings: [0, 0, 0, 2, 0], firstFret: 1, barreFrets: [] }] };
     const api = readyPlayer(chordPreview);
