@@ -9,7 +9,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
-  type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
+  inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, type ChordSpelling } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
 vi.stubGlobal('XMLSerializer', XMLSerializer);
@@ -246,6 +246,86 @@ describe('ED-16 grace editing and removal', () => {
     expect(protectedGrace).not.toBe(rich);
     expect(() => removeMusicXmlGrace(protectedGrace, graceTarget(protectedGrace).score, { measure: 0, beat, voice, string: 4 }))
       .toThrow('protected notehead attachment');
+  });
+});
+
+describe('ED-18 timed and standalone lyrics', () => {
+  const score = (source = rich) => readMusicXml(source, 'rich.musicxml').score;
+  const m1e2 = { measure: 0, beat: 1, voice: 1 };
+  const m1e3 = { measure: 0, beat: 2, voice: 1 };
+  const lyricXml = (source: string) => Array.from(new DOMParser().parseFromString(source, 'application/xml').getElementsByTagName('lyric'))
+    .map(lyric => `${lyric.getAttribute('number') || '-'}:${lyric.getElementsByTagName('syllabic')[0]?.textContent}:${lyric.getElementsByTagName('text')[0]?.textContent}`);
+
+  it('edits one verse on the selected event in both staves and leaves other verses alone', () => {
+    expect(inspectMusicXmlLyrics(rich, score(), m1e2)).toEqual([{ verse: 1, text: 'Low', syllabic: 'single' }]);
+    const second = setMusicXmlLyric(rich, score(), m1e2, 2, { text: ' High ', syllabic: 'begin' });
+    expect(lyricXml(second)).toEqual(['-:single:Low', '2:begin:High', '-:single:Low', '2:begin:High']);
+    const changed = setMusicXmlLyric(second, score(second), m1e2, 1, { text: 'Lo', syllabic: 'end' });
+    expect(lyricXml(changed)).toEqual(['1:end:Lo', '2:begin:High', '1:end:Lo', '2:begin:High']);
+    expect(inspectMusicXmlLyrics(changed, score(changed), m1e2)).toEqual([{ verse: 1, text: 'Lo', syllabic: 'end' }, { verse: 2, text: 'High', syllabic: 'begin' }]);
+    const beat = score(changed).tracks[0].staves[0].bars[0].voices[1].beats[1];
+    expect(beat.lyrics).toEqual(['Lo', 'High']);
+    const next = setMusicXmlLyric(changed, score(changed), m1e3, 1, { text: 'down', syllabic: 'single' });
+    expect(inspectMusicXmlLyrics(next, score(next), m1e3)).toEqual([{ verse: 1, text: 'down', syllabic: 'single' }]);
+    expect(inspectMusicXmlLyrics(next, score(next), m1e2)).toHaveLength(2);
+    const removed = setMusicXmlLyric(next, score(next), m1e2, 2, null);
+    expect(lyricXml(removed)).toEqual(['1:end:Lo', '1:single:down', '1:end:Lo', '1:single:down']);
+    expect(setMusicXmlLyric(removed, score(removed), m1e2, 2, null)).toBe(removed);
+    expect(removed).toContain('<hammer-on type="start">H</hammer-on>');
+  });
+
+  it('requires Remove lyric for empty text and enforces limits before mutation', () => {
+    expect(() => setMusicXmlLyric(rich, score(), m1e2, 1, { text: '  ', syllabic: 'single' })).toThrow('Use Remove lyric to clear a verse.');
+    expect(() => setMusicXmlLyric(rich, score(), m1e2, 1, { text: 'x'.repeat(161), syllabic: 'single' })).toThrow('1–160 characters');
+    expect(() => setMusicXmlLyric(rich, score(), m1e2, 9, { text: 'x', syllabic: 'single' })).toThrow('verse from 1 to 8');
+    expect(() => setMusicXmlLyric(rich, score(), m1e2, 1, { text: 'x', syllabic: 'both' as 'single' })).toThrow('Single, Begin, Middle, or End');
+    expect(() => inspectMusicXmlLyrics(rich, score(), { measure: 0, beat: 0, voice: 1 })).toThrow('Select an ordinary event');
+  });
+
+  it('keeps unfamiliar lyric settings read-only', () => {
+    const variants: [string, string][] = [
+      ['<lyric><syllabic>single</syllabic><text>Low</text><extend/></lyric>', 'Verse 1 has an extension line; it is kept as written.'],
+      ['<lyric><syllabic>single</syllabic><text>Low</text><elision/><text>er</text></lyric>', 'Verse 1 has a elision setting; it is kept as written.'],
+      ['<lyric default-y="-80"><syllabic>single</syllabic><text>Low</text></lyric>', 'Verse 1 has lyric styling; it is kept as written.'],
+      ['<lyric><syllabic>single</syllabic><text>Low</text></lyric><lyric number="1"><text>Again</text></lyric>', 'Verse 1 has more than one lyric on this event; it is kept as written.'],
+      ['<lyric number="chorus"><syllabic>single</syllabic><text>Low</text></lyric>', 'The lyric verse “chorus” is kept as written.'],
+    ];
+    for (const [lyric, reason] of variants) {
+      const source = rich.replaceAll('<lyric><syllabic>single</syllabic><text>Low</text></lyric>', lyric);
+      const found = inspectMusicXmlLyrics(source, score(source), m1e2);
+      expect(found.map(item => item.reason)).toContain(reason);
+      if (!lyric.includes('chorus')) expect(() => setMusicXmlLyric(source, score(source), m1e2, 1, { text: 'x', syllabic: 'single' })).toThrow(reason);
+    }
+    const layout = rich.replaceAll('<syllabic>single</syllabic><text>Low</text>', '<syllabic>single</syllabic><text>Low</text><text>er</text>');
+    expect(inspectMusicXmlLyrics(layout, score(layout), m1e2)[0].reason).toContain('lyric layout');
+  });
+
+  it('keeps an event lyric when its first chord note is removed', () => {
+    const chord = addMusicXmlNote(rich, score(), { measure: 0, beat: 1, voice: 1, string: 5, fret: 0 });
+    const removed = removeMusicXmlNotes(chord, score(chord), { measure: 0, beat: 1, voice: 1, string: 4 })!;
+    expect(removed.source.match(/<text>Low<\/text>/g)).toHaveLength(2);
+    expect(inspectMusicXmlLyrics(removed.source, score(removed.source), m1e2)).toEqual([{ verse: 1, text: 'Low', syllabic: 'single' }]);
+    const rest = removeMusicXmlNotes(rich, score(), { measure: 0, beat: 1, voice: 1 })!;
+    expect(rest.source.match(/<text>Low<\/text>/g)).toHaveLength(2);
+    const graceLyric = rich.replace('<grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><voice>2</voice><type>16th</type><staff>2</staff><notations><technical><string>4</string><fret>0</fret></technical></notations>',
+      '<grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><voice>2</voice><type>16th</type><staff>2</staff><notations><technical><string>4</string><fret>0</fret></technical></notations><lyric><text>ah</text></lyric>');
+    expect(graceLyric).toContain('<text>ah</text>');
+    const graceBeat = score(graceLyric).tracks[0].staves[0].bars[0].voices[1].beats.findIndex(beat => beat.graceType);
+    expect(() => removeMusicXmlGrace(graceLyric, score(graceLyric), { measure: 0, beat: graceBeat, voice: 1, string: 4 })).toThrow('protected lyric attachment');
+  });
+
+  it('keeps standalone lyrics distinct, multiline, limited, and removable', () => {
+    const text = 'VERSE 1\n  C        G\nOh the wind\n\nCHORUS\nLine two';
+    const withText = setMusicXmlStandaloneLyrics(rich, text);
+    const preview = readMusicXml(withText, 'rich.musicxml');
+    expect(preview.lyricsSection).toBe(text);
+    expect(inspectMusicXmlLyrics(withText, preview.score, m1e2)).toEqual([{ verse: 1, text: 'Low', syllabic: 'single' }]);
+    const replaced = setMusicXmlStandaloneLyrics(withText, 'Just one line');
+    expect(readMusicXml(replaced, 'rich.musicxml').lyricsSection).toBe('Just one line');
+    const cleared = setMusicXmlStandaloneLyrics(replaced, '   ');
+    expect(readMusicXml(cleared, 'rich.musicxml').lyricsSection).toBeNull();
+    expect(cleared).not.toContain('playtab-lyrics');
+    expect(() => setMusicXmlStandaloneLyrics(rich, 'x'.repeat(20_001))).toThrow('limited to 20,000 characters');
   });
 });
 

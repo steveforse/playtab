@@ -23,7 +23,7 @@ test('ED-18 anchors a chord, section and annotation at the selected event and ke
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
   await selectEvent(page, '2', '2', '3');
-  await page.getByText('Text', { exact: true }).click();
+  await page.locator('summary', { hasText: /^Text$/ }).click();
   await page.getByRole('button', { name: 'Chord name…' }).click();
   let dialog = page.getByRole('dialog', { name: 'Chord name' });
   await dialog.getByLabel('Quality').selectOption('minor');
@@ -59,7 +59,7 @@ test('ED-18 anchors a chord, section and annotation at the selected event and ke
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles({ name: 'reopened.musicxml', mimeType: 'application/xml', buffer: Buffer.from(savedSource) });
   await selectEvent(page, '2', '2', '3');
-  await page.getByText('Text', { exact: true }).click();
+  await page.locator('summary', { hasText: /^Text$/ }).click();
   await page.getByRole('button', { name: 'Chord name…' }).click();
   dialog = page.getByRole('dialog', { name: 'Chord name' });
   await expect(dialog.getByLabel('Existing item')).toHaveValue('0');
@@ -68,4 +68,51 @@ test('ED-18 anchors a chord, section and annotation at the selected event and ke
   await expect(page.getByRole('status').filter({ hasText: 'Chord “Cm” removed from measure 2, event 3.' })).toBeVisible();
   await expect(notation.locator('svg text').filter({ hasText: /^Cm$/ })).toHaveCount(0);
   await expect(notation.locator('svg text').filter({ hasText: /^Let ring$/ })).toHaveCount(1);
+});
+
+test('ED-18 edits a timed lyric verse and the separate Lyrics & chords text', async ({ page }, testInfo) => {
+  let savedSource = '';
+  await page.route('**/api/songs**', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: [] });
+    savedSource = route.request().postDataJSON().score.source;
+    return route.fulfill({ status: 201, json: { id: 89, title: 'Rich editor exercise', revision: 0 } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
+  await selectEvent(page, '1', '2', '2');
+  await page.locator('summary', { hasText: /^Text$/ }).click();
+  await page.getByRole('button', { name: 'Lyric syllable…' }).click();
+  let dialog = page.getByRole('dialog', { name: 'Lyric syllable' });
+  await expect(dialog.getByLabel('Lyric text')).toHaveValue('Low');
+  await dialog.getByLabel('Verse').selectOption('2');
+  await dialog.getByLabel('Lyric text').fill('High');
+  await dialog.getByLabel('Syllabic').selectOption('begin');
+  await dialog.screenshot({ path: testInfo.outputPath('lyric-dialog.png') });
+  await dialog.getByRole('button', { name: 'Apply lyric' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Verse 2 lyric “High” applied at measure 1, event 2.' })).toBeVisible();
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg text').filter({ hasText: /^High/ })).toHaveCount(1);
+  await expect(notation.locator('svg text').filter({ hasText: /^Low$/ })).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Lyrics & chords…' }).click();
+  dialog = page.getByRole('dialog', { name: 'Lyrics and chords text' });
+  await dialog.getByLabel('Lyrics and chords text').fill('VERSE 1\n  C       G\nLow and high\n\nCHORUS\nSing it again');
+  await dialog.getByRole('button', { name: 'Apply text' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Lyrics & chords text updated.' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Lyrics & chords' }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Lyrics & chords' })).toContainText('Sing it again');
+  await page.getByRole('tab', { name: 'Tablature' }).click();
+  await page.getByRole('button', { name: '＋ Save to library' }).click();
+  await expect.poll(() => savedSource).not.toBe('');
+  expect(savedSource.match(/<lyric number="2"><syllabic>begin<\/syllabic><text>High<\/text><\/lyric>/g)).toHaveLength(2);
+  expect(savedSource.match(/<text>Low<\/text>/g)).toHaveLength(2);
+  expect(savedSource).toContain('LYRICS &amp; CHORDS\n\nVERSE 1\n  C       G\nLow and high\n\nCHORUS\nSing it again');
+
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles({ name: 'reopened.musicxml', mimeType: 'application/xml', buffer: Buffer.from(savedSource) });
+  await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^High/ })).toHaveCount(1, { timeout: 45000 });
+  await page.getByRole('tab', { name: 'Lyrics & chords' }).click();
+  await expect(page.locator('#tab-lyrics-content pre')).toHaveText('VERSE 1\n  C       G\nLow and high\n\nCHORUS\nSing it again');
 });
