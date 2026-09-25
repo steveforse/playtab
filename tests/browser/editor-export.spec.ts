@@ -56,7 +56,7 @@ test('ED-22 exports exactly the unsaved draft and leaves the draft untouched', a
   await exportAs(page, 'pdf');
   const printPreview = await popup;
   await expect(printPreview.locator('svg text').filter({ hasText: /^5$/ })).toHaveCount(1);
-  await expect(printPreview.locator('.editor-note-selection, .editor-passage-selection, .editor-playback-selection')).toHaveCount(0);
+  await expect(printPreview.locator('.editor-note-selection, .editor-passage-selection, .editor-range-endpoint, .editor-playback-selection')).toHaveCount(0);
   await printPreview.close();
 
   const tef = page.waitForEvent('download');
