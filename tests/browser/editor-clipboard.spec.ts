@@ -48,6 +48,7 @@ test('ED-20 copies a whole measure and pastes it before another, keeping interna
   expect(measures[0].getElementsByTagName('tied')).toHaveLength(0);
   expect(measures[1].getElementsByTagName('repeat')).toHaveLength(1);
 
+  await page.getByRole('button', { name: 'Done editing' }).click();
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-tie.musicxml');
   const other = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
@@ -87,6 +88,7 @@ test('ED-20 cuts a measure to rests and pastes it over another selected measure'
   await page.getByRole('button', { name: 'Cut passage…' }).click();
   await expect(page.getByRole('alert')).toContainText('Cutting these measures is blocked by a protected keep attachment');
 
+  await page.getByRole('button', { name: 'Done editing' }).click();
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-tie.musicxml');
   await expect(page.getByRole('heading', { name: 'Tie exercise', level: 1 })).toBeVisible({ timeout: 45000 });

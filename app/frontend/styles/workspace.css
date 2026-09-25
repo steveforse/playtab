@@ -1,0 +1,401 @@
+/* The edit workspace: title bar, ribbon, score canvas, properties column. */
+:root {
+  --edit-titlebar: 56px;
+  --edit-ribbon: 48px;
+  --edit-properties: 300px;
+}
+.shell.edit-mode .sidebar {
+  display: none;
+}
+.shell.edit-mode main {
+  margin-left: 0;
+  padding-right: var(--edit-properties);
+}
+/* Only the vertical padding changes: the score keeps its view-mode width,
+   so entering edit mode does not re-lay out the notation. */
+.shell.edit-mode .workspace {
+  padding-top: 20px;
+  padding-bottom: 32px;
+}
+.edit-chrome {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 26;
+  margin-right: calc(-1 * var(--edit-properties));
+}
+.edit-titlebar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--edit-titlebar);
+  padding: 0 14px 0 20px;
+  background: #fff;
+  border-bottom: 1px solid var(--rule);
+}
+.edit-titlebar h1 {
+  flex: 0 1 auto;
+  margin: 0;
+  min-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 18px;
+  font-weight: 400;
+}
+.edit-save-pill {
+  margin: 0;
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: var(--accent);
+  color: #4b5a22;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.edit-titlebar-spacer {
+  flex: 1;
+}
+.edit-titlebar-history,
+.edit-titlebar-transport,
+.edit-titlebar-export {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.edit-titlebar-history,
+.edit-titlebar-transport {
+  padding-right: 10px;
+  border-right: 1px solid var(--rule);
+}
+.edit-titlebar .command-button.icon-only,
+.edit-transport-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+}
+.edit-titlebar .command-button.icon-only:hover:not(:disabled),
+.edit-transport-button:hover:not(:disabled),
+.edit-transport-text:hover:not(:disabled) {
+  background: #eef2e8;
+  border-color: var(--rule);
+}
+.edit-transport-button[aria-pressed="true"] {
+  color: #3d7a35;
+  background: #e3eed8;
+  border-color: #a9c39b;
+}
+.edit-transport {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.edit-play {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--green);
+  color: #fff;
+}
+.edit-play:hover:not(:disabled) {
+  background: #476348;
+}
+.edit-transport-text {
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.edit-time {
+  min-width: 74px;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.edit-playing-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 9px;
+  border-radius: 99px;
+  background: #e3eed8;
+  color: #3d6a35;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.edit-playing-range button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+}
+.edit-playback-message {
+  color: var(--label);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.edit-popover-anchor {
+  position: relative;
+  display: inline-flex;
+}
+.edit-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: 12px;
+  width: 280px;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px var(--shadow);
+  color: var(--ink);
+}
+.edit-popover .speed-control,
+.edit-popover .volume-control,
+.edit-popover .soundfont-control {
+  margin: 0;
+}
+.edit-view-popover .layout-controls {
+  display: grid;
+  gap: 10px;
+}
+.edit-view-popover .layout-controls label {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.edit-view-popover .layout-controls .layout-checkbox {
+  grid-template-columns: auto 1fr;
+}
+.edit-titlebar-export .export-button {
+  height: 32px;
+  padding: 0 10px;
+}
+.edit-titlebar-export .export-blocked {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.edit-titlebar .score-more summary {
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
+.edit-titlebar .save-button,
+.edit-titlebar .edit-mode-toggle,
+.edit-tools-toggle {
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.edit-titlebar .edit-mode-toggle {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+  font-weight: 600;
+}
+.edit-ribbon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--edit-ribbon);
+  padding: 0 14px 0 20px;
+  background: #fff;
+  border-bottom: 1px solid var(--rule);
+}
+.edit-ribbon .editor-toolbar {
+  position: static;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.edit-ribbon-view {
+  flex: none;
+  display: flex;
+}
+.edit-view-button {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+.edit-view-button:hover,
+.edit-view-button[aria-expanded="true"] {
+  background: #eef2e8;
+  border-color: var(--rule);
+}
+.edit-properties {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + var(--edit-titlebar) + var(--edit-ribbon));
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  width: var(--edit-properties);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #f1f4ec;
+  border-left: 1px solid var(--rule);
+}
+.edit-properties .editor-sidebar {
+  display: block;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+@media (max-width: 1100px) {
+  :root {
+    --edit-properties: 220px;
+  }
+  .edit-time {
+    display: none;
+  }
+}
+@media (max-width: 800px) {
+  .shell.edit-mode main {
+    padding-right: 0;
+  }
+  :root {
+    --edit-titlebar: 100px;
+  }
+  .edit-chrome {
+    margin-right: 0;
+  }
+  .shell.edit-mode .workspace {
+    padding-top: 14px;
+  }
+  .edit-titlebar {
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    padding: 6px 8px;
+  }
+  .edit-playback-message {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .edit-titlebar h1,
+  .edit-save-pill,
+  .edit-titlebar-export,
+  .edit-playing-range,
+  .edit-transport-text:not([aria-label="Playback settings"]) {
+    display: none;
+  }
+  .edit-ribbon {
+    padding: 0 8px;
+  }
+  .edit-properties-sheet {
+    z-index: 30;
+    top: auto;
+    left: 0;
+    width: auto;
+    max-height: 50vh;
+    border-left: 0;
+    border-top: 1px solid var(--edge);
+    box-shadow: 0 -8px 24px var(--shadow);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .edit-properties-sheet .edit-sheet-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 14px;
+    background: #f1f4ec;
+    border-bottom: 1px solid var(--rule);
+  }
+  .edit-properties-sheet .edit-sheet-header button {
+    min-height: 44px;
+    padding: 0 14px;
+  }
+  .shell.edit-mode:has(.edit-properties-sheet) main {
+    padding-bottom: 52vh;
+  }
+}
+@media (max-width: 800px) and (max-height: 600px) {
+  .edit-properties-sheet {
+    top: calc(env(safe-area-inset-top, 0px) + var(--edit-titlebar) + var(--edit-ribbon));
+    left: auto;
+    width: min(300px, 85vw);
+    max-height: none;
+    border-top: 0;
+    border-left: 1px solid var(--edge);
+    box-shadow: -8px 0 24px var(--shadow);
+  }
+  .shell.edit-mode:has(.edit-properties-sheet) main {
+    padding-bottom: 0;
+    padding-right: min(300px, 85vw);
+  }
+}
+@media (pointer: coarse) {
+  .edit-transport-button,
+  .edit-play,
+  .edit-titlebar .command-button.icon-only {
+    width: 44px;
+    height: 44px;
+  }
+}
+/* Keep alphaTab's highlight and cursor layers below the sticky edit chrome,
+   and scroll targets clear of it. */
+.shell.edit-mode .score-viewport {
+  position: relative;
+  z-index: 0;
+}
+html:has(.shell.edit-mode) {
+  scroll-padding-top: calc(var(--edit-titlebar) + var(--edit-ribbon) + 12px);
+}
+@media (max-width: 800px) {
+  html:has(.edit-properties-sheet) {
+    scroll-padding-bottom: 52vh;
+  }
+}

@@ -23,32 +23,33 @@ async function tap(page: Page, target: import('@playwright/test').Locator) {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 }
 
-test('ED-23 edits on a phone through the modeless Edit tools sheet', async ({ page }, testInfo) => {
+test('ED-23 edits on a phone through the Properties sheet and title-bar playback', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const first = await openTieExercise(page);
-  const toggle = page.getByRole('button', { name: 'Edit tools' });
+  const toggle = page.getByRole('button', { name: 'Properties' });
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await tap(page, first);
   await toggle.click();
-  const sheet = page.getByRole('region', { name: 'Edit tools sheet' });
+  const sheet = page.getByRole('complementary', { name: 'Properties' });
   await expect(sheet).toBeVisible();
   const sheetBox = (await sheet.boundingBox())!;
   expect(sheetBox.height).toBeLessThanOrEqual(844 / 2 + 1);
   expect(sheetBox.y + sheetBox.height).toBeGreaterThanOrEqual(843);
-  await tap(page, first);
   await expect(sheet.getByLabel('Selection inspector')).toContainText('Fret 0');
   await sheet.getByLabel('Fret', { exact: true }).fill('5');
   await sheet.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByTestId('notation').locator('svg text').filter({ hasText: /^5$/ })).toHaveCount(1);
   await expect(page.getByLabel('Selection inspector')).toHaveCount(1);
-  const play = sheet.getByRole('button', { name: 'Play', exact: true });
+  const play = page.getByRole('button', { name: 'Play', exact: true });
   await expect(play).toBeEnabled({ timeout: 45000 });
   await play.click();
-  await expect(sheet.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
-  await sheet.getByRole('button', { name: 'Pause', exact: true }).click();
-  const target = await sheet.getByRole('button', { name: 'Close tools' }).boundingBox();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  const target = await sheet.getByRole('button', { name: 'Close' }).boundingBox();
   expect(target!.height).toBeGreaterThanOrEqual(32);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath('phone-sheet.png') });
-  await sheet.getByRole('button', { name: 'Close tools' }).click();
+  await sheet.getByRole('button', { name: 'Close' }).click();
   await expect(sheet).toHaveCount(0);
   await expect(toggle).toBeFocused();
 });
@@ -56,8 +57,8 @@ test('ED-23 edits on a phone through the modeless Edit tools sheet', async ({ pa
 test('ED-23 uses a side sheet on short screens and keeps the score operable at 200% zoom', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 720, height: 525 });
   const first = await openTieExercise(page);
-  await page.getByRole('button', { name: 'Edit tools' }).click();
-  const sheet = page.getByRole('region', { name: 'Edit tools sheet' });
+  await page.getByRole('button', { name: 'Properties' }).click();
+  const sheet = page.getByRole('complementary', { name: 'Properties' });
   const box = (await sheet.boundingBox())!;
   expect(box.width).toBeLessThanOrEqual(301);
   expect(box.x).toBeGreaterThan(300);
@@ -73,9 +74,7 @@ test('ED-23 uses a side sheet on short screens and keeps the score operable at 2
 test('ED-23 keeps selection, draft, range and history when crossing the 800 px breakpoint', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   const first = await openTieExercise(page);
-  const tools = page.locator('.editor-sidebar');
-  const playback = page.getByRole('region', { name: 'Playback settings' });
-  expect((await tools.boundingBox())!.y).toBeLessThan((await playback.boundingBox())!.y);
+  const tools = page.getByRole('complementary', { name: 'Properties' });
   const small = await tools.locator('button:visible, select:visible, input:visible').evaluateAll(nodes => nodes
     .map(node => ({ name: node.getAttribute('aria-label') || node.textContent?.trim() || node.tagName, height: node.getBoundingClientRect().height }))
     .filter(item => item.height > 0 && item.height < 32));
@@ -88,17 +87,17 @@ test('ED-23 keeps selection, draft, range and history when crossing the 800 px b
   await page.getByRole('button', { name: 'Set range start' }).click();
   await page.getByLabel('Fret', { exact: true }).fill('9');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: 'Edit tools' }).click();
-  const sheet = page.getByRole('region', { name: 'Edit tools sheet' });
+  await page.getByRole('button', { name: 'Properties' }).click();
+  const sheet = page.getByRole('complementary', { name: 'Properties' });
   await expect(page.getByLabel('Selection inspector')).toHaveCount(1);
   await expect(sheet.getByLabel('Fret', { exact: true })).toHaveValue('9');
-  await expect(sheet.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
-  await expect(page.getByText(/Passage: M1 E1/).first()).toBeAttached();
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
+  await expect(page.locator('.editor-range-summary').first()).toContainText('Measure 1');
   await page.setViewportSize({ width: 1280, height: 720 });
-  await expect(page.getByRole('region', { name: 'Edit tools sheet' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Properties' })).toHaveCount(0);
   await expect(page.getByLabel('Selection inspector')).toHaveCount(1);
   await expect(page.getByLabel('Fret', { exact: true })).toHaveValue('9');
-  await expect(page.getByRole('region', { name: 'Playback settings' })).toHaveCount(1);
+  await expect(page.getByRole('group', { name: 'Playback controls' })).toHaveCount(1);
 });
 
 test('ED-23 completes correction, audition, a technique and save with the keyboard only', async ({ page }) => {

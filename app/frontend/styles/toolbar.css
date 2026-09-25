@@ -54,13 +54,6 @@
   outline: 2px solid #2c5f8a;
   outline-offset: 1px;
 }
-.edit-sheet .editor-toolbar {
-  position: static;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  margin: 0 0 10px;
-  box-shadow: none;
-}
 @media (pointer: coarse) {
   .editor-toolbar-button {
     width: 44px;

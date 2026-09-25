@@ -5,7 +5,7 @@ import { toAlphaTab } from './music/alphatab';
 import { exportAscii } from './music/ascii';
 import type { Score } from './music/score';
 import { configureChordDiagrams, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { PlaybackTransport } from './PlaybackTransport';
+import { formatSeconds, PlaybackTransport } from './PlaybackTransport';
 import { Icon } from './ui/icons';
 import { linearAuditionMidi, scoreHasRepeats, writtenPlaybackRange, type PlaybackEndpoints } from './editor/audition';
 
@@ -369,6 +369,7 @@ function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat
 }
 
 export type SelectionScope = 'event' | 'measure';
+export type EditChromeHosts = { transport: HTMLElement | null; view: HTMLElement | null; export: HTMLElement | null };
 export type ContextMenuRequest = { x: number; y: number; scope: SelectionScope | 'range' };
 export type PlayerControls = { playFrom: () => void; playSelection: () => void; canPlay: boolean };
 
@@ -596,7 +597,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null, onRenderResult, onContextMenu, controlsRef }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, editChrome, onRenderResult, onContextMenu, controlsRef }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -611,7 +612,9 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   onFretKey?: (selection: ScoreSelection, key: string) => boolean;
   onBeforeNavigate?: () => boolean;
   exportBlockedReason?: string | null;
-  compactTransportHost?: HTMLElement | null;
+  // Edit mode moves playback, view options and Export into the edit
+  // workspace's title bar and ribbon through these hosts.
+  editChrome?: EditChromeHosts;
   onRenderResult?: (result: { ok: true } | { ok: false; message: string }) => void;
   // Opens the editor's context menu for what was right-clicked, long-pressed
   // or reached with the ContextMenu key; the selection is already updated.
@@ -648,6 +651,18 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const renderResultRef = useRef(onRenderResult);
   renderResultRef.current = onRenderResult;
   const contextMenuRef = useRef(onContextMenu);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [viewOpen, setViewOpen] = useState(false);
+  useEffect(() => {
+    // Edit-workspace popovers close on an outside press or Escape.
+    if (!settingsOpen && !viewOpen) return;
+    const close = () => { setSettingsOpen(false); setViewOpen(false); };
+    const outside = (event: Event) => { if (!(event.target instanceof Element && event.target.closest('.edit-popover-anchor'))) close(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape); };
+  }, [settingsOpen, viewOpen]);
   const keyboardMenuAt = useRef(0);
   contextMenuRef.current = onContextMenu;
   updatingScoreRef.current = updatingScore;
@@ -1222,44 +1237,71 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   }
   const transport = { ready: ready && !error, updating: updatingScore, playing, ...position, onRestart: restartPlayback,
     onPlayPause: () => updatingScore ? api.current?.pause() : api.current?.playPause() };
+  const retryAudio = error && <button type="button" className="retry-audio" onClick={() => { setError(''); setAudioRetryRevision(value => value + 1); }}>Retry audio</button>;
+  const speedControl = <label className="speed-control">
+      <span className="speed-value">{Math.round(baseTempo * speed)} <span>BPM</span></span>
+      <input aria-label="Playback speed" type="range" min="0.25" max={maxPlaybackSpeed} step={PLAYBACK_SPEED_STEP} value={speed} onChange={e => { const value = Number(e.target.value); setSpeed(value); onPreferencesChange?.({ speed: value }); if (api.current) api.current.playbackSpeed = value; }} />
+      <small>{Math.round(speed * 100)}%</small>
+    </label>;
+  const volumeControl = <label className="volume-control">
+      <span className="volume-value">Volume <small>{Math.round(volume * 100)}%</small></span>
+      <input aria-label="Playback volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => { const value = Number(e.target.value); setVolume(value); onPreferencesChange?.({ volume: value }); if (api.current) api.current.masterVolume = value; }} />
+    </label>;
+  const toggleLoop = () => { const value = !loop; setLoop(value); onPreferencesChange?.({ loop: value }); if (api.current) api.current.isLooping = value; };
+  const clickButton = <button aria-pressed={metronome} onClick={() => { const value = !metronome; setMetronome(value); onPreferencesChange?.({ metronome: value }); if (api.current) api.current.metronomeVolume = value ? 0.6 : 0; }}><Icon name="metronome" size={14} />Click</button>;
+  const soundBankControl = availableSoundFonts.length > 1 && <label className="soundfont-control">Sound bank
+      <select aria-label="Sound bank" value={soundFont.id} onChange={e => { setSoundFontId(e.target.value); onPreferencesChange?.({ soundFontId: e.target.value }); }}>
+        {availableSoundFonts.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>;
+  const playSelectionDisabled = !selection || !ready || updatingScore || Boolean(error);
+  const playingRange = playbackEndpoints && `M${playbackEndpoints.start.measure} E${playbackEndpoints.start.event}–M${playbackEndpoints.end.measure} E${playbackEndpoints.end.event}`;
   const playbackPanel = <section className="playback-panel" aria-label="Playback settings">
     <div className="sidebar-section playback-heading">PLAYBACK</div>
     <PlaybackTransport {...transport} ariaLabel="Playback controls" />
     {editing && <div className="audition-controls" aria-label="Selection playback">
-      <button type="button" disabled={!selection || !ready || updatingScore || Boolean(error)} onClick={playSelection}>Play selection</button>
+      <button type="button" disabled={playSelectionDisabled} onClick={playSelection}>Play selection</button>
       <button type="button" disabled={!playbackEndpoints} onClick={clearPlaybackRange}>Clear playback range</button>
       {passage && <span className="audition-range">Passage: M{passage.start.measure} E{passage.start.event}–M{passage.end.measure} E{passage.end.event}</span>}
-      {playbackEndpoints && <span className="audition-range">Playing range: M{playbackEndpoints.start.measure} E{playbackEndpoints.start.event}–M{playbackEndpoints.end.measure} E{playbackEndpoints.end.event}</span>}
+      {playingRange && <span className="audition-range">Playing range: {playingRange}</span>}
       {updatingScore && <span role="status">Updating score</span>}
       {playbackMessage && <span role="status">{playbackMessage}</span>}
     </div>}
-    {error && <button type="button" className="retry-audio" onClick={() => { setError(''); setAudioRetryRevision(value => value + 1); }}>Retry audio</button>}
-    <label className="speed-control">
-      <span className="speed-value">{Math.round(baseTempo * speed)} <span>BPM</span></span>
-      <input aria-label="Playback speed" type="range" min="0.25" max={maxPlaybackSpeed} step={PLAYBACK_SPEED_STEP} value={speed} onChange={e => { const value = Number(e.target.value); setSpeed(value); onPreferencesChange?.({ speed: value }); if (api.current) api.current.playbackSpeed = value; }} />
-      <small>{Math.round(speed * 100)}%</small>
-    </label>
-    <label className="volume-control">
-      <span className="volume-value">Volume <small>{Math.round(volume * 100)}%</small></span>
-      <input aria-label="Playback volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => { const value = Number(e.target.value); setVolume(value); onPreferencesChange?.({ volume: value }); if (api.current) api.current.masterVolume = value; }} />
-    </label>
+    {retryAudio}
+    {speedControl}
+    {volumeControl}
     <div className="player-toggles">
-      <button aria-pressed={loop} onClick={() => { const value = !loop; setLoop(value); onPreferencesChange?.({ loop: value }); if (api.current) api.current.isLooping = value; }}><Icon name="loop" size={14} />Loop</button>
-      <button aria-pressed={metronome} onClick={() => { const value = !metronome; setMetronome(value); onPreferencesChange?.({ metronome: value }); if (api.current) api.current.metronomeVolume = value ? 0.6 : 0; }}><Icon name="metronome" size={14} />Click</button>
+      <button aria-pressed={loop} onClick={toggleLoop}><Icon name="loop" size={14} />Loop</button>
+      {clickButton}
     </div>
-    {availableSoundFonts.length > 1 && <label className="soundfont-control">Sound bank
-      <select aria-label="Sound bank" value={soundFont.id} onChange={e => { setSoundFontId(e.target.value); onPreferencesChange?.({ soundFontId: e.target.value }); }}>
-        {availableSoundFonts.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
-      </select>
-    </label>}
+    {soundBankControl}
   </section>;
-  const playbackControls = <>
-    {playbackHost ? createPortal(playbackPanel, playbackHost) : <div className="playback-inline-fallback">{playbackPanel}</div>}
-    {compactTransportHost && createPortal(<div className="compact-transport" aria-label="Sheet playback">
-      <button type="button" disabled={!transport.ready} onClick={transport.onPlayPause}>{playing ? 'Pause' : 'Play'}</button>
-      <button type="button" disabled={!selection || !ready || updatingScore || Boolean(error)} onClick={playSelection}>Play selection</button>
-    </div>, compactTransportHost)}
-  </>;
+  const chrome = editing ? editChrome : undefined;
+  // In the edit workspace playback lives in the title bar: transport, loop,
+  // play selection and time, with speed, volume and sound in a popover.
+  const editTransport = <div className="edit-transport" role="group" aria-label="Playback controls">
+    <button type="button" className="edit-transport-button" aria-label="Restart" title="Restart" disabled={!transport.ready && !updatingScore} onClick={restartPlayback}><Icon name="restart" /></button>
+    <button type="button" className="edit-play" aria-label={playing || updatingScore ? 'Pause' : 'Play'} title={playing || updatingScore ? 'Pause (Space)' : 'Play (Space)'}
+      disabled={!transport.ready && !updatingScore} onClick={transport.onPlayPause}><Icon name={playing || updatingScore ? 'pause' : 'play'} size={16} /></button>
+    <button type="button" className="edit-transport-button" aria-label="Loop" title="Loop" aria-pressed={loop} onClick={toggleLoop}><Icon name="loop" /></button>
+    <button type="button" className="edit-transport-text" disabled={playSelectionDisabled} onClick={playSelection} title="Play the selected event or range">Play selection</button>
+    {playingRange && <span className="edit-playing-range">Playing range: {playingRange}
+      <button type="button" aria-label="Clear playback range" title="Clear playback range" onClick={clearPlaybackRange}><Icon name="clear" size={12} /></button></span>}
+    <span className="edit-time">{formatSeconds(position.currentTime)} / {formatSeconds(position.endTime)}</span>
+    <span className="edit-popover-anchor">
+      <button type="button" className="edit-transport-text" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(open => !open)}
+        aria-label="Playback settings">{Math.round(baseTempo * speed)} BPM · {Math.round(speed * 100)}%</button>
+      {settingsOpen && <div className="edit-popover edit-playback-popover" role="dialog" aria-label="Playback settings">
+        {speedControl}{volumeControl}<div className="player-toggles">{clickButton}</div>{soundBankControl}
+      </div>}
+    </span>
+    {retryAudio}
+    {updatingScore && <span className="visually-hidden" role="status">Updating score</span>}
+    {playbackMessage && <span className="edit-playback-message" role="status">{playbackMessage}</span>}
+  </div>;
+  const playbackControls = chrome
+    ? chrome.transport && createPortal(editTransport, chrome.transport)
+    : playbackHost ? createPortal(playbackPanel, playbackHost) : <div className="playback-inline-fallback">{playbackPanel}</div>;
   function printPreviewWithLyrics() {
     const paper = scorePaper.current!;
     const lyrics = lyricsSection.current!;
@@ -1382,7 +1424,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   }
   return <>
     {playbackControls}
-    <div className="score-toolbar">
+    {!chrome && <div className="score-toolbar">
       <div className="segmented" role="tablist" aria-label="Score views">
         <button id="tab-tablature" type="button" role="tab" aria-selected={activeView === 'tablature'} aria-controls="tab-score" className={activeView === 'tablature' ? 'selected' : ''} onClick={() => setActiveView('tablature')}>Tablature</button>
         {preview?.lyricsSection && <button id="tab-lyrics" type="button" role="tab" aria-selected={activeView === 'lyrics'} aria-controls="tab-lyrics-content" className={activeView === 'lyrics' ? 'selected' : ''} onClick={() => setActiveView('lyrics')}>Lyrics &amp; chords</button>}
@@ -1410,7 +1452,39 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
         <button type="button" className="primary export-button" aria-haspopup="dialog" disabled={Boolean(exportBlocked)}
           aria-describedby={exportBlocked ? 'export-blocked-reason' : undefined} onClick={openExportDialog}><Icon name="export" size={14} />Export</button>
       </div>
-    </div>
+    </div>}
+    {chrome?.view && createPortal(<span className="edit-popover-anchor">
+      <button type="button" className="edit-view-button" aria-haspopup="dialog" aria-expanded={viewOpen} onClick={() => setViewOpen(open => !open)}>View <span aria-hidden="true">▾</span></button>
+      {viewOpen && <div className="edit-popover edit-view-popover" role="dialog" aria-label="View options">
+      <div className="segmented" role="tablist" aria-label="Score views">
+        <button id="tab-tablature" type="button" role="tab" aria-selected={activeView === 'tablature'} aria-controls="tab-score" className={activeView === 'tablature' ? 'selected' : ''} onClick={() => setActiveView('tablature')}>Tablature</button>
+        {preview?.lyricsSection && <button id="tab-lyrics" type="button" role="tab" aria-selected={activeView === 'lyrics'} aria-controls="tab-lyrics-content" className={activeView === 'lyrics' ? 'selected' : ''} onClick={() => setActiveView('lyrics')}>Lyrics &amp; chords</button>}
+      </div>
+        <div className="layout-controls" aria-label="Layout settings">
+          {activeView === 'tablature' && <>
+            <label>View <select aria-label="Score view" value={scoreView} onChange={e => { const value = e.target.value as ScoreView; setScoreView(value); onPreferencesChange?.({ scoreView: value }); }}>
+              {Object.entries(scoreViews).map(([value, option]) => <option key={value} value={value}>{option.label}</option>)}
+            </select></label>
+            <label>Scroll <select aria-label="Scroll direction" value={scrollDirection} onChange={e => { const value = e.target.value as ScrollDirection; setScrollDirection(value); onPreferencesChange?.({ scrollDirection: value }); }}>
+              <option value="vertical">Vertical</option><option value="horizontal">Horizontal</option>
+            </select></label>
+            <label>Measures / line <select aria-label="Measures per line" value={barsPerRow} onChange={e => { const value = Number(e.target.value); setBarsPerRow(value); onPreferencesChange?.({ barsPerRow: value }); }}>
+              {[1, 2, 3, 4, 5, 6].map(value => <option key={value} value={value}>{value}</option>)}
+            </select></label>
+            <label className="layout-checkbox"><input aria-label="Hide TAB labels" type="checkbox" checked={hideTabClef} onChange={e => { const value = e.target.checked; setHideTabClef(value); onPreferencesChange?.({ hideTabClef: value }); }} /> Hide TAB labels</label>
+            {(preview?.chordDiagrams?.length ?? 0) > 0 && <label className="layout-checkbox"><input aria-label="Show chord diagrams" type="checkbox" checked={showChordDiagrams} onChange={e => { const value = e.target.checked; setShowChordDiagrams(value); onPreferencesChange?.({ showChordDiagrams: value }); }} /> Chord diagrams</label>}
+          </>}
+          {activeView === 'lyrics' && preview?.lyricsSection && <label>Column <select aria-label="Lyrics columns" value={lyricsColumns} onChange={e => { const value = Number(e.target.value); setLyricsColumns(value); onPreferencesChange?.({ lyricsColumns: value }); }}>
+            {[1, 2, 3].map(value => <option key={value} value={value}>{value}</option>)}
+          </select></label>}
+        </div>
+      </div>}
+    </span>, chrome.view)}
+    {chrome?.export && createPortal(<>
+        {exportBlocked && <span className="export-blocked" id="export-blocked-reason">{exportBlocked}</span>}
+        <button type="button" className="primary export-button" aria-haspopup="dialog" disabled={Boolean(exportBlocked)}
+          aria-describedby={exportBlocked ? 'export-blocked-reason' : undefined} onClick={openExportDialog}><Icon name="export" size={14} />Export</button>
+    </>, chrome.export)}
     {error && <p className="alert" role="alert">{error}</p>}
     {exportNotice && <p className="success export-notice" role="status">{exportNotice}</p>}
     <div ref={scoreViewport} className={`score-viewport score-viewport-${scrollDirection}`}>

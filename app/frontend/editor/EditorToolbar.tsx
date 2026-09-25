@@ -4,7 +4,6 @@ import { commandIcon, commandTitle, type EditorCommands } from './commands';
 import { DURATION_COMMANDS } from './sidebar/RhythmTools';
 
 export const TOOLBAR_GROUPS: ReadonlyArray<{ label: string; ids: readonly string[] }> = [
-  { label: 'History', ids: ['undo', 'redo'] },
   { label: 'Duration', ids: [...DURATION_COMMANDS, 'dotted', 'triplet', 'make-rest'] },
   { label: 'Note', ids: ['edit-fret', 'remove-note', 'insert-event'] },
   { label: 'Techniques', ids: ['tie', 'hammer-on', 'pull-off', 'slide', 'bend', 'grace'] },
