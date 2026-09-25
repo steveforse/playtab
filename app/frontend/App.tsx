@@ -1897,6 +1897,8 @@ export function App() {
                 onClick={() => changeSelectedDuration(selectedRhythm.denominator!, selectedRhythm.dots !== 1)}>Dotted</button>
               <button type="button" className="editor-split-rest" disabled={!selectedRhythm.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0 || selectedTupletLocked}
                 onClick={() => changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false)}>Split rest</button>
+              {selectedRhythm.rest && !selectedTupletLocked && selectedRhythm.denominator === 64 && <p className="editor-rhythm-reason">A 1/64 rest is the shortest rest; it cannot be split further.</p>}
+              {selectedRhythm.rest && !selectedTupletLocked && selectedRhythm.dots > 0 && <p className="editor-rhythm-reason">A dotted rest cannot be split; choose an undotted duration first.</p>}
               <button type="button" className="editor-insert-event" onClick={event => openInsertEvent(event.currentTarget)}>Insert event…</button>
               <button type="button" className="editor-insert-event" disabled={selection.graceIndex !== null} onClick={event => openTempoDialog(event.currentTarget)}>Set tempo here…</button>
               <button type="button" className="editor-triplet-button" disabled={selectedTupletLocked || selectedRhythm.denominator === null

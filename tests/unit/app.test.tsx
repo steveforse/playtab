@@ -2080,6 +2080,26 @@ describe('workspace application', () => {
     expect(screen.queryByLabelText('Selection grace')).toBeNull();
   });
 
+  it('explains why a shortest or dotted rest cannot be split', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, score: { ...preview.score,
+      tracks: [{ staves: [{ bars: [{ voices: [{ beats: [{ notes: [{ string: 3, fret: 0, id: 1 }], playbackStart: 0, graceType: 0, isRest: false }] }] }] }] }] } }));
+    inspectMusicXmlDuration.mockReturnValue({ denominator: 64, dots: 0, rest: true });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    expect(screen.getByRole('button', { name: 'Split rest' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText('A 1/64 rest is the shortest rest; it cannot be split further.')).toBeTruthy();
+    inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 1, rest: true });
+    fireEvent.click(screen.getByTestId('choose-next-note'));
+    expect(screen.getByText('A dotted rest cannot be split; choose an undotted duration first.')).toBeTruthy();
+  });
+
   it('blocks an imported deletion with a protected attachment', async () => {
     const imported = { ...preview, source: '<score-partwise version="4.0"><part/></score-partwise>' };
     readMusicXml.mockReturnValue(imported);
