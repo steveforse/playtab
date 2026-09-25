@@ -531,7 +531,7 @@ export function downloadBytes(encoded: string, filename: string, type = 'applica
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null }: {
+export function Player({ score, preview, preferences, onPreferencesChange, editing = false, selection = null, passage = null, onSelectionChange, onPassageChange, onFretInput, onSelectionDelete, historyRevision = 0, sessionKey = 0, exportBlockedReason = null, compactTransportHost = null, onRenderResult }: {
   score: Score;
   preview?: MusicXmlPreview | null;
   preferences?: PlayerPreferences;
@@ -544,6 +544,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   onFretInput?: (selection: ScoreSelection, fret: number, group?: string) => void;
   exportBlockedReason?: string | null;
   compactTransportHost?: HTMLElement | null;
+  onRenderResult?: (result: { ok: true } | { ok: false; message: string }) => void;
   onSelectionDelete?: (selection: ScoreSelection) => void;
   historyRevision?: number;
   sessionKey?: number;
@@ -573,6 +574,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const usingLinearMidi = useRef(false);
   const [updatingScore, setUpdatingScore] = useState(false);
   const updatingScoreRef = useRef(false);
+  const renderResultRef = useRef(onRenderResult);
+  renderResultRef.current = onRenderResult;
   updatingScoreRef.current = updatingScore;
   const [playbackMessage, setPlaybackMessage] = useState('');
   playbackEndpointsRef.current = playbackEndpoints;
@@ -696,6 +699,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     instance.playerStateChanged.on(event => setPlaying(event.state === 1));
     instance.playerPositionChanged.on(event => setPosition({ currentTime: event.currentTime, endTime: event.endTime }));
     instance.renderFinished.on(() => {
+      renderResultRef.current?.({ ok: true });
       setRendered(true);
       const activeRange = playbackEndpointsRef.current;
       if (activeRange && instance.score) {
@@ -720,7 +724,11 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(finishLayout);
       else finishLayout();
     });
-    instance.error.on(error => setError(error.message || 'Notation or audio could not load.'));
+    instance.error.on(error => {
+      const message = error.message || 'Notation or audio could not load.';
+      setError(message);
+      renderResultRef.current?.({ ok: false, message });
+    });
     renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef);
     renderedDocument.current = { score, preview: currentPreview };
     return () => {
@@ -745,7 +753,12 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     setPlaying(false);
     setUpdatingScore(true);
     setPlaybackMessage('Score updated. Press Play to listen.');
-    renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef, true);
+    try {
+      renderDocument(instance, score, currentPreview, showChordDiagrams, hideTabClef, true);
+    } catch (failure) {
+      setUpdatingScore(false);
+      renderResultRef.current?.({ ok: false, message: (failure as Error).message || 'The score could not be rendered.' });
+    }
     renderedDocument.current = { score, preview: currentPreview };
   }, [score, currentPreview, showChordDiagrams, hideTabClef]);
 

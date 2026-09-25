@@ -1,7 +1,7 @@
 import { Settings, model } from '@coderline/alphatab';
 
 type Marker = { bar: number; tick: number; staff: number; voice: string; string: number; fret: number; ghost?: boolean; grace?: boolean; kind: string; type: string; number: string };
-type PlaytabBeat = model.Beat & { playtabFingerings?: string[] };
+type PlaytabBeat = model.Beat & { playtabFingerings?: string[]; playtabBaseText?: string };
 const children = (node: Element) => Array.from(node.childNodes).filter((n): n is Element => n.nodeType === 1);
 const child = (node: Element, name: string) => children(node).find(n => n.localName === name);
 const value = (node: Element, name: string) => child(node, name)?.textContent ?? '';
@@ -93,11 +93,13 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
   const spans: { from: model.Note; to: model.Note; label: string }[] = [];
   const appendFingering = (note: model.Note, label: string) => {
     const beat = note.beat as PlaytabBeat;
-    const existingText = beat.playtabFingerings ? '' : beat.text;
+    // Keep the beat's own words (such as a section label) and stack picking
+    // fingerings above them, so a second fingering never drops the words.
+    if (!beat.playtabFingerings) beat.playtabBaseText = beat.text ?? '';
     const fingerings = beat.playtabFingerings ?? [];
     if (!fingerings.includes(label)) fingerings.push(label);
     beat.playtabFingerings = fingerings;
-    beat.text = [existingText, fingerings.join('\n')].filter(Boolean).join('\n');
+    beat.text = [fingerings.join('\n'), beat.playtabBaseText].filter(Boolean).join('\n');
     if (label === 'T') note.leftHandFinger = 0;
   };
   const beatsInBar = (bar: number) => tab.bars[bar]?.voices.flatMap(v => v.beats) ?? [];

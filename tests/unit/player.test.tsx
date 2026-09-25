@@ -726,6 +726,18 @@ describe('notation player', () => {
     vi.unstubAllGlobals();
   });
 
+  it('reports render success, render errors and a failed re-render to its owner', () => {
+    const results: unknown[] = [];
+    const { rerender } = render(<Player score={demo} onRenderResult={result => results.push(result)} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    act(() => { api.renderFinished.emit(); });
+    act(() => { api.error.emit({ message: 'Font missing.' }); });
+    expect(results).toEqual([{ ok: true }, { ok: false, message: 'Font missing.' }]);
+    api.renderScore.mockImplementationOnce(() => { throw new Error('Layout exploded.'); });
+    rerender(<Player score={{ ...demo, tempo: demo.tempo + 1 }} onRenderResult={result => results.push(result)} />);
+    expect(results.at(-1)).toEqual({ ok: false, message: 'Layout exploded.' });
+  });
+
   it('offers chord diagrams separately from imported chord names', () => {
     const chordPreview = { ...preview, chordDiagrams: [{ name: 'C', strings: [0, 0, 0, 2, 0], firstFret: 1, barreFrets: [] }] };
     const api = readyPlayer(chordPreview);

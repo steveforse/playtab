@@ -2,7 +2,14 @@ import { expect, test, type Page } from '@playwright/test';
 import { longScore } from './support/long-score';
 
 // Opt-in local measurement for ED-24 targets; CI hardware varies too much
-// for these to be pass/fail gates. Run with PLAYTAB_PERF=1.
+// for these to be pass/fail gates. Run with PLAYTAB_PERF=1. The dev stack
+// serves React's development build (StrictMode double renders), so record
+// targets against optimized assets:
+//   RAILS_ENV=development npx vite build
+//   docker compose run -d --name playtab-perf -p 127.0.0.1:3002:3000 \
+//     -e VITE_RUBY_HOST=127.0.0.9 -e VITE_RUBY_PORT=1 web bash -c \
+//     "apt-get update -qq && apt-get install -y libvips poppler-utils && bundle exec rails server -b 0.0.0.0 -P /tmp/perf.pid"
+//   PLAYTAB_PERF=1 PLAYTAB_URL=http://localhost:3002 npx playwright test tests/browser/editor-performance.spec.ts
 test.skip(!process.env.PLAYTAB_PERF, 'Set PLAYTAB_PERF=1 to record editor performance.');
 
 const p95 = (values: number[]) => [...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.95) - 1];

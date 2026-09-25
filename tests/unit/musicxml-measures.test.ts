@@ -838,6 +838,14 @@ describe('ED-17 bends and independent hand annotations', () => {
     expect(inspectMusicXmlNoteTechniques(picked, readMusicXml(picked, 'rich.musicxml').score, low)).toEqual({ picking: 'I', fretting: '3', bend: 'none' });
   });
 
+  it('keeps a beat word under stacked picking fingerings', () => {
+    const worded = rich.replace('<note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>',
+      '<direction><direction-type><words>Verse</words></direction-type><staff>2</staff></direction><note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>');
+    const chord = addMusicXmlNote(worded, readMusicXml(worded, 'rich.musicxml').score, { measure: 0, beat: 1, voice: 1, string: 5, fret: 0 });
+    const both = setMusicXmlHand(chord, readMusicXml(chord, 'rich.musicxml').score, { ...low, string: 5 }, 'picking', 'M');
+    expect(lowNote(both).text).toBe('T\nM\nVerse ①');
+  });
+
   it('renders a fretting thumb and keeps stacked picking labels free of duplicates', () => {
     const score = readMusicXml(rich, 'rich.musicxml').score;
     const thumb = setMusicXmlHand(rich, score, low, 'fretting', 'T');
