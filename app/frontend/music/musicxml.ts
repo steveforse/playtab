@@ -4,6 +4,7 @@ import type { ImportedScoreDocument, Score } from './score';
 import { createSourceIdentityMap, reconcileSourceIdentityMap, sourceEventIdsByAddress, type IdentityCarry, type SourceIdentityMap } from './source-identity';
 import { musicXmlEditorState } from './musicxml-editor';
 import { durationTime, fillRestTime, rationalTime } from '../editor/rhythm';
+import { readSourceDocument } from './xml-cache';
 
 export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
 export type TimedLyric = { measure: number; beat: number; text: string };
@@ -32,7 +33,7 @@ const firstChild = (node: Element, name: string) => elementChildren(node).find(c
 const childText = (node: Element, name: string) => firstChild(node, name)?.textContent ?? '';
 
 function chordMetadata(source: string): ChordMetadata[] {
-  const doc = new DOMParser().parseFromString(source, 'application/xml');
+  const doc = readSourceDocument(source);
   const part = firstChild(doc.documentElement, 'part')!;
   const metadata: ChordMetadata[] = [];
   let divisions = 1;

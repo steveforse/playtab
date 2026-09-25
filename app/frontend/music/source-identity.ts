@@ -1,4 +1,5 @@
 import { sourceTabNoteRecords } from './musicxml-editor';
+import { readSourceDocument } from './xml-cache';
 
 // These IDs belong to the editing session, not to MusicXML. They are saved in
 // undo snapshots but never written into imported source or the song record.
@@ -13,7 +14,7 @@ export type SourceIdentityMap = {
 export type IdentityCarry = { id: string; address: string; kind?: 'note' | 'measure' | 'event' };
 
 function records(source: string) {
-  const document = new DOMParser().parseFromString(source, 'application/xml');
+  const document = readSourceDocument(source);
   if (document.getElementsByTagName('parsererror').length || document.documentElement.localName !== 'score-partwise') {
     throw new Error('Invalid MusicXML for source identity mapping.');
   }
@@ -21,7 +22,7 @@ function records(source: string) {
 }
 
 function structureRecords(source: string) {
-  const document = new DOMParser().parseFromString(source, 'application/xml');
+  const document = readSourceDocument(source);
   if (document.getElementsByTagName('parsererror').length || document.documentElement.localName !== 'score-partwise') {
     throw new Error('Invalid MusicXML for source identity mapping.');
   }
@@ -70,7 +71,7 @@ function fingerprint(note: Element, serializer: XMLSerializer) {
 // repeated indistinguishable notes receive new IDs unless the command passes
 // an explicit carry hint.
 function laneCounts(source: string) {
-  const document = new DOMParser().parseFromString(source, 'application/xml');
+  const document = readSourceDocument(source);
   const part = Array.from(document.getElementsByTagName('*')).find(node => node.localName === 'part');
   const measures = part ? Array.from(part.childNodes).filter((node): node is Element => node.nodeType === 1 && (node as Element).localName === 'measure') : [];
   const tabStaff = Array.from(document.getElementsByTagName('*')).find(node => node.localName === 'staff-details'
