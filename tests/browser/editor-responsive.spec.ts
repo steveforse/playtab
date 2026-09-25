@@ -136,9 +136,8 @@ test('ED-23 completes correction, audition, a technique and save with the keyboa
   await page.keyboard.press(' ');
   await expect(page.getByRole('button', { name: 'Play', exact: true }).first()).toBeVisible();
 
-  const techniques = page.locator('summary', { hasText: /^Techniques$/ });
-  await techniques.focus();
-  await page.keyboard.press('Enter');
+  // Techniques is open by default in the Properties panel.
+  await expect(page.locator('details.editor-technique-tools')).toHaveAttribute('open', '');
   await page.getByRole('button', { name: 'Bend…' }).focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog', { name: 'Bend' })).toBeVisible();

@@ -16,7 +16,6 @@ test('ED-14 connects a cross-bar tie by pointer, blocks pitch edits, removes it,
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const origin = (await frets.nth(0).boundingBox())!;
   await page.mouse.click(origin.x + origin.width / 2, origin.y + origin.height / 2);
-  await page.getByText('Techniques', { exact: true }).click();
   await page.getByRole('button', { name: 'Tie', exact: true }).click();
   await expect(page.getByText(/Origin: measure 1, event 1, string 4, fret 0/)).toBeVisible();
   await page.locator('.editor-technique-tools').screenshot({ path: testInfo.outputPath('tie-pending-sidebar.png') });
@@ -45,7 +44,6 @@ test('ED-14 connects the same tie through inspector navigation and can cancel pe
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await fret.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByText('Techniques', { exact: true }).click();
   await page.getByRole('button', { name: 'Tie', exact: true }).click();
   await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('2');
   await page.getByRole('button', { name: 'Use selected note' }).click();

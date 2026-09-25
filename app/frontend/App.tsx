@@ -59,7 +59,7 @@ import { CutDialog } from './editor/dialogs/CutDialog';
 import { KeyboardHelpDialog } from './editor/dialogs/KeyboardHelpDialog';
 import { StandaloneTextDialog } from './editor/dialogs/StandaloneTextDialog';
 import { TempoDialog } from './editor/dialogs/TempoDialog';
-import { CommandButton, CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
+import { CommandButton, CommandButtons, CommandGroup, type EditorCommand, type EditorCommands } from './editor/commands';
 import { SelectionInspector } from './editor/sidebar/SelectionInspector';
 import { inspectSelection, tiePosition } from './editor/selectionInfo';
 import { useEditorShortcuts } from './editor/useEditorShortcuts';
@@ -1572,12 +1572,16 @@ export function App() {
   // The status bar summarises the selection in the compact form other
   // notation editors use, e.g. "M3 E2 S4 · fret 5 · G3 · 1/8".
   const durationText = selectedRhythm?.denominator
-    ? `${selectedRhythm.rest ? 'rest ' : ''}${selectedRhythm.denominator === 1 ? '1' : `1/${selectedRhythm.denominator}`}${'.'.repeat(selectedRhythm.dots)}` : null;
+    ? `${selectedRhythm.denominator === 1 ? 'whole' : `1/${selectedRhythm.denominator}`}${'.'.repeat(selectedRhythm.dots)}${selectedRhythm.rest ? ' rest' : ''}` : null;
   const statusSelection = passage ? rangeDescription(passage, wholeRange) : selection
     ? [`M${selection.measure} E${selection.event}${selection.string !== null ? ` S${selection.string}` : ''}`,
       selection.fret !== null ? `fret ${selection.fret}` : null, selectedDetails?.pitchValue != null ? selectedDetails.pitch : null, durationText]
       .filter(Boolean).join(' · ')
     : 'Nothing selected';
+  const statusKeys = passage ? 'Shift+←/→ extend · Ctrl+C copy · Del clear · Esc deselect'
+    : surfaceBuffer ? 'Enter applies · Esc cancels'
+      : selection?.string != null ? '0–9 fret · ←/→ move · ↑/↓ string · Del remove · right-click for more'
+        : selection ? '←/→ move · ↑/↓ string · right-click for more' : 'Click a note to select · Shift-click extends · ? shortcuts';
   const commands: EditorCommands = {
     undo: { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !history.undo.length,
       title: history.undo.length ? `Undo: ${history.undo.at(-1)!.description}` : 'Nothing to undo', run: () => moveHistory('undo') },
@@ -1585,6 +1589,10 @@ export function App() {
       title: history.redo.length ? `Redo: ${history.redo.at(-1)!.description}` : 'Nothing to redo', run: () => moveHistory('redo') },
     'apply-fret': { label: noteSelected ? 'Apply' : 'Add note', disabled: selection?.string == null,
       run: onSelection(current => updateSelectionFret(current, Number(fretDraft))) },
+    'fret-lower': { label: 'Lower fret', icon: 'minus', iconOnly: true, disabled: selection?.fret == null || selection.fret <= 0,
+      run: onSelection(current => current.fret !== null && updateSelectionFret(current, current.fret - 1)) },
+    'fret-higher': { label: 'Raise fret', icon: 'add-note', iconOnly: true, disabled: selection?.string == null || (selection.fret ?? -1) >= 36,
+      run: onSelection(current => updateSelectionFret(current, (current.fret ?? -1) + 1)) },
     'move-string': { label: 'Move', disabled: !moveOutcome || Boolean(moveOutcome.reason), run: () => moveSelectedString() },
     'remove-note': { label: 'Remove note', shortcut: 'Delete', className: 'editor-remove-note', disabled: !noteSelected, run: onSelection(current => requestRemoval(current)) },
     'make-rest': { label: 'Make rest', hidden: !noteSelected || selection?.graceIndex !== null, reason: 'Select a note first', run: onSelection(current => requestRemoval(current, 'rest')) },
@@ -1657,12 +1665,19 @@ export function App() {
       : ['edit-fret', 'insert-event', '-', durationEntries, textEntries, '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection'];
   const scoreTitle = preview?.score.title ?? score.title;
   const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
-        <div className="sidebar-section">EDIT SCORE</div>
-        <p className="editor-selection-empty">Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z redoes. History lasts while this score is open; older actions expire after 100 edits or 32 MB.</p>
-        <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note or empty string position to begin editing.'}</span></p>
         <div className="editor-selection" aria-label="Selection inspector">
-          {passage && <p className="editor-range-summary" role="status">{rangeDescription(passage, wholeMeasurePassage())}</p>}
-          {!selection ? <p className="editor-selection-empty">No note, rest, or staff position selected.</p> : <>
+          {passage && <div className="properties-range">
+            <span className="properties-kind">Range</span>
+            <p className="editor-range-summary" role="status">{rangeDescription(passage, wholeRange)}</p>
+            <div className="properties-actions"><CommandButtons commands={commands} ids={['copy-passage', 'cut-passage', 'clear-range']} /></div>
+          </div>}
+          {!selection ? <div className="properties-empty">
+            <span className="properties-kind">Score</span>
+            <p className="properties-where">{scoreTitle}</p>
+            <p className="editor-selection-empty">No note, rest, or staff position selected.</p>
+            <p className="properties-hint">Select a note or empty string position to begin editing.</p>
+            <p className="properties-hint">Click above the staff to select a measure; Shift-click extends.</p>
+          </div> : <>
             <SelectionInspector selection={selection} details={selectedDetails} measureCount={measureCount} eventCount={selectedEventCount}
               onNavigate={navigateInspector} fretDraft={fretDraft} onFretDraft={setFretDraft} fretBuffered={Boolean(surfaceBuffer)}
               moveString={moveString} onMoveString={setMoveString} moveMode={moveMode} onMoveMode={setMoveMode} moveOutcome={moveOutcome} commands={commands} />
@@ -1671,12 +1686,13 @@ export function App() {
               onRemoveTransition={removeTransition} pendingTransition={pendingTie} onCompleteTransition={() => completeTransition(selection)}
               onCancelTransition={() => { if (!pendingTie) return; const name = TRANSITION_NAMES[pendingTie.kind]; setPendingTie(null); setError(''); setMessage(`${capitalized(name)} cancelled.`); }}
               commands={commands} />
-            <CommandGroup className="editor-text-tools" summary="Text" commands={commands} ids={['lyrics-chords']} />
+            <CommandGroup open className="editor-text-tools" summary="Text" commands={commands} ids={['chord', 'section', 'words', 'lyric', 'lyrics-chords']} />
             <CommandGroup className="editor-passage-tools" summary="Select passage" commands={commands}
-              ids={['range-start', 'range-end', 'clear-passage', 'clear-range']}>
+              ids={['range-start', 'range-end', 'clear-passage', 'paste-passage']}>
               {clipboard && <p className="editor-rhythm-reason">Clipboard: {clipboard.measures.length} measure{clipboard.measures.length === 1 ? '' : 's'} from “{clipboard.title}”.</p>}
             </CommandGroup>
-            <CommandGroup className="editor-measure-tools" summary="Measure" commands={commands} ids={['select-measure', 'insert-measure-before', 'pickup']}>
+            <CommandGroup className="editor-measure-tools" summary="Measure" commands={commands} ids={['select-measure', 'insert-measure-before', 'insert-measure-after',
+              'duplicate-measure', 'delete-measure', 'time-signature', 'repeat', 'pickup']}>
               {measureCount <= 1 && <p>The last remaining measure cannot be deleted.</p>}
               {selection.measure !== 1 && <p>Pickup length is available only in the first measure.</p>}
             </CommandGroup>
@@ -1710,7 +1726,8 @@ export function App() {
         {narrow && <button type="button" className="edit-tools-toggle" aria-expanded={toolsOpen} aria-controls="edit-properties" onClick={() => setToolsOpen(open => !open)}>Properties</button>}
         <button type="button" className="edit-mode-toggle" aria-pressed={true} onClick={toggleEditMode}>Done editing</button>
       </div>
-      <div className="edit-ribbon"><EditorToolbar commands={commands} /><span ref={setViewHost} className="edit-ribbon-view" /></div></div>}
+      <div className="edit-ribbon"><EditorToolbar commands={commands} onHelp={() => setHelpOpen(true)}
+        fret={{ value: surfaceBuffer ? fretDraft : selection?.fret != null ? String(selection.fret) : '–', typing: Boolean(surfaceBuffer) }} /><span ref={setViewHost} className="edit-ribbon-view" /></div></div>}
       <div className="workspace">
         {!editMode && <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>}
         {!editMode && <div className="title-row"><h1>{scoreTitle}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={false} onClick={toggleEditMode}>Edit score</button><button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details></div></div>}
@@ -1756,6 +1773,7 @@ export function App() {
           <span className="editor-status-selection">{statusSelection}</span>
           {surfaceBuffer && <span className="editor-status-buffer">Fret {fretDraft} typed — Enter applies, Escape cancels</span>}
           {message && <span className="editor-status-message">{message}</span>}
+          <span className="editor-status-keys">{statusKeys}</span>
         </div>}
         {!editMode && <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>}
       </div>

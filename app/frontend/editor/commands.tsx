@@ -62,8 +62,8 @@ export function CommandButtons({ commands, ids }: { commands: EditorCommands; id
 }
 
 // A collapsible sidebar group of commands with optional explanatory notes.
-export function CommandGroup({ className, summary, commands, ids, children }: {
-  className: string; summary: string; commands: EditorCommands; ids: readonly string[]; children?: ReactNode;
+export function CommandGroup({ className, summary, commands, ids, children, open }: {
+  className: string; summary: string; commands: EditorCommands; ids: readonly string[]; children?: ReactNode; open?: boolean;
 }) {
-  return <details className={className}><summary>{summary}</summary><CommandButtons commands={commands} ids={ids} />{children}</details>;
+  return <details className={className} open={open}><summary>{summary}</summary><CommandButtons commands={commands} ids={ids} />{children}</details>;
 }
