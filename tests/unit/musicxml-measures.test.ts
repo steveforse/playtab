@@ -5,7 +5,7 @@ import { midi, Settings } from '@coderline/alphatab';
 import { linearAuditionMidi, writtenPlaybackRange } from '../../app/frontend/editor/audition';
 import { selectionFromBeat } from '../../app/frontend/Player';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { addMusicXmlEndings, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
   inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
@@ -84,6 +84,67 @@ describe('ED-12 measure insertion', () => {
     const score = Object.assign(Object.create(Object.getPrototypeOf(original.score)), original.score,
       { masterBars: Array(256).fill(original.score.masterBars[1]) });
     expect(() => insertMusicXmlMeasure(full, score, 0, 'after')).toThrow('256 measures');
+  });
+});
+
+describe('ED-16 grace group foundation', () => {
+  const source = fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8');
+
+  it('adds a two-string grace chord before an ordinary event without using bar time', () => {
+    const original = readMusicXml(source, 'grace.musicxml');
+    const before = original.score.tracks[0].staves[0].bars[0].voices[0].beats[0];
+    const changed = addMusicXmlGraceGroup(source, original.score, { measure: 0, beat: 0, voice: 0 },
+      [{ string: 4, fret: 2 }, { string: 3, fret: 0 }], 16);
+    const after = readMusicXml(changed, 'grace.musicxml');
+    const notes = Array.from(new DOMParser().parseFromString(changed, 'application/xml').getElementsByTagName('measure')[0]
+      .getElementsByTagName('note'));
+    expect(notes.slice(0, 2).every(note => note.getElementsByTagName('grace').length === 1)).toBe(true);
+    expect(notes[1].getElementsByTagName('chord')).toHaveLength(1);
+    expect(notes.slice(0, 2).every(note => note.getElementsByTagName('duration').length === 0)).toBe(true);
+    expect(after.score.masterBars[0].calculateDuration()).toBe(original.score.masterBars[0].calculateDuration());
+    const beats = after.score.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats[0].graceType).toBeTruthy();
+    expect(beats[0].notes.map(note => note.fret).sort()).toEqual([0, 2]);
+    expect(beats.find(beat => !beat.graceType)?.playbackStart).toBe(before.playbackStart);
+  });
+
+  it('rejects duplicate strings, bad frets and a grace destination', () => {
+    const original = readMusicXml(source, 'grace.musicxml');
+    const position = { measure: 0, beat: 0, voice: 0 };
+    expect(() => addMusicXmlGraceGroup(source, original.score, position, [{ string: 3, fret: 1 }, { string: 3, fret: 2 }], 16))
+      .toThrow('distinct strings');
+    expect(() => addMusicXmlGraceGroup(source, original.score, position, [{ string: 3, fret: 37 }], 16))
+      .toThrow('frets from 0 to 36');
+    expect(() => addMusicXmlGraceGroup(source, original.score, position, [{ string: 3, fret: 0 }], 4 as 8))
+      .toThrow('duration must be 1/8 or 1/16');
+    const missingTuning = readMusicXml(source, 'grace.musicxml').score;
+    missingTuning.tracks[0].staves[0].tuning[2] = Number.NaN;
+    expect(() => addMusicXmlGraceGroup(source, missingTuning, position, [{ string: 3, fret: 0 }], 16))
+      .toThrow('no valid tuning');
+    const changed = addMusicXmlGraceGroup(source, original.score, position, [{ string: 3, fret: 0 }], 16);
+    const withGrace = readMusicXml(changed, 'grace.musicxml');
+    expect(() => addMusicXmlGraceGroup(changed, withGrace.score, position, [{ string: 3, fret: 1 }], 16))
+      .toThrow('ordinary sounding event');
+  });
+
+  it('adds the same grace pitch to verified notation and TAB lanes only', () => {
+    const original = readMusicXml(rich, 'rich.musicxml');
+    const voices = original.score.tracks[0].staves[0].bars[0].voices;
+    const voice = voices.findIndex(candidate => candidate.beats.some(beat => !beat.graceType && beat.notes.some(note => note.fret === 4)));
+    const hammerStop = voices[voice].beats.findIndex(candidate => !candidate.graceType && candidate.notes.some(note => note.fret === 2));
+    expect(() => addMusicXmlGraceGroup(rich, original.score, { measure: 0, beat: hammerStop, voice }, [{ string: 4, fret: 1 }], 8))
+      .toThrow('interrupt an existing technique endpoint');
+    const beat = voices[voice].beats.map(candidate => !candidate.graceType && candidate.notes.some(note => note.fret === 4)).lastIndexOf(true);
+    const changed = addMusicXmlGraceGroup(rich, original.score, { measure: 0, beat, voice }, [{ string: 4, fret: 1 }], 8);
+    const parsed = new DOMParser().parseFromString(changed, 'application/xml');
+    const sourceNotes = Array.from(parsed.getElementsByTagName('measure')[0].getElementsByTagName('note'));
+    expect(sourceNotes.filter(note => note.getElementsByTagName('grace').length && note.getElementsByTagName('type')[0]?.textContent === 'eighth'))
+      .toHaveLength(2);
+    expect(sourceNotes.filter(note => note.getElementsByTagName('grace').length && note.getElementsByTagName('fret')[0]?.textContent === '1'))
+      .toHaveLength(1);
+    expect(changed).toContain('<opaque:keep data="unchanged">');
+    expect(readMusicXml(changed, 'rich.musicxml').score.masterBars[0].calculateDuration())
+      .toBe(original.score.masterBars[0].calculateDuration());
   });
 });
 

@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type GraceMember, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -23,6 +23,7 @@ type MeterTarget = { originalKey: string; base: MusicXmlPreview; measureIndex: n
 type PickupTarget = { originalKey: string; base: MusicXmlPreview };
 type RepeatTarget = { originalKey: string; base: MusicXmlPreview };
 type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndings | null };
+type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -158,6 +159,12 @@ export function App() {
   const repeatDialog = useRef<HTMLDialogElement>(null);
   const repeatRemovalDialog = useRef<HTMLDialogElement>(null);
   const repeatOpener = useRef<HTMLElement | null>(null);
+  const [graceTarget, setGraceTarget] = useState<GraceTarget | null>(null);
+  const [graceMembers, setGraceMembers] = useState<GraceMember[]>([]);
+  const [graceDuration, setGraceDuration] = useState<8 | 16>(16);
+  const [graceError, setGraceError] = useState('');
+  const graceDialog = useRef<HTMLDialogElement>(null);
+  const graceOpener = useRef<HTMLElement | null>(null);
   const [pickupTarget, setPickupTarget] = useState<PickupTarget | null>(null);
   const [pendingTie, setPendingTie] = useState<PendingTie | null>(null);
   const [pickupApplyError, setPickupApplyError] = useState('');
@@ -311,6 +318,14 @@ export function App() {
     if (repeatRemoval && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-repeat-remove-cancel]')?.focus(); }
     else if (!repeatRemoval && dialog.open) dialog.close();
   }, [repeatRemoval]);
+  useEffect(() => {
+    const dialog = graceDialog.current;
+    if (!dialog) return;
+    if (graceTarget && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-grace-first]')?.focus(); }
+    else if (!graceTarget && dialog.open) {
+      dialog.close(); if (graceOpener.current?.isConnected) graceOpener.current.focus({ preventScroll: true });
+    }
+  }, [graceTarget]);
   useEffect(() => {
     const dialog = pickupDialog.current;
     if (!dialog) return;
@@ -773,6 +788,32 @@ export function App() {
         `Repeat in measures ${region.start + 1}–${region.end + 1} removed with its dependent endings.`);
     } catch (failure) { setRepeatApplyError((failure as Error).message); }
   }
+  function openGraceDialog(opener: HTMLElement) {
+    if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null || selection.graceIndex !== null) {
+      setError('Select an ordinary note as the grace destination.'); return;
+    }
+    if (pendingFret) { setError('Apply the pending fret before adding grace notes.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      graceOpener.current = opener; setGraceMembers([{ string: selection.string, fret: selection.fret }]);
+      setGraceDuration(16); setGraceError(''); setGraceTarget({ originalKey: documentKey(currentDocument), base, selection }); setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function confirmGrace(candidate: string) {
+    if (!graceTarget) return;
+    if (graceTarget.originalKey !== documentKey(currentDocument)) {
+      setGraceTarget(null); setError('The score changed since this grace preview. Open it again.'); return;
+    }
+    try {
+      const { base, selection: destination } = graceTarget;
+      const nextPreview = withPreviewTitle(readMusicXml(candidate, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+      const after = selectionAtPosition(destination, score, nextPreview, { event: destination.event, string: graceMembers[0].string });
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
+        sourceIdentity: nextPreview.sourceIdentity }, `Add grace chord before measure ${destination.measure}, event ${destination.event}`);
+      setPreview(nextPreview); setSelection(after); setGraceTarget(null); setError(''); setMessage('Grace group added before the selected event.');
+    } catch (failure) { setGraceError((failure as Error).message); }
+  }
   function openPickupDialog(opener: HTMLElement) {
     if (!selection || selection.measure !== 1) return;
     if (pendingFret) { setError('Apply the pending fret before changing the pickup.'); return; }
@@ -1160,6 +1201,15 @@ export function App() {
       } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
     } catch (failure) { return { existing: null, candidate: null, error: (failure as Error).message }; }
   })();
+  const gracePreview = (() => {
+    if (!graceTarget) return null;
+    try {
+      const destination = graceTarget.selection;
+      return { candidate: addMusicXmlGraceGroup(graceTarget.base.source, graceTarget.base.score,
+        { measure: destination.measure - 1, beat: destination.event - 1, voice: destination.voice - 1 },
+        graceMembers, graceDuration), error: '' };
+    } catch (failure) { return { candidate: null, error: (failure as Error).message }; }
+  })();
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
       <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
@@ -1224,6 +1274,8 @@ export function App() {
               {selectedTriplet?.reason && selectedTriplet.reason !== selectedRhythm.reason && <p className="editor-rhythm-reason">{selectedTriplet.reason}</p>}
             </div>}
             <details className="editor-technique-tools"><summary>Techniques</summary>
+              <button type="button" disabled={selection.kind !== 'note' || selection.graceIndex !== null}
+                onClick={event => openGraceDialog(event.currentTarget)}>Add grace…</button>
               <button type="button" disabled={selection.kind !== 'note' || pendingTie !== null} onClick={beginTie}>Tie</button>
               {selectedTie && <button type="button" onClick={removeSelectedTie}>Remove tie</button>}
               {pendingTie && <div className="editor-tie-pending" role="status">
@@ -1378,6 +1430,28 @@ export function App() {
       {repeatApplyError && <p className="alert" role="alert">{repeatApplyError}</p>}
       <div className="duplicate-dialog-actions"><button type="button" data-repeat-remove-cancel onClick={() => setRepeatRemoval(null)}>Cancel</button>
         <button type="button" onClick={confirmRepeatRemoval}>Clear repeat and endings</button></div>
+    </dialog>
+    <dialog ref={graceDialog} className="duplicate-dialog" aria-label="Add grace group" onCancel={event => { event.preventDefault(); setGraceTarget(null); }}>
+      <h2>Add grace group</h2>
+      <p>Destination: measure {graceTarget?.selection.measure}, event {graceTarget?.selection.event}. Grace notes play before it without using measure time.</p>
+      <label>Display duration<select data-grace-first value={graceDuration}
+        onChange={event => { setGraceError(''); setGraceDuration(Number(event.target.value) as 8 | 16); }}>
+        <option value={8}>1/8</option><option value={16}>1/16</option></select></label>
+      <div className="insert-dialog-fields">{graceMembers.map((member, index) => <div key={index}>
+        <label>Grace string {index + 1}<select value={member.string} onChange={event => {
+          setGraceError(''); setGraceMembers(current => current.map((item, at) => at === index ? { ...item, string: Number(event.target.value) } : item));
+        }}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label>Grace fret {index + 1}<input inputMode="numeric" type="number" min={0} max={36} value={member.fret}
+          onChange={event => { setGraceError(''); setGraceMembers(current => current.map((item, at) => at === index ? { ...item, fret: Number(event.target.value) } : item)); }} /></label>
+        {graceMembers.length > 1 && <button type="button" onClick={() => setGraceMembers(current => current.filter((_, at) => at !== index))}>Remove string {index + 1}</button>}
+      </div>)}</div>
+      <button type="button" disabled={graceMembers.length >= 5}
+        onClick={() => { const unused = [1, 2, 3, 4, 5].find(value => !graceMembers.some(member => member.string === value));
+          if (unused) setGraceMembers(current => [...current, { string: unused, fret: 0 }]); }}>Add string</button>
+      {gracePreview?.error && <p className="alert" role="alert">{gracePreview.error}</p>}
+      {graceError && <p className="alert" role="alert">{graceError}</p>}
+      <div className="duplicate-dialog-actions"><button type="button" onClick={() => setGraceTarget(null)}>Cancel</button>
+        <button type="button" disabled={!gracePreview?.candidate} onClick={() => { if (gracePreview?.candidate) confirmGrace(gracePreview.candidate); }}>Apply grace group</button></div>
     </dialog>
     <dialog ref={pickupDialog} className="duplicate-dialog" aria-label="Pickup" onCancel={event => { event.preventDefault(); setPickupTarget(null); }}>
       <h2>Pickup length</h2>
