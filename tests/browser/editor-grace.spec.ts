@@ -51,3 +51,61 @@ test('ED-16 adds a grace chord before a note and saves it without changing the n
   expect(corrected[0].getElementsByTagName('fret')[0].textContent).toBe('2');
   expect(corrected[1].getElementsByTagName('fret')[0].textContent).toBe('0');
 });
+
+test('ED-16 edits and removes grace notes without disturbing the destination', async ({ page }) => {
+  let savedSource = '';
+  await page.route('**/api/songs**', route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: [] });
+    savedSource = route.request().postDataJSON().score.source;
+    return route.fulfill({ status: route.request().method() === 'POST' ? 201 : 200,
+      json: { id: 84, title: 'Grace removal', revision: route.request().method() === 'POST' ? 0 : 1 } });
+  });
+  const firstMeasure = () => Array.from(new DOMParser().parseFromString(savedSource, 'application/xml')
+    .getElementsByTagName('measure')[0].getElementsByTagName('note'));
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ Import a tab' }).click();
+  await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-tie.musicxml');
+  const firstFret = page.getByTestId('notation').locator('svg text').filter({ hasText: /^0$/ }).first();
+  await expect(firstFret).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score', exact: true }).click();
+  const box = (await firstFret.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.getByText('Techniques', { exact: true }).click();
+  await page.getByRole('button', { name: 'Add grace…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add grace group' });
+  await dialog.getByLabel('Grace fret 1').fill('2');
+  await dialog.getByRole('button', { name: 'Add string' }).click();
+  await dialog.getByLabel('Grace string 2').selectOption('3');
+  await dialog.getByRole('button', { name: 'Apply grace group' }).click();
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 2');
+  await expect(page.getByRole('button', { name: 'Make rest' })).toHaveCount(0);
+
+  await page.getByLabel('Fret', { exact: true }).fill('3');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 3');
+  await page.getByRole('button', { name: '＋ Save to library' }).click();
+  await expect.poll(() => firstMeasure().filter(note => note.getElementsByTagName('grace').length)
+    .map(note => note.getElementsByTagName('fret')[0]?.textContent).sort().join(',')).toBe('0,3');
+  expect(firstMeasure()[2].getElementsByTagName('fret')[0].textContent).toBe('0');
+
+  await page.getByRole('button', { name: 'Remove note' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Grace note removed.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect.poll(() => firstMeasure().filter(note => note.getElementsByTagName('grace').length).length).toBe(1);
+  expect(firstMeasure()[0].getElementsByTagName('chord')).toHaveLength(0);
+
+  await page.getByLabel('Selection string').selectOption('3');
+  await page.getByRole('button', { name: 'Remove grace' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Grace event removed.' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove grace' })).toHaveCount(0);
+  await page.getByLabel('Selection string').selectOption('4');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect.poll(() => firstMeasure().filter(note => note.getElementsByTagName('grace').length).length).toBe(0);
+  expect(firstMeasure()[0].getElementsByTagName('fret')[0].textContent).toBe('0');
+
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Remove grace' })).toBeVisible();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect.poll(() => firstMeasure().filter(note => note.getElementsByTagName('grace').length).length).toBe(1);
+});
