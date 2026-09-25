@@ -20,7 +20,10 @@ const { inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } = vi.h
 const { applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace } = vi.hoisted(() => ({
   applyMusicXmlGraceGroup: vi.fn(), inspectMusicXmlGraceGroup: vi.fn(), removeMusicXmlGraceGroup: vi.fn(), removeMusicXmlGrace: vi.fn() }));
 vi.mock('../../app/frontend/Player', () => ({
-  Player: ({ onPreferencesChange, onSelectionChange, onFretKey, onBeforeNavigate, selection, onSelectionDelete, editing, exportBlockedReason, onRenderResult }: any) => <>
+  Player: ({ onPreferencesChange, onSelectionChange, onPassageChange, onFretKey, onBeforeNavigate, selection, onSelectionDelete, editing, exportBlockedReason, onRenderResult }: any) => <>
+    <button type="button" data-testid="choose-range" onClick={() => onPassageChange?.({
+      start: { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null },
+      end: { track: 1, staff: 1, measure: 1, event: 2, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 2, graceIndex: null, graceGroupId: null } })}>Choose range</button>
     {['1', '2', '3', '4', '0', 'Enter', 'Escape', 'Backspace', 'Tab'].map(key => <button key={key} type="button" data-testid={`key-${key}`} onClick={() => { if (!onFretKey?.(selection, key) && key === 'Backspace') onSelectionDelete?.(selection); }}>{`Key ${key}`}</button>)}
     <button type="button" data-testid="navigate" onClick={() => onBeforeNavigate?.()}>Navigate</button>
     <button type="button" data-testid="render-ok" onClick={() => onRenderResult?.({ ok: true })}>Rendered</button>
@@ -106,6 +109,35 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear passage' }));
     expect((screen.getByRole('button', { name: 'Clear passage' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('clears a partial range to rests and routes range clipboard shortcuts', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+    promoteNativeScore.mockReturnValue('<score-partwise/>');
+    const beat = () => ({ isRest: false, graceType: 0, notes: [{}] });
+    readMusicXml.mockImplementation((source: string, filename: string) => ({ ...preview, source, filename,
+      score: { title: score.title, masterBars: [{}], tracks: [{ staves: [{ bars: [{ voices: [{ beats: [beat(), beat()] }] }] }] }] } }));
+    removeMusicXmlNotes.mockImplementation((source: string) => ({ source: `${source}<rest/>`, dependencies: ['hammer-on to m1 e3'] }));
+    render(<App />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true });
+    expect(screen.queryByRole('alert')).toBeNull();
+    fireEvent.click(screen.getByTestId('choose-range'));
+    expect(screen.getByText('M1 E1 – M1 E2 selected')).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: 'c', ctrlKey: true });
+    expect(screen.getByRole('alert').textContent).toContain('Select whole measures to copy');
+    fireEvent.keyDown(document.body, { key: 'x', metaKey: true });
+    expect(screen.getByRole('alert').textContent).toContain('Select whole measures to cut');
+    fireEvent.click(screen.getByTestId('key-Backspace'));
+    const dialog = screen.getByRole('dialog', { name: 'Clear range', hidden: true });
+    expect(dialog.textContent).toContain('Clear M1 E1 – M1 E2?');
+    expect(dialog.textContent).toContain('Also removes or disconnects: hammer-on to m1 e3');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Clear', hidden: true }));
+    expect(screen.getByText('Cleared M1 E1 – M1 E2; it now holds rests.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).getAttribute('title')).toContain('Undo: Clear M1 E1 – M1 E2');
   });
 
   it('loads the library, opens plaintext and saves the native score', async () => {

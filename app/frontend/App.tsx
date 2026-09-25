@@ -40,7 +40,8 @@ type StandaloneTarget = { originalKey: string; base: MusicXmlPreview };
 type SettingsTarget = { originalKey: string; base: MusicXmlPreview; info: ScoreSettingsInfo };
 type TempoTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; info: LocalTempoInfo };
 type PasteTarget = { originalKey: string; base: MusicXmlPreview; measure: number; replaceFrom: number | null; replaceCount: number };
-type CutTarget = { originalKey: string; base: MusicXmlPreview; first: number; last: number; cut: MeasureCut };
+type CutTarget = { originalKey: string; base: MusicXmlPreview; first: number; last: number; cut: Pick<MeasureCut, 'source' | 'notes' | 'labels' | 'lyrics' | 'spans'> & { clipboard?: MeasureClipboard };
+  mode?: 'cut' | 'clear'; label?: string };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection; kind: TransitionKind };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 import { AnchorDialog } from './editor/dialogs/AnchorDialog';
@@ -398,6 +399,18 @@ export function App() {
   function documentRefocus() { document.querySelector<HTMLElement>('[data-testid="notation"]')?.focus({ preventScroll: true }); }
   const historyAction = useRef(moveHistory);
   historyAction.current = moveHistory;
+  // Ctrl/Cmd+C, X and V act on the editing range and Playtab's measure
+  // clipboard; without a range they leave the browser's own behaviour alone.
+  const clipboardAction = useRef<(key: 'c' | 'x' | 'v') => boolean>(() => false);
+  clipboardAction.current = key => {
+    const active = document.activeElement;
+    const opener = (active instanceof HTMLElement && active !== document.body ? active : document.querySelector<HTMLElement>('[data-testid="notation"]')) ?? document.body;
+    if (key === 'c') { if (!passage) return false; copyPassage(); return true; }
+    if (key === 'x') { if (!passage) return false; openCutDialog(opener); return true; }
+    if (!clipboard || !selection) return false;
+    openPasteDialog(opener);
+    return true;
+  };
   const saveShortcut = useRef<() => void>(() => undefined);
   saveShortcut.current = () => { void saveCurrent(); };
   useEffect(() => {
@@ -418,6 +431,11 @@ export function App() {
       if (target instanceof HTMLElement && (target.closest('input, textarea, select, [contenteditable="true"]'))) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
       const key = event.key.toLowerCase();
+      if ((key === 'c' || key === 'x' || key === 'v') && !event.shiftKey) {
+        if (target instanceof HTMLElement && target.closest('dialog')) return;
+        if (clipboardAction.current(key)) event.preventDefault();
+        return;
+      }
       if (key !== 'z' && key !== 'y') return;
       event.preventDefault();
       historyAction.current(key === 'y' || event.shiftKey ? 'redo' : 'undo');
@@ -1047,20 +1065,59 @@ export function App() {
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
+  // Clears the selected range to rests after the Cut-style confirmation:
+  // whole measures through the measure cut, partial ranges event by event.
+  function openClearRange(opener: HTMLElement | null) {
+    if (!passage) return;
+    if (pendingFret) { setError('Apply the pending fret before clearing the range.'); return; }
+    textOpener.current = opener;
+    try {
+      const base = textBase();
+      const whole = wholeMeasurePassage();
+      if (whole) {
+        const cut = cutMusicXmlMeasures(base.source, base.score, whole.first - 1, whole.last - 1);
+        setCutTarget({ originalKey: documentKey(currentDocument), base, first: whole.first, last: whole.last, cut, mode: 'clear' });
+        setError(''); return;
+      }
+      const { start, end } = passage;
+      let current = base;
+      let notes = 0;
+      const dependencies = new Set<string>();
+      for (let measure = start.measure; measure <= end.measure; measure++) {
+        const count = current.score.tracks[0]?.staves[0]?.bars[measure - 1]?.voices[start.voice - 1]?.beats.length ?? 0;
+        const last = measure === end.measure ? end.event : count;
+        for (let event = measure === start.measure ? start.event : 1; event <= last; event++) {
+          const beat = current.score.tracks[0]?.staves[0]?.bars[measure - 1]?.voices[start.voice - 1]?.beats[event - 1];
+          if (!beat || beat.isRest || beat.notes.length === 0 || beat.graceType) continue;
+          const result = removeMusicXmlNotes(current.source, current.score, { measure: measure - 1, beat: event - 1, voice: start.voice - 1 });
+          if (!result) continue;
+          notes += beat.notes.length;
+          result.dependencies.forEach(item => dependencies.add(item));
+          current = readMusicXml(result.source, base.filename, base.sourceFormat);
+        }
+      }
+      if (!notes) { setMessage('The selected range already holds only rests.'); setError(''); return; }
+      setCutTarget({ originalKey: documentKey(currentDocument), base, first: start.measure, last: end.measure, mode: 'clear',
+        label: `M${start.measure} E${start.event} – M${end.measure} E${end.event}`,
+        cut: { source: current.source, notes, labels: 0, lyrics: 0, spans: [...dependencies] } });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
   function confirmCut() {
     if (!cutTarget) return;
     const { base, first, last, cut } = cutTarget;
+    const clearing = cutTarget.mode === 'clear';
     setCutTarget(null);
     if (cutTarget.originalKey !== documentKey(currentDocument)) { setError('The score changed since Cut was opened. Select the measures again.'); return; }
     try {
       const nextPreview = withPreviewTitle(readMusicXml(cut.source, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
       const after = selection ? selectionAtPosition(selection, score, nextPreview, {}) : null;
-      const range = first === last ? `measure ${first}` : `measures ${first}–${last}`;
-      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Cut ${range}`);
-      setClipboard({ ...cut.clipboard, title: base.score.title });
+      const range = cutTarget.label ?? (first === last ? `measure ${first}` : `measures ${first}–${last}`);
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `${clearing ? 'Clear' : 'Cut'} ${range}`);
+      if (!clearing && cut.clipboard) setClipboard({ ...cut.clipboard, title: base.score.title });
       setPreview(nextPreview); setSelection(after); setPassage(null); setError('');
-      setMessage(`Cut ${range} to the clipboard; the measures now hold rests.`);
+      setMessage(clearing ? `Cleared ${range}; it now holds rests.` : `Cut ${range} to the clipboard; the measures now hold rests.`);
     } catch (failure) { setError((failure as Error).message); }
   }
   function copyPassage() {
@@ -1648,9 +1705,10 @@ export function App() {
       setPassage(first ? { start: passage.start, end: current } : { start: current, end: passage.start });
     }) },
     'clear-passage': { label: 'Clear passage', disabled: !passage, run: () => setPassage(null) },
-    'copy-passage': { label: 'Copy passage', disabled: !passage, run: () => copyPassage() },
-    'cut-passage': { label: 'Cut passage…', disabled: !passage, run: opener => openCutDialog(opener) },
-    'paste-passage': { label: 'Paste passage…', disabled: !clipboard, run: opener => openPasteDialog(opener) },
+    'clear-range': { label: 'Clear to rests…', icon: 'make-rest', shortcut: 'Delete', disabled: !passage, run: opener => openClearRange(opener) },
+    'copy-passage': { label: 'Copy passage', shortcut: 'Ctrl+C', disabled: !passage, run: () => copyPassage() },
+    'cut-passage': { label: 'Cut passage…', shortcut: 'Ctrl+X', disabled: !passage, run: opener => openCutDialog(opener) },
+    'paste-passage': { label: 'Paste passage…', shortcut: 'Ctrl+V', disabled: !clipboard, run: opener => openPasteDialog(opener) },
     'select-measure': { label: 'Select measure', disabled: !selection, run: () => selectWholeMeasure() },
     'insert-measure-before': { label: 'Insert measure before', disabled: !selection, run: () => insertSelectedMeasure('before') },
     'insert-measure-after': { label: 'Insert measure after', disabled: !selection, run: () => insertSelectedMeasure('after') },
@@ -1680,7 +1738,7 @@ export function App() {
               commands={commands} />
             <CommandGroup className="editor-text-tools" summary="Text" commands={commands} ids={['chord', 'section', 'words', 'lyric', 'lyrics-chords']} />
             <CommandGroup className="editor-passage-tools" summary="Select passage" commands={commands}
-              ids={['range-start', 'range-end', 'clear-passage', 'copy-passage', 'cut-passage', 'paste-passage']}>
+              ids={['range-start', 'range-end', 'clear-passage', 'copy-passage', 'cut-passage', 'paste-passage', 'clear-range']}>
               {clipboard && <p className="editor-rhythm-reason">Clipboard: {clipboard.measures.length} measure{clipboard.measures.length === 1 ? '' : 's'} from “{clipboard.title}”.</p>}
             </CommandGroup>
             <CommandGroup className="editor-measure-tools" summary="Measure" commands={commands} ids={['select-measure', 'insert-measure-before', 'insert-measure-after',
@@ -1740,7 +1798,7 @@ export function App() {
           onPassageChange={setPassage}
           onFretKey={handleFretKey}
           onBeforeNavigate={commitPendingFret}
-          onSelectionDelete={requestRemoval}
+          onSelectionDelete={current => { if (passage) openClearRange(document.activeElement instanceof HTMLElement ? document.activeElement : null); else requestRemoval(current); }}
           exportBlockedReason={pendingFret ? 'Apply or clear the pending fret before exporting.' : null}
           historyRevision={historyRevision}
           compactTransportHost={editMode && narrow && toolsOpen ? sheetTransportHost : null}
