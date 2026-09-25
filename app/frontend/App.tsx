@@ -203,6 +203,16 @@ export function App() {
   const [newScoreError, setNewScoreError] = useState('');
   const newScoreDialog = useRef<HTMLDialogElement>(null);
   const newScoreOpener = useRef<HTMLElement | null>(null);
+  const [narrow, setNarrow] = useState(() => typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 800px)').matches);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [sheetTransportHost, setSheetTransportHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia('(max-width: 800px)');
+    const update = () => setNarrow(query.matches);
+    query.addEventListener?.('change', update);
+    return () => query.removeEventListener?.('change', update);
+  }, []);
   const [clipboard, setClipboard] = useState<MeasureClipboard | null>(null);
   const [pasteTarget, setPasteTarget] = useState<PasteTarget | null>(null);
   const [pasteMode, setPasteMode] = useState<TuningMode>('frets');
@@ -496,6 +506,19 @@ export function App() {
   function documentRefocus() { document.querySelector<HTMLElement>('[data-testid="notation"]')?.focus({ preventScroll: true }); }
   const historyAction = useRef(moveHistory);
   historyAction.current = moveHistory;
+  const saveShortcut = useRef<() => void>(() => undefined);
+  saveShortcut.current = () => { void saveCurrent(); };
+  useEffect(() => {
+    // Ctrl/Cmd+S saves the workspace draft (committing a valid pending fret)
+    // instead of opening the browser's save-page dialog.
+    const keydown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 's') return;
+      event.preventDefault();
+      saveShortcut.current();
+    };
+    document.addEventListener('keydown', keydown, true);
+    return () => document.removeEventListener('keydown', keydown, true);
+  }, []);
   useEffect(() => {
     if (!editMode) return;
     const keydown = (event: KeyboardEvent) => {
@@ -1703,16 +1726,7 @@ export function App() {
   })();
   const selectedBeats = selection ? preview?.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats : undefined;
   const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || selectedBeats?.[selection.event - 2]?.graceType));
-  return <div className={editMode ? 'shell edit-mode' : 'shell'}>
-    <aside className="sidebar">
-      <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
-      <div className="sidebar-section">YOUR WORKSPACE</div>
-      <button type="button" className="nav-item" onClick={event => openNewScoreDialog(event.currentTarget)}>＋ <span>New score</span></button>
-      <button className="nav-item active" aria-expanded={!libraryCollapsed} onClick={() => { if (editMode) setLibraryCollapsed(current => !current); else document.getElementById('library-list')?.scrollIntoView(); }}>▤ <span>My library</span><span className="count">{library.length}</span></button>
-      {!libraryCollapsed && <div className="library-list" id="library-list">
-        {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={event => requestLeave(() => load(demo, null), event.currentTarget)}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => void openSong(item.id)}>{item.title}</button>)}
-      </div>}
-      {editMode && <section className="editor-sidebar" aria-label="Edit tools">
+  const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
         <div className="sidebar-section">EDIT SCORE</div>
         <div className="editor-history">
           <button type="button" disabled={!history.undo.length} title={history.undo.length ? `Undo: ${history.undo.at(-1)!.description}` : 'Nothing to undo'} onClick={() => moveHistory('undo')}>Undo</button>
@@ -1832,7 +1846,17 @@ export function App() {
         <details className="editor-score-tools"><summary>Score</summary>
           <button type="button" onClick={event => openSettingsDialog(event.currentTarget)}>Score settings…</button>
         </details>
-      </section>}
+      </section>;
+  return <div className={editMode ? 'shell edit-mode' : 'shell'}>
+    <aside className="sidebar">
+      <a className="brand" href="/" aria-label="Playtab home" onClick={event => { event.preventDefault(); requestLeave(() => window.location.assign('/'), event.currentTarget); }}><span className="brand-mark">♮</span>playtab<span className="brand-dot">.</span></a>
+      <div className="sidebar-section">YOUR WORKSPACE</div>
+      <button type="button" className="nav-item" onClick={event => openNewScoreDialog(event.currentTarget)}>＋ <span>New score</span></button>
+      <button className="nav-item active" aria-expanded={!libraryCollapsed} onClick={() => { if (editMode) setLibraryCollapsed(current => !current); else document.getElementById('library-list')?.scrollIntoView(); }}>▤ <span>My library</span><span className="count">{library.length}</span></button>
+      {!libraryCollapsed && <div className="library-list" id="library-list">
+        {library.length === 0 ? <div className="empty-library"><p>A home for the tunes<br />you’re working on.</p><button type="button" className="practice-demo" onClick={event => requestLeave(() => load(demo, null), event.currentTarget)}>♩ <span>Practice demo</span></button></div> : library.map(item => <button className={savedId === item.id ? 'current' : ''} key={item.id} onClick={() => void openSong(item.id)}>{item.title}</button>)}
+      </div>}
+      {editMode && !narrow && editorTools}
       <div id="playback-controls" className="sidebar-playback" />
       <div className="sidebar-bottom"><div className="small-banjo">♫</div><p>A little practice,<br /><em>every day.</em></p><span>LOCAL WORKSPACE · EARLY PREVIEW</span></div>
     </aside>
@@ -1840,7 +1864,7 @@ export function App() {
       <header className="topbar"><span>My library <span className="breadcrumb">/ Practice room</span></span><div className="account-controls">{userEmail() && <span className="account-email">{userEmail()}</span>}<button onClick={event => requestLeave(() => signOut().catch(e => setError(e.message)), event.currentTarget)}>Sign out</button><button className="primary" onClick={() => { setImportError(''); dialog.current?.showModal(); }}>＋ Import a tab</button></div></header>
       <div className="workspace">
         <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>
-        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={editMode} onClick={toggleEditMode}>{editMode ? 'Done editing' : 'Edit score'}</button><button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details></div></div>
+        <div className="title-row"><h1>{preview?.score.title ?? score.title}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={editMode} onClick={toggleEditMode}>{editMode ? 'Done editing' : 'Edit score'}</button>{editMode && narrow && <button type="button" className="edit-tools-toggle" aria-expanded={toolsOpen} aria-controls="edit-tools-sheet" onClick={() => setToolsOpen(open => !open)}>Edit tools</button>}<button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details></div></div>
         <p className="save-status" role="status">{saving ? 'Saving…' : conflicted ? 'Changed in another tab' : saveError ? 'Could not save' : savedId === null ? hasDocumentEdits || pendingFret ? 'Unsaved changes' : 'Not saved to library' : dirty || pendingFret ? 'Unsaved changes' : 'Saved'}</p>
         {saveError && <p className="alert" role="alert">{saveError} {conflicted ? <button type="button" onClick={() => setConflictOpen(true)}>Resolve conflict…</button> : <button type="button" disabled={saving} onClick={() => void (failedCopyName ? save(failedCopyName) : saveCurrent())}>Retry save</button>}</p>}
         {error && <p className="alert" role="alert">{error}</p>}
@@ -1870,11 +1894,18 @@ export function App() {
           onSelectionDelete={requestRemoval}
           exportBlockedReason={pendingFret ? 'Apply or clear the pending fret before exporting.' : null}
           historyRevision={historyRevision}
+          compactTransportHost={editMode && narrow && toolsOpen ? sheetTransportHost : null}
           sessionKey={session.current}
         />
         <div className="workspace-footer"><span>Made for five strings and a little patience.</span><span>Sound powered by alphaTab · MuseScore General Lite</span></div>
       </div>
     </main>
+    {editMode && narrow && toolsOpen && <section id="edit-tools-sheet" className="edit-sheet" aria-label="Edit tools sheet">
+      <div className="edit-sheet-header"><strong>Edit tools</strong>
+        <button type="button" onClick={() => { setToolsOpen(false); document.querySelector<HTMLElement>('.edit-tools-toggle')?.focus(); }}>Close tools</button></div>
+      <div ref={setSheetTransportHost} className="edit-sheet-transport" />
+      <div className="edit-sheet-body">{editorTools}</div>
+    </section>}
     <dialog ref={deleteMeasureDialog} className="duplicate-dialog" aria-label="Delete measure" onCancel={event => { event.preventDefault(); setPendingMeasureDeletion(null); }}>
       <h2>Delete measure {pendingMeasureDeletion ? pendingMeasureDeletion.measureIndex + 1 : ''}?</h2>
       <p>This permanently removes {pendingMeasureDeletion?.noteCount ?? 0} note{pendingMeasureDeletion?.noteCount === 1 ? '' : 's'}, {pendingMeasureDeletion?.restCount ?? 0} rest{pendingMeasureDeletion?.restCount === 1 ? '' : 's'}, and {pendingMeasureDeletion?.labelCount ?? 0} local label{pendingMeasureDeletion?.labelCount === 1 ? '' : 's'} from this score. Undo can restore them during this editing session.</p>

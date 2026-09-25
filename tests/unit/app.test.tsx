@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { App } from '../../app/frontend/App';
 import { demo } from '../../app/frontend/music/score';
@@ -1897,6 +1897,59 @@ describe('workspace application', () => {
     expect(screen.getByTestId('export-blocked').textContent).toBe('Apply or clear the pending fret before exporting.');
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '0' } });
     expect(screen.getByTestId('export-blocked').textContent).toBe('');
+  });
+
+  it('keeps one set of edit tools that moves between the sidebar and a narrow-screen sheet without losing work', async () => {
+    const listeners: (() => void)[] = [];
+    let narrowMatches = true;
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ get matches() { return query.includes('max-width: 800px') ? narrowMatches : false; },
+      media: query, addEventListener: (_: string, listener: () => void) => listeners.push(listener), removeEventListener: vi.fn() })));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    const toggle = screen.getByRole('button', { name: 'Edit tools' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByLabelText('Selection inspector')).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const sheet = screen.getByRole('region', { name: 'Edit tools sheet' });
+    expect(within(sheet).getByLabelText('Selection inspector')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(within(sheet).getByLabelText('Fret'), { target: { value: '7' } });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Close tools' }));
+    expect(screen.queryByRole('region', { name: 'Edit tools sheet' })).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+    fireEvent.click(toggle);
+    expect(screen.getAllByLabelText('Selection inspector')).toHaveLength(1);
+    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('7');
+    narrowMatches = false;
+    act(() => listeners.forEach(listener => listener()));
+    expect(screen.queryByRole('button', { name: 'Edit tools' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Edit tools sheet' })).toBeNull();
+    expect(screen.getAllByLabelText('Selection inspector')).toHaveLength(1);
+    expect(screen.getByLabelText<HTMLInputElement>('Fret').value).toBe('7');
+    expect(screen.getByText('Measure 1')).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it('saves with Ctrl/Cmd+S from anywhere in the workspace instead of the browser save dialog', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response({ id: 7, title: score.title, revision: 0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<App />);
+    await screen.findByRole('button', { name: /Practice demo/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '2' } });
+    const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true, cancelable: true });
+    act(() => { screen.getByLabelText('Fret').dispatchEvent(event); });
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, options]) => (options as RequestInit | undefined)?.method === 'POST')).toBe(true));
+    const body = JSON.parse(fetchMock.mock.calls.find(([, options]) => (options as RequestInit | undefined)?.method === 'POST')![1].body);
+    expect(body.score.measures[0].beats[0].notes[0].fret).toBe(2);
+    const other = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+    act(() => { document.body.dispatchEvent(other); });
+    expect(other.defaultPrevented).toBe(false);
   });
 
   it('blocks an imported deletion with a protected attachment', async () => {

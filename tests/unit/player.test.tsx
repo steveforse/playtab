@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { demo } from '../../app/frontend/music/score';
 
@@ -697,6 +697,33 @@ describe('notation player', () => {
     expect(screen.getByRole('button', { name: 'Export', exact: true }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByText('Apply or clear the pending fret before exporting.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Export file', exact: true, hidden: true }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('drives the same player from the narrow-screen sheet and moves the playback panel across the breakpoint', () => {
+    const listeners: (() => void)[] = [];
+    let narrow = false;
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ get matches() { return narrow; }, addEventListener: (_: string, listener: () => void) => listeners.push(listener), removeEventListener: vi.fn() })));
+    const sidebarHost = document.createElement('div');
+    sidebarHost.id = 'playback-controls';
+    document.body.appendChild(sidebarHost);
+    const sheet = document.createElement('div');
+    document.body.appendChild(sheet);
+    const selection = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note' as const, noteId: 1, graceIndex: null, graceGroupId: null };
+    render(<Player score={demo} editing selection={selection} compactTransportHost={sheet} />);
+    const api = alphaTab.FakeAlphaTabApi.latest;
+    act(() => { api.playerReady.emit(); api.renderFinished.emit(); });
+    expect(sidebarHost.querySelector('[aria-label="Playback settings"]')).toBeTruthy();
+    const compact = within(sheet);
+    fireEvent.click(compact.getByRole('button', { name: 'Play' }));
+    expect(api.playPause).toHaveBeenCalled();
+    expect(compact.getByRole('button', { name: 'Play selection' }).hasAttribute('disabled')).toBe(false);
+    narrow = true;
+    act(() => listeners.forEach(listener => listener()));
+    expect(sidebarHost.querySelector('[aria-label="Playback settings"]')).toBeNull();
+    expect(screen.getAllByRole('region', { name: 'Playback settings' })).toHaveLength(1);
+    expect(alphaTab.FakeAlphaTabApi.latest).toBe(api);
+    sidebarHost.remove(); sheet.remove();
+    vi.unstubAllGlobals();
   });
 
   it('offers chord diagrams separately from imported chord names', () => {
