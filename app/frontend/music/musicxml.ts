@@ -3,6 +3,7 @@ import { extractTechniques, applyTechniques } from './musicxml-techniques';
 import type { ImportedScoreDocument, Score } from './score';
 import { createSourceIdentityMap, reconcileSourceIdentityMap, sourceEventIdsByAddress, type IdentityCarry, type SourceIdentityMap } from './source-identity';
 import { musicXmlEditorState } from './musicxml-editor';
+import { durationTime, fillRestTime, rationalTime } from '../editor/rhythm';
 
 export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
 export type TimedLyric = { measure: number; beat: number; text: string };
@@ -240,5 +241,44 @@ export function promoteNativeScore(score: Score): string {
     }).join('');
     return `<measure number="${index + 1}">${attributes}${events}</measure>`;
   }).join('');
-  return `<?xml version="1.0" encoding="utf-8"?><score-partwise version="4.0"><work><work-title>${escape(score.title)}</work-title></work><movement-title>${escape(score.title)}</movement-title><part-list><score-part id="P1"><part-name>Banjo</part-name></score-part></part-list><part id="P1">${measures}</part></score-partwise>`;
+  return `<?xml version="1.0" encoding="utf-8"?><score-partwise version="4.0"><work><work-title>${escape(score.title)}</work-title></work><part-list><score-part id="P1"><part-name>Banjo</part-name></score-part></part-list><part id="P1">${measures}</part></score-partwise>`;
+}
+
+export type BlankScoreOptions = { title: string; tempo: number; numerator: number; denominator: number; measures: number; tuning: number[] };
+export const OPEN_G_TUNING = [62, 59, 55, 50, 67];
+
+// A new score is an ordinary MusicXML document: one five-string TAB staff
+// whose measures are filled with the exact rests of the chosen meter.
+export function createBlankMusicXml(options: BlankScoreOptions): string {
+  const title = options.title.trim();
+  if (!title || title.length > 160) throw new Error('Title must be 1–160 characters.');
+  if (!Number.isInteger(options.tempo) || options.tempo < 30 || options.tempo > 240) throw new Error('Tempo must be a whole number from 30 to 240 BPM.');
+  if (!Number.isInteger(options.numerator) || options.numerator < 1 || options.numerator > 12 || ![2, 4, 8, 16].includes(options.denominator)) {
+    throw new Error('Choose a time signature from 1 to 12 beats of 2, 4, 8, or 16.');
+  }
+  if (!Number.isInteger(options.measures) || options.measures < 1 || options.measures > 256) throw new Error('A score needs 1 to 256 measures.');
+  if (options.tuning.length !== 5 || options.tuning.some(midi => !Number.isInteger(midi) || midi < 36 || midi > 96)) {
+    throw new Error('Each open string must be a MIDI pitch from 36 to 96.');
+  }
+  const escape = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  const names: [string, number][] = [['C', 0], ['C', 1], ['D', 0], ['D', 1], ['E', 0], ['F', 0], ['F', 1], ['G', 0], ['G', 1], ['A', 0], ['A', 1], ['B', 0]];
+  const tuningPitch = (midi: number) => {
+    const [step, alter] = names[((midi % 12) + 12) % 12];
+    return `<tuning-step>${step}</tuning-step>${alter ? `<tuning-alter>${alter}</tuning-alter>` : ''}<tuning-octave>${Math.floor(midi / 12) - 1}</tuning-octave>`;
+  };
+  const rests = fillRestTime(rationalTime(BigInt(options.numerator) * 4n, BigInt(options.denominator)));
+  const gcd = (left: bigint, right: bigint): bigint => right === 0n ? left : gcd(right, left % right);
+  const divisions = rests.reduce((value, rest) => { const unit = durationTime(rest)[1]; return value / gcd(value, unit) * unit; }, 1n);
+  const types: Record<number, string> = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' };
+  const restXml = rests.map(rest => {
+    const [numerator, denominator] = durationTime(rest);
+    return `<note><rest/><duration>${numerator * divisions / denominator}</duration><voice>1</voice><type>${types[rest]}</type><staff>1</staff></note>`;
+  }).join('');
+  const tuning = [...options.tuning].map((midi, index) => `<staff-tuning line="${5 - index}">${tuningPitch(midi)}</staff-tuning>`).reverse().join('');
+  const measures = Array.from({ length: options.measures }, (_, index) => {
+    const attributes = index === 0 ? `<attributes><divisions>${divisions}</divisions><key><fifths>0</fifths></key><time><beats>${options.numerator}</beats><beat-type>${options.denominator}</beat-type></time><clef><sign>TAB</sign><line>5</line></clef><staff-details><staff-lines>5</staff-lines>${tuning}</staff-details></attributes><direction placement="above"><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${options.tempo}</per-minute></metronome></direction-type><staff>1</staff><sound tempo="${options.tempo}"/></direction>` : '';
+    return `<measure number="${index + 1}">${attributes}${restXml}</measure>`;
+  }).join('');
+  // Only work-title: alphaTab would also print a matching movement-title as a subtitle.
+  return `<?xml version="1.0" encoding="utf-8"?><score-partwise version="4.0"><work><work-title>${escape(title)}</work-title></work><part-list><score-part id="P1"><part-name>Banjo</part-name></score-part></part-list><part id="P1">${measures}</part></score-partwise>`;
 }
