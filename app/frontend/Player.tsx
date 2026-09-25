@@ -739,15 +739,20 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       },
     });
     api.current = instance;
+    // alphaTab reports its own note and beat presses after the staff handler
+    // below has already chosen the precise target (for example a string on a
+    // rest); those later reports must not replace that choice.
+    let staffHandledAt = 0;
+    const staffJustHandled = () => Date.now() - staffHandledAt < 300;
     const selectNote = (note: model.Note) => {
-      if (editingRef.current) {
+      if (editingRef.current && !staffJustHandled()) {
         element.current?.focus({ preventScroll: true });
         const source = note as model.Note & { playtabMappingReason?: string };
         selectionCallbackRef.current?.(selectionFromNote(note, source.playtabMappingReason));
       }
     };
     const selectBeat = (beat: model.Beat) => {
-      if (editingRef.current && beat.notes.length === 0) {
+      if (editingRef.current && beat.notes.length === 0 && !staffJustHandled()) {
         element.current?.focus({ preventScroll: true });
         selectionCallbackRef.current?.(selectionFromBeat(beat));
       }
@@ -755,6 +760,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const detachNoteMouseDown = instance.noteMouseDown?.on(selectNote);
     const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
     const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, (selection, extend, scope = 'event') => {
+      staffHandledAt = Date.now();
       if (editingRef.current) {
         element.current?.focus({ preventScroll: true });
         const span = scope === 'measure' ? measureSpan(selection) : { start: selection, end: selection };

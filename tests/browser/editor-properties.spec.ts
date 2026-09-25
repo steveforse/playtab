@@ -31,8 +31,10 @@ test('UX-03 the Properties panel follows the selection and edits the note it sho
   await page.keyboard.press('2');
   await expect(ribbonFret).toHaveText('2');
   await expect(ribbonFret).toHaveClass(/typing/);
+  await expect(notation.locator('svg text').filter({ hasText: /^2$/ }).first()).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(ribbonFret).toHaveText('1');
+  await expect(ribbonFret).not.toHaveClass(/typing/);
+  await expect(ribbonFret).toHaveText('2');
 
   await page.keyboard.press('Shift+ArrowRight');
   await expect(panel.locator('.properties-range .properties-kind')).toHaveText('Range');

@@ -134,7 +134,7 @@ test('ED-09 promotes a native high-fret edit as one undoable change and saves Mu
   await expect(notation.locator('svg text').filter({ hasText: /^28$/ })).toHaveCount(1);
 });
 
-test('ED-03 buffers typed frets until Enter, cancels with Escape and commits once before navigation', async ({ page }) => {
+test('ED-03 applies typed frets live and joins a quick second digit into one undo step', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-tie.musicxml');
@@ -144,24 +144,49 @@ test('ED-03 buffers typed frets until Enter, cancels with Escape and commits onc
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await first.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  const inspector = page.getByLabel('Selection inspector');
   await page.keyboard.press('1');
+  await expect(inspector).toContainText('Fret 1');
+  await expect(notation.locator('svg text').filter({ hasText: /^1$/ })).toHaveCount(1);
   await page.keyboard.press('2');
-  await expect(page.getByText('Fret 12 typed — press Enter to apply or Escape to cancel.')).toBeVisible();
-  await expect(notation.locator('svg text').filter({ hasText: /^(1|12)$/ })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
-  await page.keyboard.press('3');
-  await expect(page.getByText('Use a fret from 0 to 36.')).toBeVisible();
-  await page.keyboard.press('Enter');
+  await expect(inspector).toContainText('Fret 12');
   await expect(notation.locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(1);
   await page.keyboard.press('Control+z');
-  await expect(notation.locator('svg text').filter({ hasText: /^12$/ })).toHaveCount(0);
+  await expect(inspector).toContainText('Fret 0');
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
-  await page.keyboard.press('4');
-  await page.keyboard.press('Escape');
-  await expect(page.getByText('Fret entry cancelled.')).toBeVisible();
-  await expect(notation.locator('svg text').filter({ hasText: /^4$/ })).toHaveCount(0);
+  // 3 then 7 would be fret 37, so the 7 replaces the 3; letters are ignored.
+  await page.keyboard.press('3');
   await page.keyboard.press('7');
+  await expect(inspector).toContainText('Fret 7');
+  await page.keyboard.press('a');
+  await expect(inspector).toContainText('Fret 7');
   await page.keyboard.press('ArrowRight');
   await expect(notation.locator('svg text').filter({ hasText: /^7$/ })).toHaveCount(1);
-  await expect(page.getByLabel('Selection inspector')).toContainText('Measure 2');
+  await expect(inspector).toContainText('Measure 2');
+});
+
+test('selects and fills any string of a rest by pointer', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '＋ New score' }).click();
+  await page.getByRole('dialog', { name: 'New score' }).getByRole('button', { name: 'Create score' }).click();
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg').first()).toBeVisible({ timeout: 45000 });
+  if (!(await page.getByRole('button', { name: 'Done editing' }).count())) await page.getByRole('button', { name: 'Edit score' }).click();
+  const status = page.getByRole('status', { name: 'Editor status' }).locator('.editor-status-selection');
+  const box = (await notation.boundingBox())!;
+  const strings = new Set<string>();
+  for (let y = box.y; y < box.y + box.height && strings.size < 5; y += 4) {
+    await page.mouse.click(box.x + 200, y);
+    const match = (await status.textContent())?.match(/^M1 E1 S(\d) · whole rest$/);
+    if (match) strings.add(match[1]);
+  }
+  expect([...strings].sort()).toEqual(['1', '2', '3', '4', '5']);
+  await page.mouse.click(box.x + 200, box.y + 1);
+  for (let y = box.y; y < box.y + box.height; y += 4) {
+    await page.mouse.click(box.x + 200, y);
+    if ((await status.textContent())?.startsWith('M1 E1 S3')) break;
+  }
+  await page.keyboard.press('5');
+  await expect(status).toContainText('M1 E1 S3 · fret 5');
+  await expect(notation.locator('svg text').filter({ hasText: /^5$/ })).toHaveCount(1);
 });

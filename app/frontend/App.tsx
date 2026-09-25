@@ -185,7 +185,6 @@ export function App() {
   const selectionFretText = selection?.fret === null || selection?.fret === undefined ? '' : String(selection.fret);
   const [fretEdit, setFretEdit] = useState<{ key: string; value: string; buffer: boolean } | null>(null);
   const fretDraft = fretEdit?.key === selectionFretKey ? fretEdit.value : selectionFretText;
-  const surfaceBuffer = fretEdit?.key === selectionFretKey && fretEdit.buffer;
   const setFretDraft = (value: string, buffer = false) => setFretEdit({ key: selectionFretKey, value, buffer });
   const [moveString, setMoveString] = useState('');
   const [moveMode, setMoveMode] = useState<'fret' | 'pitch'>('fret');
@@ -331,31 +330,50 @@ export function App() {
   useEffect(() => {
     setMoveString(selection?.string ? String(selection.string) : '');
   }, [selection?.noteId, selection?.measure, selection?.event, selection?.string, selection?.fret]);
+  // Typing a digit on a selected string changes the fret at once. A second
+  // digit typed quickly on the same position makes a two-digit fret (up to
+  // 36); both digits form one undo step. Other keys are left to the caller.
+  const typing = useRef<{ key: string; text: string; at: number; group: string } | null>(null);
+  const typingTimer = useRef<number | undefined>(undefined);
+  const [typedFret, setTypedFret] = useState<{ key: string; text: string } | null>(null);
+  const positionKey = (target: ScoreSelection) => `${target.measure}:${target.event}:${target.voice}:${target.string}`;
+  function endTyping() {
+    typing.current = null;
+    window.clearTimeout(typingTimer.current);
+    setTypedFret(null);
+  }
   function handleFretKey(target: ScoreSelection, key: string): boolean {
-    const original = target.fret === null ? '' : String(target.fret);
     if (/^[0-9]$/.test(key)) {
-      if (!surfaceBuffer) { setFretDraft(key, true); setError(''); return true; }
-      if (fretDraftRef.current.length >= 2) { setMessage('Use a fret from 0 to 36.'); return true; }
-      setFretDraft(fretDraftRef.current + key, true);
-      return true;
-    }
-    if (key === 'Escape') {
-      if (!surfaceBuffer && fretDraftRef.current === original) return false;
-      setFretEdit(null); setMessage('Fret entry cancelled.');
+      if (target.string === null) return false;
+      const now = Date.now();
+      const position = positionKey(target);
+      const session = typing.current;
+      const continuing = session !== null && session.key === position && session.text.length === 1
+        && now - session.at < 1200 && Number(session.text + key) <= 36;
+      const text = continuing ? session.text + key : key;
+      const group = continuing ? session.group : `type-fret:${position}:${now}`;
+      typing.current = { key: position, text, at: now, group };
+      setTypedFret({ key: position, text });
+      window.clearTimeout(typingTimer.current);
+      typingTimer.current = window.setTimeout(() => { typing.current = null; setTypedFret(null); }, 1200);
+      setFretEdit(null);
+      setError('');
+      updateSelectionFret(target, Number(text), group);
       return true;
     }
     if (key === 'Backspace') {
-      if (!surfaceBuffer) return false;
-      const shorter = fretDraftRef.current.slice(0, -1);
-      if (shorter) setFretDraft(shorter, true); else setFretEdit(null);
+      const session = typing.current;
+      if (!session || session.key !== positionKey(target) || session.text.length < 2) return false;
+      const text = session.text.slice(0, 1);
+      typing.current = { ...session, text, at: Date.now() };
+      setTypedFret({ key: session.key, text });
+      updateSelectionFret(target, Number(text), session.group);
       return true;
     }
-    if (key === 'Enter' || key === 'Tab') {
-      if (fretDraftRef.current === original) return false;
-      const value = fretDraftRef.current;
-      setFretDraft(value);
-      updateSelectionFret(target, Number(value));
-      return true;
+    if (key === 'Enter' || key === 'Escape' || key === 'Tab') {
+      const active = typing.current !== null;
+      endTyping();
+      return key === 'Enter' && active;
     }
     return false;
   }
@@ -1578,8 +1596,9 @@ export function App() {
       selection.fret !== null ? `fret ${selection.fret}` : null, selectedDetails?.pitchValue != null ? selectedDetails.pitch : null, durationText]
       .filter(Boolean).join(' · ')
     : 'Nothing selected';
+  const typingHere = typedFret !== null && selection !== null && typedFret.key === positionKey(selection);
   const statusKeys = passage ? 'Shift+←/→ extend · Ctrl+C copy · Del clear · Esc deselect'
-    : surfaceBuffer ? 'Enter applies · Esc cancels'
+    : typingHere ? 'Type another digit for a two-digit fret'
       : selection?.string != null ? '0–9 fret · ←/→ move · ↑/↓ string · Del remove · right-click for more'
         : selection ? '←/→ move · ↑/↓ string · right-click for more' : 'Click a note to select · Shift-click extends · ? shortcuts';
   const commands: EditorCommands = {
@@ -1679,7 +1698,7 @@ export function App() {
             <p className="properties-hint">Click above the staff to select a measure; Shift-click extends.</p>
           </div> : <>
             <SelectionInspector selection={selection} details={selectedDetails} measureCount={measureCount} eventCount={selectedEventCount}
-              onNavigate={navigateInspector} fretDraft={fretDraft} onFretDraft={setFretDraft} fretBuffered={Boolean(surfaceBuffer)}
+              onNavigate={navigateInspector} fretDraft={fretDraft} onFretDraft={setFretDraft}
               moveString={moveString} onMoveString={setMoveString} moveMode={moveMode} onMoveMode={setMoveMode} moveOutcome={moveOutcome} commands={commands} />
             {selectedRhythm && <RhythmTools rhythm={selectedRhythm} triplet={selectedTriplet} tupletLocked={selectedTupletLocked} commands={commands} />}
             <TechniqueTools selection={selection} techniques={selectedTechniques} onHand={changeHand} transitions={selectedTransitions}
@@ -1727,7 +1746,7 @@ export function App() {
         <button type="button" className="edit-mode-toggle" aria-pressed={true} onClick={toggleEditMode}>Done editing</button>
       </div>
       <div className="edit-ribbon"><EditorToolbar commands={commands} onHelp={() => setHelpOpen(true)}
-        fret={{ value: surfaceBuffer ? fretDraft : selection?.fret != null ? String(selection.fret) : '–', typing: Boolean(surfaceBuffer) }} /><span ref={setViewHost} className="edit-ribbon-view" /></div></div>}
+        fret={{ value: typingHere ? typedFret!.text : selection?.fret != null ? String(selection.fret) : '–', typing: Boolean(typingHere) }} /><span ref={setViewHost} className="edit-ribbon-view" /></div></div>}
       <div className="workspace">
         {!editMode && <div className="eyebrow">PICK UP WHERE THE MUSIC BEGINS</div>}
         {!editMode && <div className="title-row"><h1>{scoreTitle}</h1><div className="title-actions"><button type="button" className="edit-mode-toggle" aria-pressed={false} onClick={toggleEditMode}>Edit score</button><button className="save-button" disabled={saving || (!dirty && !pendingFret)} onClick={() => void saveCurrent()}>{saving ? 'Saving…' : savedId && !dirty && !pendingFret ? '✓ Saved' : savedId ? 'Save changes' : '＋ Save to library'}</button><details className="score-more"><summary>More</summary><button type="button" disabled={saving} onClick={openCopyDialog}>Save a copy…</button><button type="button" disabled={!hasDocumentEdits && !pendingFret} onClick={() => askDiscard(() => restoreSnapshot(savedSnapshot.current ?? initialSnapshot.current))}>Discard unsaved changes…</button></details></div></div>}
@@ -1771,7 +1790,7 @@ export function App() {
         />
         {editMode && <div className="editor-status-bar" role="status" aria-label="Editor status">
           <span className="editor-status-selection">{statusSelection}</span>
-          {surfaceBuffer && <span className="editor-status-buffer">Fret {fretDraft} typed — Enter applies, Escape cancels</span>}
+          {typingHere && <span className="editor-status-buffer">Fret {typedFret!.text} — type another digit for a two-digit fret</span>}
           {message && <span className="editor-status-message">{message}</span>}
           <span className="editor-status-keys">{statusKeys}</span>
         </div>}

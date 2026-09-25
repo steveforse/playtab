@@ -9,10 +9,10 @@ export function KeyboardHelpDialog({ open, onClose, returnFocus }: { open: boole
     <p>With the score focused in edit mode:</p>
     <dl>
       <dt>Arrow keys</dt><dd>Move between events (Left/Right) and strings (Up/Down). The first arrow selects the first event.</dd>
-      <dt>0–9</dt><dd>Type a fret of up to two digits; it is shown but not applied yet.</dd>
-      <dt>Enter or Tab</dt><dd>Apply the typed fret.</dd>
-      <dt>Escape</dt><dd>Cancel the typed fret, clear the selected range, or close a dialog.</dd>
-      <dt>Backspace</dt><dd>Remove the last typed digit; with nothing typed, remove the selected note.</dd>
+      <dt>0–9</dt><dd>Replace the fret at once. A second digit typed quickly makes a two-digit fret (up to 36); both digits are one undo step. Other letters are ignored.</dd>
+      <dt>Enter</dt><dd>Finish typing a fret, so the next digit starts a new one.</dd>
+      <dt>Escape</dt><dd>Finish typing a fret, clear the selected range, or close a dialog.</dd>
+      <dt>Backspace</dt><dd>Just after a two-digit fret, go back to its first digit; otherwise remove the selected note.</dd>
       <dt>Delete</dt><dd>Remove the selected note.</dd>
       <dt>Space</dt><dd>Play or pause.</dd>
       <dt>Shift-click</dt><dd>Extend the passage to the clicked event.</dd>
@@ -23,7 +23,7 @@ export function KeyboardHelpDialog({ open, onClose, returnFocus }: { open: boole
         <dt>Delete with a range</dt><dd>Clear the range to rests after confirming.</dd>
         <dt>Click above the staff</dt><dd>Select the whole measure; Shift-click there extends by measures.</dd>
       <dt>Ctrl/Cmd+Z</dt><dd>Undo. Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo.</dd>
-      <dt>Ctrl/Cmd+S</dt><dd>Apply a typed fret and save.</dd>
+      <dt>Ctrl/Cmd+S</dt><dd>Save the score.</dd>
     </dl>
     <div className="duplicate-dialog-actions"><button type="button" data-dialog-first="" onClick={onClose}>Close</button></div>
   </dialog>;
