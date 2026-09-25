@@ -35,17 +35,17 @@ export function SelectionInspector({ selection, details, measureCount, eventCoun
     {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
     {selection.string !== null && <div className="editor-note-tools">
       <label>{selection.kind === 'note' ? 'Fret' : 'Add fret'}<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => onFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commands['apply-fret'].run(event.currentTarget); } }} /></label>
-      <CommandButton command={commands['apply-fret']} />
+      <CommandButton id="apply-fret" command={commands['apply-fret']} />
       {fretBuffered && <p className="editor-fret-buffer" role="status">Fret {fretDraft} typed — press Enter to apply or Escape to cancel.</p>}
       {selection.kind === 'note' && <>
         <label>Move to string<select aria-label="Move to string" value={moveString} onChange={event => onMoveString(event.target.value)}>{[1, 2, 3, 4, 5].map(value => <option key={value} value={value} disabled={value === selection.string}>{value}</option>)}</select></label>
         <label>When moving<select aria-label="Move keeps" value={moveMode} onChange={event => onMoveMode(event.target.value as 'fret' | 'pitch')}>
           <option value="fret">Keep fret</option><option value="pitch">Keep pitch</option></select></label>
         {moveOutcome && <p className="editor-rhythm-reason" role="status">{moveOutcome.reason ?? `Result: string ${moveOutcome.destination}, fret ${moveOutcome.fret}, ${moveOutcome.pitch}.`}</p>}
-        <CommandButton command={commands['move-string']} />
-        <CommandButton command={commands['remove-note']} />
+        <CommandButton id="move-string" command={commands['move-string']} />
+        <CommandButton id="remove-note" command={commands['remove-note']} />
       </>}
     </div>}
-    {!commands['make-rest'].hidden && <div className="editor-event-tools"><CommandButton command={commands['make-rest']} /></div>}
+    {!commands['make-rest'].hidden && <div className="editor-event-tools"><CommandButton id="make-rest" command={commands['make-rest']} /></div>}
   </>;
 }

@@ -45,8 +45,8 @@ test('ED-06 Shift-click selects a written passage and Loop does not change its e
   await page.getByRole('button', { name: 'Play selection' }).click();
   await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('playback-passage.png') });
-  await page.getByRole('button', { name: '↻ Loop' }).click();
-  await expect(page.getByRole('button', { name: '↻ Loop' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Loop', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Loop', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
 });
 
@@ -100,7 +100,7 @@ test('ED-06 stops selection audio on an edit and retains playback settings and e
   await page.getByRole('button', { name: 'Edit score' }).click();
   const box = (await first.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByRole('button', { name: '↻ Loop' }).click();
+  await page.getByRole('button', { name: 'Loop', exact: true }).click();
   await page.getByRole('button', { name: 'Play selection' }).click();
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   await notation.focus();
@@ -108,7 +108,7 @@ test('ED-06 stops selection audio on an edit and retains playback settings and e
   await notation.press('Enter');
   await expect(page.getByText('Score updated. Press Play to listen.')).toBeVisible();
   await expect(page.getByText('Playing range: M1 E1–M1 E1')).toBeVisible();
-  await expect(page.getByRole('button', { name: '↻ Loop' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Loop', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
   expect(errors).toEqual([]);
 });

@@ -45,8 +45,8 @@ test('renders and plays a banjo score, imports text and exports', async ({ page 
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   await expect(page.locator('.player-status span')).toContainText('0:01 /', { timeout: 10000 });
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
-  await page.getByRole('button', { name: '↻ Loop' }).click();
-  await expect(page.getByRole('button', { name: '↻ Loop' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Loop', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Loop', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByText(/Rhythm assumed/)).toBeVisible();
   await page.getByRole('button', { name: 'Dismiss import warnings' }).click();
   await expect(page.getByRole('note', { name: 'Import warnings' })).toHaveCount(0);

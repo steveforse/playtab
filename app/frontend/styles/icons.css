@@ -1,0 +1,41 @@
+/* Inline SVG icons and the buttons that carry them. */
+.icon {
+  display: block;
+  flex: none;
+}
+.command-button,
+.transport button,
+.player-toggles button,
+.export-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.editor-sidebar .command-button {
+  display: flex;
+}
+.editor-passage-tools .command-button,
+.editor-measure-tools .command-button,
+.editor-text-tools .command-button,
+.editor-score-tools .command-button,
+.editor-technique-tools .command-button {
+  justify-content: flex-start;
+}
+.command-button .command-label {
+  min-width: 0;
+}
+.command-button.icon-only {
+  padding: 4px;
+}
+.command-button[aria-pressed="true"] .icon {
+  stroke-width: 2.2;
+}
+.command-button:disabled .icon {
+  opacity: .55;
+}
+.command-button:focus-visible,
+.transport button:focus-visible {
+  outline: 2px solid #2c5f8a;
+  outline-offset: 2px;
+}

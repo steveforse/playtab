@@ -1606,7 +1606,7 @@ export function App() {
     'remove-note': { label: 'Remove note', shortcut: 'Delete', className: 'editor-remove-note', disabled: !noteSelected, run: onSelection(current => requestRemoval(current)) },
     'make-rest': { label: 'Make rest', hidden: !noteSelected || selection?.graceIndex !== null, run: onSelection(current => requestRemoval(current, 'rest')) },
     ...Object.fromEntries(DURATION_DENOMINATORS.map(value => [`duration-${value}`, {
-      label: value === 1 ? '1' : `1/${value}`, ariaLabel: value === 1 ? 'Whole note duration' : `1/${value} duration`,
+      label: value === 1 ? '1' : `1/${value}`, iconOnly: true, ariaLabel: value === 1 ? 'Whole note duration' : `1/${value} duration`,
       pressed: selectedRhythm ? selectedRhythm.denominator === value && selectedRhythm.dots === 0 : undefined,
       disabled: !selectedRhythm || selectedTupletLocked, run: () => changeSelectedDuration(value, false),
     } satisfies EditorCommand])),

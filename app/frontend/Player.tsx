@@ -6,6 +6,7 @@ import { exportAscii } from './music/ascii';
 import type { Score } from './music/score';
 import { configureChordDiagrams, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { PlaybackTransport } from './PlaybackTransport';
+import { Icon } from './ui/icons';
 import { linearAuditionMidi, scoreHasRepeats, writtenPlaybackRange, type PlaybackEndpoints } from './editor/audition';
 
 export type SoundFontOption = PlaytabSoundFontOption;
@@ -1021,8 +1022,8 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       <input aria-label="Playback volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => { const value = Number(e.target.value); setVolume(value); onPreferencesChange?.({ volume: value }); if (api.current) api.current.masterVolume = value; }} />
     </label>
     <div className="player-toggles">
-      <button aria-pressed={loop} onClick={() => { const value = !loop; setLoop(value); onPreferencesChange?.({ loop: value }); if (api.current) api.current.isLooping = value; }}>↻ Loop</button>
-      <button aria-pressed={metronome} onClick={() => { const value = !metronome; setMetronome(value); onPreferencesChange?.({ metronome: value }); if (api.current) api.current.metronomeVolume = value ? 0.6 : 0; }}>♩ Click</button>
+      <button aria-pressed={loop} onClick={() => { const value = !loop; setLoop(value); onPreferencesChange?.({ loop: value }); if (api.current) api.current.isLooping = value; }}><Icon name="loop" size={14} />Loop</button>
+      <button aria-pressed={metronome} onClick={() => { const value = !metronome; setMetronome(value); onPreferencesChange?.({ metronome: value }); if (api.current) api.current.metronomeVolume = value ? 0.6 : 0; }}><Icon name="metronome" size={14} />Click</button>
     </div>
     {availableSoundFonts.length > 1 && <label className="soundfont-control">Sound bank
       <select aria-label="Sound bank" value={soundFont.id} onChange={e => { setSoundFontId(e.target.value); onPreferencesChange?.({ soundFontId: e.target.value }); }}>
@@ -1185,7 +1186,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
         </div>
         {exportBlocked && <span className="export-blocked" id="export-blocked-reason">{exportBlocked}</span>}
         <button type="button" className="primary export-button" aria-haspopup="dialog" disabled={Boolean(exportBlocked)}
-          aria-describedby={exportBlocked ? 'export-blocked-reason' : undefined} onClick={openExportDialog}>Export</button>
+          aria-describedby={exportBlocked ? 'export-blocked-reason' : undefined} onClick={openExportDialog}><Icon name="export" size={14} />Export</button>
       </div>
     </div>
     {error && <p className="alert" role="alert">{error}</p>}
