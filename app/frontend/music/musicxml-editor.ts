@@ -761,22 +761,76 @@ export function removeMusicXmlNotes(source: string, score: model.Score, position
   }
   const dependencies = new Set<string>();
   if (grace.length) dependencies.add(`${grace.length} grace note${grace.length === 1 ? '' : 's'}`);
-  for (const note of all) {
-    for (const marker of deletionMarkers(note)) {
-      const label: Record<string, string> = { 'hammer-on': 'hammer-on', 'pull-off': 'pull-off', slide: 'slide', glissando: 'slide', tie: 'tie', tied: 'tie' };
-      dependencies.add(label[marker.localName]);
-    }
+  attachedDependencies(all).forEach(dependency => dependencies.add(dependency));
+  repairAndDeleteNotes(document, part!, all);
+  return { source: new XMLSerializer().serializeToString(document), dependencies: [...dependencies] };
+}
+
+function attachedDependencies(notes: Element[]): string[] {
+  const label: Record<string, string> = { 'hammer-on': 'hammer-on', 'pull-off': 'pull-off', slide: 'slide', glissando: 'slide', tie: 'tie', tied: 'tie' };
+  const dependencies = new Set<string>();
+  for (const note of notes) {
+    for (const marker of deletionMarkers(note)) dependencies.add(label[marker.localName]);
     if (descendants(note, 'bend').length) dependencies.add('bend');
   }
-  const deleting = new Set(all);
+  return [...dependencies];
+}
+
+function repairAndDeleteNotes(document: Document, part: Element, notes: Element[]) {
+  const deleting = new Set(notes);
   const staffNotes = new Map<string, Element[]>();
-  descendants(part!, 'note').filter(note => !child(note, 'rest')).forEach(note => {
+  descendants(part, 'note').filter(note => !child(note, 'rest')).forEach(note => {
     const staff = text(child(note, 'staff')) || '1';
     staffNotes.set(staff, [...(staffNotes.get(staff) ?? []), note]);
   });
-  all.forEach(note => removeLinkedMarkers(note, staffNotes.get(text(child(note, 'staff')) || '1') ?? [], deleting));
-  deleteSourceNotes(document, all);
-  return { source: new XMLSerializer().serializeToString(document), dependencies: [...dependencies] };
+  notes.forEach(note => removeLinkedMarkers(note, staffNotes.get(text(child(note, 'staff')) || '1') ?? [], deleting));
+  deleteSourceNotes(document, notes);
+}
+
+export type GraceRemoval = { source: string; dependencies: string[]; groupRemoved: boolean };
+
+// Removes one string of a grace event, or the whole event when no string is
+// given (or its last string is selected). Grace notes own no measure time, so
+// no rest is left behind; the group disappears with its final event.
+export function removeMusicXmlGrace(source: string, score: model.Score, position: RemovalPosition): GraceRemoval {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!measure || !rendered?.graceType) throw new Error('Select a grace note to remove it.');
+  const tabStaff = sourceTabStaff(document);
+  const lanes = rhythmLanes(document, measure, tabStaff, String(position.voice + 1), position.beat);
+  const groups = lanes[0].groups;
+  const target = groups[position.beat];
+  const isGrace = (group: Element[] | undefined) => Boolean(group?.length && group.every(note => child(note, 'grace')));
+  const members = (group: Element[]) => group.map(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
+  }).sort().join('|');
+  if (!isGrace(target) || members(target) !== rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort().join('|')) {
+    throw new Error('The source grace event does not match the selected grace note.');
+  }
+  const selected = position.string === undefined ? target : target.filter(note => {
+    const technical = child(child(note, 'notations') ?? note, 'technical');
+    return Number(text(child(technical ?? note, 'string'))) === position.string;
+  });
+  if (selected.length === 0) throw new Error('The selected grace string cannot be matched safely.');
+  const wholeEvent = selected.length === target.length;
+  const groupRemoved = wholeEvent && !isGrace(groups[position.beat - 1]) && !isGrace(groups[position.beat + 1]);
+  const linked = linkedStaffNotes(document);
+  const paired = selected.flatMap(note => {
+    const matches = linked(note);
+    if (matches.length !== lanes.length - 1) throw new Error('The paired notation grace note cannot be matched safely for removal.');
+    return matches;
+  });
+  const all = [...selected, ...paired];
+  for (const note of all) {
+    const attachment = protectedNoteAttachment(note);
+    if (attachment) throw new Error(`This grace note has a protected ${attachment} attachment that Playtab cannot remove safely.`);
+  }
+  const dependencies = attachedDependencies(all);
+  repairAndDeleteNotes(document, part, all);
+  return { source: new XMLSerializer().serializeToString(document), dependencies, groupRemoved };
 }
 
 function newChordMember(document: Document, anchor: Element, midi: number, string?: number, fret?: number): Element {

@@ -5,7 +5,7 @@ import { midi, Settings } from '@coderline/alphatab';
 import { linearAuditionMidi, writtenPlaybackRange } from '../../app/frontend/editor/audition';
 import { selectionFromBeat } from '../../app/frontend/Player';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
   inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState } from '../../app/frontend/music/musicxml-editor';
@@ -145,6 +145,106 @@ describe('ED-16 grace group foundation', () => {
     expect(changed).toContain('<opaque:keep data="unchanged">');
     expect(readMusicXml(changed, 'rich.musicxml').score.masterBars[0].calculateDuration())
       .toBe(original.score.masterBars[0].calculateDuration());
+  });
+});
+
+describe('ED-16 grace editing and removal', () => {
+  const graceTarget = (source: string) => {
+    const score = readMusicXml(source, 'rich.musicxml').score;
+    const voices = score.tracks[0].staves[0].bars[0].voices;
+    const voice = voices.findIndex(candidate => candidate.beats.some(beat => beat.graceType));
+    const beat = voices[voice].beats.findIndex(candidate => candidate.graceType);
+    return { score, voice, beat, main: voices[voice].beats.find(candidate => !candidate.graceType)! };
+  };
+  const firstMeasureNotes = (source: string) => Array.from(new DOMParser().parseFromString(source, 'application/xml')
+    .getElementsByTagName('measure')[0].getElementsByTagName('note'));
+  const graceNotes = (source: string) => firstMeasureNotes(source).filter(note => note.getElementsByTagName('grace').length);
+
+  it('edits one grace fret on both staves without moving the destination', () => {
+    const { score, voice, beat, main } = graceTarget(rich);
+    const state = musicXmlEditorState(rich, score);
+    const edit = state.notes.find(note => note.measure === 0 && note.voice === voice && note.beat === beat && note.string === 3)!;
+    edit.fret = 2;
+    const changed = applyMusicXmlEdits(rich, state, [edit.index]);
+    const pitches = graceNotes(changed).map(note => `${note.getElementsByTagName('step')[0].textContent}${note.getElementsByTagName('octave')[0].textContent}`);
+    expect(pitches.sort()).toEqual(['A3', 'A3', 'D3', 'D3']);
+    expect(graceNotes(changed).filter(note => note.getElementsByTagName('fret')[0]?.textContent === '2')).toHaveLength(1);
+    const after = graceTarget(changed);
+    expect(after.main.playbackStart).toBe(main.playbackStart);
+    expect(after.score.masterBars[0].calculateDuration()).toBe(score.masterBars[0].calculateDuration());
+  });
+
+  it('removes one grace string from both staves and keeps the rest of the grace chord', () => {
+    const { score, voice, beat, main } = graceTarget(rich);
+    const result = removeMusicXmlGrace(rich, score, { measure: 0, beat, voice, string: 3 });
+    expect(result.dependencies).toEqual([]);
+    expect(result.groupRemoved).toBe(false);
+    const remaining = graceNotes(result.source);
+    expect(remaining).toHaveLength(2);
+    expect(remaining.every(note => note.getElementsByTagName('chord').length === 0)).toBe(true);
+    expect(remaining.every(note => note.getElementsByTagName('step')[0].textContent === 'D')).toBe(true);
+    expect(result.source).toContain('<opaque:keep data="unchanged">');
+    const after = graceTarget(result.source);
+    expect(after.main.playbackStart).toBe(main.playbackStart);
+    expect(after.score.masterBars[0].calculateDuration()).toBe(score.masterBars[0].calculateDuration());
+  });
+
+  it('removes the final grace event as a whole group without leaving a rest', () => {
+    const { score, voice, beat } = graceTarget(rich);
+    const before = firstMeasureNotes(rich).length;
+    const result = removeMusicXmlGrace(rich, score, { measure: 0, beat, voice });
+    expect(result.groupRemoved).toBe(true);
+    expect(graceNotes(result.source)).toHaveLength(0);
+    expect(firstMeasureNotes(result.source)).toHaveLength(before - 4);
+    expect(firstMeasureNotes(result.source).filter(note => note.getElementsByTagName('rest').length))
+      .toHaveLength(firstMeasureNotes(rich).filter(note => note.getElementsByTagName('rest').length).length);
+    expect(readMusicXml(result.source, 'rich.musicxml').score.tracks[0].staves[0].bars[0].voices[voice].beats.some(item => item.graceType)).toBe(false);
+  });
+
+  it('reports and repairs a grace-to-main span on the removed string only', () => {
+    const spanned = rich
+      .replace('<string>4</string><fret>0</fret></technical></notations></note>\n      <note><grace slash="yes"/><chord/>',
+        '<string>4</string><fret>0</fret></technical><slide number="7" type="start"/></notations></note>\n      <note><grace slash="yes"/><chord/>')
+      .replace('<hammer-on type="start">H</hammer-on></technical></notations></note>\n      <note><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>',
+        '<hammer-on type="start">H</hammer-on></technical><slide number="7" type="stop"/></notations></note>\n      <note><pitch><step>E</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>');
+    expect(spanned.match(/number="7"/g)).toHaveLength(2);
+    const { score, voice, beat } = graceTarget(spanned);
+    const result = removeMusicXmlGrace(spanned, score, { measure: 0, beat, voice, string: 4 });
+    expect(result.dependencies).toEqual(['slide']);
+    expect(result.source).not.toContain('number="7"');
+    expect(result.source).toContain('<hammer-on type="start">H</hammer-on>');
+  });
+
+  it('keeps the other event of a two-event grace group', () => {
+    const second = (voice: string, staff: string, technical: string) => `<note><grace slash="yes"/><pitch><step>A</step><octave>3</octave></pitch><voice>${voice}</voice><type>16th</type><staff>${staff}</staff>${technical}</note>`;
+    const twoEvents = rich
+      .replace('<note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice>',
+        `${second('1', '1', '')}\n      <note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice>`)
+      .replace('<note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>',
+        `${second('2', '2', '<notations><technical><string>3</string><fret>2</fret></technical></notations>')}\n      <note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>2</voice>`);
+    expect(graceNotes(twoEvents)).toHaveLength(6);
+    const { score, voice, beat, main } = graceTarget(twoEvents);
+    const result = removeMusicXmlGrace(twoEvents, score, { measure: 0, beat, voice });
+    expect(result.groupRemoved).toBe(false);
+    expect(graceNotes(result.source).map(note => note.getElementsByTagName('step')[0].textContent)).toEqual(['A', 'A']);
+    const after = graceTarget(result.source);
+    expect(after.score.tracks[0].staves[0].bars[0].voices[voice].beats[beat].notes.map(note => note.fret)).toEqual([2]);
+    expect(after.main.playbackStart).toBe(main.playbackStart);
+  });
+
+  it('rejects ordinary, mismatched and protected grace targets', () => {
+    const { score, voice, beat } = graceTarget(rich);
+    expect(() => removeMusicXmlGrace(rich, score, { measure: 0, beat: beat + 1, voice })).toThrow('Select a grace note');
+    expect(() => removeMusicXmlGrace(rich, score, { measure: 0, beat, voice, string: 1 })).toThrow('cannot be matched safely');
+    const stale = rich.replace('<string>3</string><fret>0</fret></technical></notations></note>\n      <note><pitch><step>D</step>',
+      '<string>3</string><fret>1</fret></technical></notations></note>\n      <note><pitch><step>D</step>');
+    expect(stale).not.toBe(rich);
+    expect(() => removeMusicXmlGrace(stale, score, { measure: 0, beat, voice })).toThrow('does not match the selected grace note');
+    const protectedGrace = rich.replace('<grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><voice>2</voice><type>16th</type>',
+      '<grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><voice>2</voice><type>16th</type><notehead>x</notehead>');
+    expect(protectedGrace).not.toBe(rich);
+    expect(() => removeMusicXmlGrace(protectedGrace, graceTarget(protectedGrace).score, { measure: 0, beat, voice, string: 4 }))
+      .toThrow('protected notehead attachment');
   });
 });
 

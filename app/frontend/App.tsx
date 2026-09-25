@@ -4,7 +4,7 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
   type GraceMember, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
@@ -14,7 +14,8 @@ import type { PlaybackEndpoints } from './editor/audition';
 import { sourceEventCount, type IdentityCarry, type SourceIdentityMap } from './music/source-identity';
 
 type LibraryItem = { id: number; title: string; revision?: number };
-type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: 'note' | 'rest'; dependencies: string[] };
+type RemovalMode = 'note' | 'rest' | 'grace';
+type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: RemovalMode; dependencies: string[] };
 type PendingDuplication = { originalKey: string; base: MusicXmlPreview; source: string; measureIndex: number;
   excluded: string[]; noteCount: number; restCount: number };
 type PendingMeasureDeletion = { originalKey: string; base: MusicXmlPreview; source: string; measureIndex: number;
@@ -901,8 +902,9 @@ export function App() {
     }, note => { note.string = destination; }, after, `Move note to string ${destination}`, undefined, destination)) return;
     setSelection(after);
   }
-  function commitImportedRemoval(nextSource: string, selectionToDelete: ScoreSelection, mode: 'note' | 'rest') {
+  function commitImportedRemoval(nextSource: string, selectionToDelete: ScoreSelection, mode: RemovalMode) {
     if (!preview) return;
+    if (selectionToDelete.graceIndex !== null) { commitGraceRemoval(nextSource, selectionToDelete, mode); return; }
     try {
       const beat = preview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats[selectionToDelete.event - 1];
       const lastMember = mode === 'rest' || beat?.notes.length === 1;
@@ -923,8 +925,40 @@ export function App() {
       documentRefocus();
     } catch (failure) { setError((failure as Error).message); }
   }
-  function requestRemoval(selectionToDelete: ScoreSelection, mode: 'note' | 'rest' = 'note') {
+  function commitGraceRemoval(nextSource: string, selectionToDelete: ScoreSelection, mode: RemovalMode) {
+    if (!preview) return;
+    try {
+      const carryEvent = sourceEventCount(preview.source, selectionToDelete.measure - 1, selectionToDelete.voice)
+        === sourceEventCount(nextSource, selectionToDelete.measure - 1, selectionToDelete.voice);
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
+        preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity,
+          carries: structuralCarries(preview, selectionToDelete, carryEvent) } : undefined), preview.score.title);
+      // A removed grace event hands its index to the next grace event or to
+      // the ordinary destination, so the selection stays beside the edit.
+      const after = selectionAtPosition(selectionToDelete, score, nextPreview, {});
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity },
+        mode === 'grace' ? 'Remove grace' : 'Remove grace note');
+      setPreview(nextPreview); setSelection(after); setError('');
+      setMessage(mode === 'grace' ? 'Grace event removed.' : 'Grace note removed.');
+      documentRefocus();
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function requestRemoval(selectionToDelete: ScoreSelection, mode: RemovalMode = 'note') {
     if (selectionToDelete.kind !== 'note' || selectionToDelete.string === null) return;
+    if (preview && selectionToDelete.graceIndex !== null) {
+      try {
+        const result = removeMusicXmlGrace(preview.source, preview.score, {
+          measure: selectionToDelete.measure - 1, beat: selectionToDelete.event - 1,
+          voice: selectionToDelete.voice - 1, string: mode === 'grace' ? undefined : selectionToDelete.string,
+        });
+        if (result.dependencies.length) {
+          removalOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          setPendingRemoval({ beforeSource: preview.source, afterSource: result.source, selection: selectionToDelete, mode, dependencies: result.dependencies });
+        } else commitGraceRemoval(result.source, selectionToDelete, mode);
+      } catch (failure) { setError((failure as Error).message); }
+      return;
+    }
+    if (mode === 'grace') return;
     if (preview) {
       try {
         const result = removeMusicXmlNotes(preview.source, preview.score, {
@@ -1251,7 +1285,7 @@ export function App() {
                 <button type="button" className="editor-remove-note" onClick={() => requestRemoval(selection)}>Remove note</button>
               </>}
             </div>}
-            {selection.kind === 'note' && <div className="editor-event-tools"><button type="button" onClick={() => requestRemoval(selection, 'rest')}>Make rest</button></div>}
+            {selection.kind === 'note' && selection.graceIndex === null && <div className="editor-event-tools"><button type="button" onClick={() => requestRemoval(selection, 'rest')}>Make rest</button></div>}
             {selectedRhythm && <div className="editor-rhythm-tools" aria-label="Duration tools">
               <p>Duration</p>
               <div className="editor-duration-buttons">{DURATION_DENOMINATORS.map(value => <button key={value} type="button"
@@ -1276,6 +1310,7 @@ export function App() {
             <details className="editor-technique-tools"><summary>Techniques</summary>
               <button type="button" disabled={selection.kind !== 'note' || selection.graceIndex !== null}
                 onClick={event => openGraceDialog(event.currentTarget)}>Add grace…</button>
+              {selection.kind === 'note' && selection.graceIndex !== null && <button type="button" onClick={() => requestRemoval(selection, 'grace')}>Remove grace</button>}
               <button type="button" disabled={selection.kind !== 'note' || pendingTie !== null} onClick={beginTie}>Tie</button>
               {selectedTie && <button type="button" onClick={removeSelectedTie}>Remove tie</button>}
               {pendingTie && <div className="editor-tie-pending" role="status">
@@ -1498,7 +1533,7 @@ export function App() {
       <ul>{pendingRemoval?.dependencies.map(dependency => <li key={dependency}>{dependency}</li>)}</ul>
       <div className="removal-dialog-actions">
         <button type="button" data-removal-cancel onClick={() => setPendingRemoval(null)}>Cancel</button>
-        <button type="button" onClick={confirmRemoval}>{pendingRemoval?.mode === 'rest' ? 'Make rest' : 'Remove note'}</button>
+        <button type="button" onClick={confirmRemoval}>{pendingRemoval?.mode === 'rest' ? 'Make rest' : pendingRemoval?.mode === 'grace' ? 'Remove grace' : 'Remove note'}</button>
       </div>
     </dialog>
     <dialog ref={copyDialog} className="copy-dialog" aria-label="Save a copy">
