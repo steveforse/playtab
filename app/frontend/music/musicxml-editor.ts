@@ -2121,3 +2121,60 @@ export function removeMusicXmlRepeat(source: string, score: model.Score, start: 
   }
   return new XMLSerializer().serializeToString(document);
 }
+
+export type GraceMember = { string: number; fret: number };
+
+export function addMusicXmlGraceGroup(source: string, score: model.Score, position: RhythmPosition,
+  members: GraceMember[], denominator: 8 | 16): string {
+  const document = parseDocument(source);
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!measure || !rendered || rendered.graceType || rendered.isRest) {
+    throw new Error('Select an ordinary sounding event as the grace destination.');
+  }
+  if (denominator !== 8 && denominator !== 16) throw new Error('Grace display duration must be 1/8 or 1/16.');
+  if (!members.length || members.length > 5 || members.some(member => !Number.isInteger(member.string)
+    || member.string < 1 || member.string > 5 || !Number.isInteger(member.fret) || member.fret < 0 || member.fret > 36)
+    || new Set(members.map(member => member.string)).size !== members.length) {
+    throw new Error('A grace event needs one to five distinct strings with frets from 0 to 36.');
+  }
+  const tabStaff = sourceTabStaff(document);
+  const lanes = rhythmLanes(document, measure, tabStaff, String(position.voice + 1), position.beat);
+  const graceStrings = new Set(members.map(member => member.string));
+  for (const lane of lanes) {
+    const target = lane.groups[position.beat];
+    if (!target || target.some(note => child(note, 'grace') || child(note, 'rest'))) {
+      throw new Error('The paired grace destination cannot be identified safely.');
+    }
+    if (position.beat > 0 && lane.groups[position.beat - 1].some(note => child(note, 'grace'))) {
+      throw new Error('This destination already has a grace group. Edit that group instead.');
+    }
+    if (lane.staff === tabStaff && target.some(note => {
+      const technical = child(child(note, 'notations') ?? note, 'technical');
+      const string = Number(text(child(technical ?? note, 'string')));
+      return graceStrings.has(string) && ['hammer-on', 'pull-off', 'slide', 'glissando', 'tie', 'tied']
+        .some(name => descendants(note, name).some(marker => marker.getAttribute('type') === 'stop'));
+    })) throw new Error('A grace note on this string would interrupt an existing technique endpoint. Remove or move that span first.');
+  }
+  for (const lane of lanes) {
+    const anchor = lane.groups[position.beat][0];
+    for (const [index, member] of members.entries()) {
+      const midi = score.tracks[0].staves[0].tuning[member.string - 1] + member.fret;
+      if (!Number.isInteger(midi)) throw new Error('The selected grace string has no valid tuning.');
+      const note = document.createElement('note');
+      const grace = document.createElement('grace'); grace.setAttribute('slash', 'yes'); note.appendChild(grace);
+      if (index) note.appendChild(document.createElement('chord'));
+      setPitch(note, midi);
+      setText(note, 'voice', lane.voice);
+      setText(note, 'type', denominator === 8 ? 'eighth' : '16th');
+      setText(note, 'staff', String(lane.staff));
+      if (lane.staff === tabStaff) {
+        const technical = ensure(ensure(note, 'notations'), 'technical');
+        setText(technical, 'string', String(member.string)); setText(technical, 'fret', String(member.fret));
+      }
+      measure.insertBefore(note, anchor);
+    }
+  }
+  return new XMLSerializer().serializeToString(document);
+}
