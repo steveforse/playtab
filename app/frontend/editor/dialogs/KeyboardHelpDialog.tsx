@@ -19,6 +19,8 @@ export function KeyboardHelpDialog({ open, onClose, returnFocus }: { open: boole
         <dt>Shift+Left/Right</dt><dd>Extend the range by one event.</dd>
         <dt>Ctrl/Cmd+Shift+Left/Right</dt><dd>Extend the range by a measure.</dd>
         <dt>Ctrl/Cmd+A</dt><dd>Select every event in the voice.</dd>
+        <dt>Ctrl/Cmd+C, X, V</dt><dd>Copy, cut or paste whole measures of the selected range.</dd>
+        <dt>Delete with a range</dt><dd>Clear the range to rests after confirming.</dd>
         <dt>Click above the staff</dt><dd>Select the whole measure; Shift-click there extends by measures.</dd>
       <dt>Ctrl/Cmd+Z</dt><dd>Undo. Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo.</dd>
       <dt>Ctrl/Cmd+S</dt><dd>Apply a typed fret and save.</dd>
