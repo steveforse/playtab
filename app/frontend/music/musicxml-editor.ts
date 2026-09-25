@@ -640,7 +640,7 @@ export function musicXmlTimingBoundary(source: string, position: { measure: numb
 // information that cannot be reconstructed after the note is removed.
 function protectedNoteAttachment(note: Element): string | null {
   const allowed: Record<string, Set<string>> = {
-    note: new Set(['chord', 'pitch', 'rest', 'duration', 'voice', 'type', 'dot', 'accidental', 'stem', 'beam', 'staff', 'notations', 'grace', 'tie', 'time-modification', 'instrument']),
+    note: new Set(['chord', 'pitch', 'rest', 'duration', 'voice', 'type', 'dot', 'accidental', 'stem', 'beam', 'staff', 'notations', 'grace', 'tie', 'time-modification', 'instrument', 'lyric']),
     pitch: new Set(['step', 'alter', 'octave']),
     notations: new Set(['technical', 'tied', 'slide', 'glissando']),
     technical: new Set(['string', 'fret', 'fingering', 'other-technical', 'hammer-on', 'pull-off', 'slide', 'bend']),
@@ -657,6 +657,9 @@ function protectedNoteAttachment(note: Element): string | null {
     }
     return null;
   };
+  // An event's lyric moves to the promoted chord member or stays on the
+  // resulting rest; only grace and later chord members would lose theirs.
+  if (child(note, 'lyric') && (child(note, 'grace') || child(note, 'chord'))) return 'lyric';
   return inspect(note);
 }
 
@@ -701,8 +704,11 @@ function deleteSourceNotes(document: Document, notes: Element[]) {
     const siblings = note.parentNode ? children(note.parentNode as Element) : [];
     const next = siblings[siblings.indexOf(note) + 1];
     if (!child(note, 'chord') && next?.localName === 'note' && child(next, 'chord')) {
-      // The first member carries the time advance; promote its successor.
+      // The first member carries the time advance; promote its successor,
+      // along with the event's timed lyrics so removing one note keeps them.
       removeChildren(next, 'chord');
+      children(note).filter(item => item.localName === 'lyric').forEach(lyric =>
+        placeLyric(next, lyric, Number(lyric.getAttribute('number') ?? '1') || 1));
       note.parentNode?.removeChild(note);
     } else if (child(note, 'chord') || child(note, 'grace')) {
       note.parentNode?.removeChild(note);
@@ -2784,5 +2790,92 @@ export function changeMusicXmlAnchor(source: string, score: model.Score, positio
     setText(element, 'staff', String(anchor.staff));
     measure.insertBefore(element, anchor.note);
   }
+  return new XMLSerializer().serializeToString(document);
+}
+
+export type LyricSyllabic = 'single' | 'begin' | 'middle' | 'end';
+export type EventLyric = { verse: number; text: string; syllabic: LyricSyllabic; reason?: string };
+export const LYRIC_VERSES = 8;
+export const STANDALONE_LYRICS_LIMIT = 20_000;
+const SYLLABIC: LyricSyllabic[] = ['single', 'begin', 'middle', 'end'];
+
+// Timed lyrics live on the first note of an event, once per staff lane.
+function lyricEvent(document: Document, score: model.Score, position: RhythmPosition) {
+  const part = descendants(document.documentElement, 'part')[0];
+  const measure = part && directMeasures(part)[position.measure];
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
+  if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary event to edit its lyric.');
+  const lanes = rhythmLanes(document, measure, sourceTabStaff(document), String(position.voice + 1), position.beat);
+  return lanes.map(lane => lane.groups[position.beat]);
+}
+
+function readLyrics(group: Element[]): EventLyric[] {
+  const lyrics = group.flatMap(note => children(note).filter(item => item.localName === 'lyric'));
+  const byVerse = new Map<number, Element[]>();
+  const unnumbered: EventLyric[] = [];
+  for (const lyric of lyrics) {
+    const number = lyric.getAttribute('number') ?? '1';
+    const verse = /^[1-8]$/.test(number) ? Number(number) : NaN;
+    if (Number.isNaN(verse)) {
+      unnumbered.push({ verse: 0, text: descendants(lyric, 'text').map(text).join(''), syllabic: 'single', reason: `The lyric verse “${number}” is kept as written.` });
+      continue;
+    }
+    byVerse.set(verse, [...(byVerse.get(verse) ?? []), lyric]);
+  }
+  const numbered = [...byVerse.entries()].sort(([left], [right]) => left - right).map(([verse, entries]) => {
+    const lyric = entries[0];
+    const syllabic = (text(child(lyric, 'syllabic')) || 'single') as LyricSyllabic;
+    const value = descendants(lyric, 'text').map(text).join('');
+    const extra = children(lyric).find(item => !['syllabic', 'text'].includes(item.localName));
+    const reason = entries.length > 1 ? `Verse ${verse} has more than one lyric on this event; it is kept as written.`
+      : extra ? `Verse ${verse} has ${extra.localName === 'extend' ? 'an extension line' : `a ${extra.localName} setting`}; it is kept as written.`
+        : descendants(lyric, 'text').length !== 1 || !SYLLABIC.includes(syllabic) ? `Verse ${verse} uses a lyric layout this dialog cannot rewrite; it is kept as written.`
+          : Array.from(lyric.attributes).some(attribute => attribute.name !== 'number') ? `Verse ${verse} has lyric styling; it is kept as written.` : undefined;
+    return { verse, text: value, syllabic: SYLLABIC.includes(syllabic) ? syllabic : 'single', ...(reason ? { reason } : {}) };
+  });
+  return [...numbered, ...unnumbered];
+}
+
+export function inspectMusicXmlLyrics(source: string, score: model.Score, position: RhythmPosition): EventLyric[] {
+  return readLyrics(lyricEvent(parseDocument(source), score, position)[0]);
+}
+
+function placeLyric(note: Element, lyric: Element, verse: number) {
+  const later = children(note).find(item => item.localName === 'lyric' && Number(item.getAttribute('number') ?? '1') > verse)
+    ?? children(note).find(item => ['play', 'listen'].includes(item.localName));
+  note.insertBefore(lyric, later ?? null);
+}
+
+// Sets (or removes, with null) one verse on the selected event in every
+// staff lane. Other verses, events and the standalone text are untouched.
+export function setMusicXmlLyric(source: string, score: model.Score, position: RhythmPosition, verse: number,
+  value: { text: string; syllabic: LyricSyllabic } | null): string {
+  if (!Number.isInteger(verse) || verse < 1 || verse > LYRIC_VERSES) throw new Error(`Choose a verse from 1 to ${LYRIC_VERSES}.`);
+  if (value && (!value.text.trim() || value.text.trim().length > ANCHOR_TEXT_LIMIT)) {
+    throw new Error(`Lyric text must be 1–${ANCHOR_TEXT_LIMIT} characters. Use Remove lyric to clear a verse.`);
+  }
+  if (value && !SYLLABIC.includes(value.syllabic)) throw new Error('Choose Single, Begin, Middle, or End.');
+  const document = parseDocument(source);
+  const groups = lyricEvent(document, score, position);
+  const current = readLyrics(groups[0]).find(lyric => lyric.verse === verse);
+  if (current?.reason && value) throw new Error(current.reason);
+  if (!current && !value) return source;
+  for (const group of groups) {
+    group.flatMap(note => children(note).filter(item => item.localName === 'lyric' && (item.getAttribute('number') ?? '1') === String(verse)))
+      .forEach(item => item.parentNode!.removeChild(item));
+    if (!value) continue;
+    const lyric = document.createElement('lyric');
+    lyric.setAttribute('number', String(verse));
+    setText(lyric, 'syllabic', value.syllabic);
+    setText(lyric, 'text', value.text.trim());
+    placeLyric(group[0], lyric, verse);
+  }
+  return new XMLSerializer().serializeToString(document);
+}
+
+export function setMusicXmlStandaloneLyrics(source: string, value: string): string {
+  if (value.length > STANDALONE_LYRICS_LIMIT) throw new Error(`Lyrics & chords text is limited to ${STANDALONE_LYRICS_LIMIT.toLocaleString('en-US')} characters.`);
+  const document = parseDocument(source);
+  setLyrics(document, value.replaceAll('\0', ''));
   return new XMLSerializer().serializeToString(document);
 }

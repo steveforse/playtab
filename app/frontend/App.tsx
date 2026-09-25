@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type PlayerPreferences, type ScoreSel
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlDuration, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type NoteTechniqueInfo, type PickingHand, type GraceEventSpec, type GraceTransition, type InsertEventOptions, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -28,6 +28,8 @@ type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: Scor
   existing: boolean; readOnly: string[]; connections: string[] };
 type BendTarget = { originalKey: string; selection: ScoreSelection; existing: NoteBend | 'none' | null; reason?: string };
 type AnchorTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; kind: AnchorKind; items: AnchorItem[] };
+type LyricTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; lyrics: EventLyric[] };
+type StandaloneTarget = { originalKey: string; base: MusicXmlPreview };
 type PendingTie = { originalKey: string; base: MusicXmlPreview; origin: ScoreSelection };
 type SessionSnapshot = { document: StoredScore; original: string | null; diagnostics: string[]; id: number | null; revision: number | null };
 const BEND_LABELS: Record<BendAmount, string> = { 1: '1/2 step', 2: 'Whole step', 3: '1½ steps', 4: '2 steps' };
@@ -179,6 +181,15 @@ export function App() {
   const [anchorError, setAnchorError] = useState('');
   const anchorDialog = useRef<HTMLDialogElement>(null);
   const anchorOpener = useRef<HTMLElement | null>(null);
+  const [lyricTarget, setLyricTarget] = useState<LyricTarget | null>(null);
+  const [lyricDraft, setLyricDraft] = useState<{ verse: number; text: string; syllabic: LyricSyllabic }>({ verse: 1, text: '', syllabic: 'single' });
+  const [lyricError, setLyricError] = useState('');
+  const lyricDialog = useRef<HTMLDialogElement>(null);
+  const [standaloneTarget, setStandaloneTarget] = useState<StandaloneTarget | null>(null);
+  const [standaloneText, setStandaloneText] = useState('');
+  const [standaloneError, setStandaloneError] = useState('');
+  const standaloneDialog = useRef<HTMLDialogElement>(null);
+  const textOpener = useRef<HTMLElement | null>(null);
   const [bendTarget, setBendTarget] = useState<BendTarget | null>(null);
   const [bendDraft, setBendDraft] = useState<NoteBend>({ amount: 2, shape: 'bend' });
   const bendDialog = useRef<HTMLDialogElement>(null);
@@ -347,6 +358,13 @@ export function App() {
       dialog.close(); if (anchorOpener.current?.isConnected) anchorOpener.current.focus({ preventScroll: true });
     }
   }, [anchorTarget]);
+  useEffect(() => {
+    for (const [dialog, open] of [[lyricDialog.current, lyricTarget !== null], [standaloneDialog.current, standaloneTarget !== null]] as const) {
+      if (!dialog) continue;
+      if (open && !dialog.open) { dialog.showModal(); dialog.querySelector<HTMLElement>('[data-text-first]')?.focus(); }
+      else if (!open && dialog.open) { dialog.close(); if (textOpener.current?.isConnected) textOpener.current.focus({ preventScroll: true }); }
+    }
+  }, [lyricTarget, standaloneTarget]);
   useEffect(() => {
     const dialog = bendDialog.current;
     if (!dialog) return;
@@ -956,6 +974,69 @@ export function App() {
       setMessage(`${name[0].toUpperCase()}${name.slice(1)} “${shown}” ${remove ? 'removed from' : anchorChoice === 'new' ? 'added at' : 'updated at'} ${where}.`);
     } catch (failure) { setAnchorError((failure as Error).message); }
   }
+  function textBase() {
+    return preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+  }
+  function commitText(base: MusicXmlPreview, target: ScoreSelection | null, nextSource: string, description: string, message: string) {
+    const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+      base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+    const after = target ? selectionAtPosition(target, score, nextPreview, {}) : selection;
+    remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, description);
+    setPreview(nextPreview); setSelection(after); setError(''); setMessage(message);
+  }
+  function chooseLyricVerse(verse: number, lyrics: EventLyric[]) {
+    const current = lyrics.find(lyric => lyric.verse === verse);
+    setLyricError('');
+    setLyricDraft({ verse, text: current?.text ?? '', syllabic: current?.syllabic ?? 'single' });
+  }
+  function openLyricDialog(opener: HTMLElement) {
+    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to edit its lyric.'); return; }
+    if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
+    try {
+      const base = textBase();
+      const lyrics = inspectMusicXmlLyrics(base.source, base.score, anchorPosition(selection));
+      textOpener.current = opener;
+      chooseLyricVerse(lyrics.find(lyric => lyric.verse > 0)?.verse ?? 1, lyrics);
+      setLyricTarget({ originalKey: documentKey(currentDocument), base, selection, lyrics });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function applyLyric(remove: boolean) {
+    if (!lyricTarget) return;
+    const { base, selection: target } = lyricTarget;
+    if (lyricTarget.originalKey !== documentKey(currentDocument)) { setLyricTarget(null); setError('The score changed since this lyric was opened. Open it again.'); return; }
+    try {
+      const nextSource = setMusicXmlLyric(base.source, base.score, anchorPosition(target), lyricDraft.verse,
+        remove ? null : { text: lyricDraft.text, syllabic: lyricDraft.syllabic });
+      const where = `measure ${target.measure}, event ${target.event}`;
+      commitText(base, target, nextSource, `${remove ? 'Remove' : 'Set'} verse ${lyricDraft.verse} lyric at ${where}`,
+        remove ? `Verse ${lyricDraft.verse} lyric removed from ${where}.` : `Verse ${lyricDraft.verse} lyric “${lyricDraft.text.trim()}” applied at ${where}.`);
+      setLyricTarget(null);
+    } catch (failure) { setLyricError((failure as Error).message); }
+  }
+  function openStandaloneDialog(opener: HTMLElement) {
+    if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
+    try {
+      const base = textBase();
+      textOpener.current = opener;
+      setStandaloneText(base.lyricsSection ?? ''); setStandaloneError('');
+      setStandaloneTarget({ originalKey: documentKey(currentDocument), base });
+      setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function applyStandalone() {
+    if (!standaloneTarget) return;
+    const { base } = standaloneTarget;
+    if (standaloneTarget.originalKey !== documentKey(currentDocument)) { setStandaloneTarget(null); setError('The score changed since this text was opened. Open it again.'); return; }
+    try {
+      const nextSource = setMusicXmlStandaloneLyrics(base.source, standaloneText);
+      if (nextSource === base.source && preview) { setStandaloneTarget(null); return; }
+      const removed = !standaloneText.trim();
+      commitText(base, null, nextSource, removed ? 'Remove Lyrics & chords text' : 'Edit Lyrics & chords text',
+        removed ? 'Lyrics & chords text removed.' : 'Lyrics & chords text updated.');
+      setStandaloneTarget(null);
+    } catch (failure) { setStandaloneError((failure as Error).message); }
+  }
   function openPickupDialog(opener: HTMLElement) {
     if (!selection || selection.measure !== 1) return;
     if (pendingFret) { setError('Apply the pending fret before changing the pickup.'); return; }
@@ -1486,6 +1567,8 @@ export function App() {
             <details className="editor-text-tools"><summary>Text</summary>
               {(['chord', 'section', 'words'] as AnchorKind[]).map(kind => <button key={kind} type="button" disabled={selection.graceIndex !== null}
                 onClick={event => openAnchorDialog(kind, event.currentTarget)}>{ANCHOR_NAMES[kind].title}…</button>)}
+              <button type="button" disabled={selection.graceIndex !== null} onClick={event => openLyricDialog(event.currentTarget)}>Lyric syllable…</button>
+              <button type="button" onClick={event => openStandaloneDialog(event.currentTarget)}>Lyrics &amp; chords…</button>
             </details>
             <details className="editor-passage-tools"><summary>Select passage</summary>
               <button type="button" onClick={() => setPassage({ start: selection, end: selection })}>Set range start</button>
@@ -1730,6 +1813,46 @@ export function App() {
           </div>
         </>;
       })()}
+    </dialog>
+    <dialog ref={lyricDialog} className="duplicate-dialog anchor-dialog" aria-label="Lyric syllable" onCancel={event => { event.preventDefault(); setLyricTarget(null); }}>
+      {lyricTarget && (() => {
+        const current = lyricTarget.lyrics.find(lyric => lyric.verse === lyricDraft.verse);
+        const kept = lyricTarget.lyrics.filter(lyric => lyric.verse === 0);
+        return <>
+          <h2>Lyric syllable</h2>
+          <p>Measure {lyricTarget.selection.measure}, event {lyricTarget.selection.event}. Other verses and the Lyrics &amp; chords text are not changed.</p>
+          <div className="insert-dialog-fields">
+            <label>Verse<select aria-label="Verse" data-text-first="" value={lyricDraft.verse} onChange={event => chooseLyricVerse(Number(event.target.value), lyricTarget.lyrics)}>
+              {Array.from({ length: LYRIC_VERSES }, (_, index) => index + 1).map(verse => <option key={verse} value={verse}>
+                {verse}{lyricTarget.lyrics.some(lyric => lyric.verse === verse) ? ' •' : ''}</option>)}</select></label>
+            <label>Syllabic<select aria-label="Syllabic" value={lyricDraft.syllabic} onChange={event => { setLyricError(''); setLyricDraft(draft => ({ ...draft, syllabic: event.target.value as LyricSyllabic })); }}>
+              <option value="single">Single</option><option value="begin">Begin</option><option value="middle">Middle</option><option value="end">End</option></select></label>
+          </div>
+          <label className="anchor-text">Text<input aria-label="Lyric text" maxLength={ANCHOR_TEXT_LIMIT} value={lyricDraft.text}
+            onChange={event => { setLyricError(''); setLyricDraft(draft => ({ ...draft, text: event.target.value })); }} /></label>
+          {current?.reason && <p className="grace-read-only" role="note">{current.reason}</p>}
+          {kept.map(lyric => <p key={lyric.reason} className="grace-read-only" role="note">{lyric.reason}</p>)}
+          {current && !lyricDraft.text.trim() && <p className="editor-rhythm-reason">To clear verse {lyricDraft.verse}, use Remove lyric.</p>}
+          {lyricError && <p className="alert" role="alert">{lyricError}</p>}
+          <div className="duplicate-dialog-actions">
+            <button type="button" onClick={() => setLyricTarget(null)}>Cancel</button>
+            {current && <button type="button" onClick={() => applyLyric(true)}>Remove lyric</button>}
+            <button type="button" disabled={!lyricDraft.text.trim() || Boolean(current?.reason)} onClick={() => applyLyric(false)}>Apply lyric</button>
+          </div>
+        </>;
+      })()}
+    </dialog>
+    <dialog ref={standaloneDialog} className="duplicate-dialog standalone-dialog" aria-label="Lyrics and chords text" onCancel={event => { event.preventDefault(); setStandaloneTarget(null); }}>
+      <h2>Lyrics &amp; chords</h2>
+      <p>Whole-score text shown on its own tab and printed after the tablature. It is separate from timed lyrics. Leave it empty to remove it.</p>
+      <label className="anchor-text">Text<textarea aria-label="Lyrics and chords text" data-text-first="" rows={14} maxLength={STANDALONE_LYRICS_LIMIT} value={standaloneText}
+        onChange={event => { setStandaloneError(''); setStandaloneText(event.target.value); }} /></label>
+      <p className="editor-rhythm-reason">{standaloneText.length.toLocaleString('en-US')} / {STANDALONE_LYRICS_LIMIT.toLocaleString('en-US')} characters</p>
+      {standaloneError && <p className="alert" role="alert">{standaloneError}</p>}
+      <div className="duplicate-dialog-actions">
+        <button type="button" onClick={() => setStandaloneTarget(null)}>Cancel</button>
+        <button type="button" onClick={applyStandalone}>Apply text</button>
+      </div>
     </dialog>
     <dialog ref={bendDialog} className="duplicate-dialog bend-dialog" aria-label="Bend" onCancel={event => { event.preventDefault(); setBendTarget(null); }}>
       <h2>Bend</h2>
