@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { ScoreSelection } from '../../Player';
 import { CommandButton, type EditorCommands } from '../commands';
 
@@ -14,7 +15,13 @@ export function SelectionInspector({ selection, details, measureCount, eventCoun
   moveString: string; onMoveString: (value: string) => void; moveMode: 'fret' | 'pitch'; onMoveMode: (value: 'fret' | 'pitch') => void;
   moveOutcome: MoveOutcome | null; commands: EditorCommands;
 }) {
+  const fretId = useId();
+  const kind = selection.graceIndex !== null ? 'Grace note' : selection.kind === 'note' ? 'Note' : selection.kind === 'rest' ? 'Rest' : 'Empty string';
   return <>
+    <div className="properties-heading">
+      <span className="properties-kind">{kind}</span>
+      <span className="properties-where">Measure {selection.measure} · Event {selection.event}</span>
+    </div>
     <div className="editor-selection-summary" aria-live="polite">
       <span>Measure {selection.measure}</span>
       <span>Event {selection.event}</span>
@@ -23,7 +30,7 @@ export function SelectionInspector({ selection, details, measureCount, eventCoun
       {details && <span>{details.pitch}</span>}
       {selection.fret !== null && <span>Fret {selection.fret}</span>}
     </div>
-    <div className="editor-selection-fields">
+    <div className="editor-selection-fields" aria-label="Go to">
       <label>Measure<select aria-label="Selection measure" value={selection.measure} onChange={event => onNavigate({ measure: Number(event.target.value) })}>{Array.from({ length: Math.max(1, measureCount) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
       <label>Event<select aria-label="Selection event" value={selection.event} onChange={event => onNavigate({ event: Number(event.target.value) })}>{Array.from({ length: Math.max(1, eventCount) }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select></label>
       <label>Voice<select aria-label="Selection voice" value={selection.voice} onChange={event => onNavigate({ voice: Number(event.target.value) })}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
@@ -34,7 +41,11 @@ export function SelectionInspector({ selection, details, measureCount, eventCoun
     </div>
     {selection.mappingReason && <p className="editor-selection-reason">{selection.mappingReason}</p>}
     {selection.string !== null && <div className="editor-note-tools">
-      <label>{selection.kind === 'note' ? 'Fret' : 'Add fret'}<input aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => onFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commands['apply-fret'].run(event.currentTarget); } }} /></label>
+      <div className="properties-fret"><label className="properties-field-label" htmlFor={fretId}>{selection.kind === 'note' ? 'Fret' : 'Add fret'}</label><span className="properties-stepper">
+        <CommandButton id="fret-lower" command={commands['fret-lower']} />
+        <input id={fretId} aria-label="Fret" inputMode="numeric" min={0} max={36} value={fretDraft} onChange={event => onFretDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commands['apply-fret'].run(event.currentTarget); } }} />
+        <CommandButton id="fret-higher" command={commands['fret-higher']} />
+      </span></div>
       <CommandButton id="apply-fret" command={commands['apply-fret']} />
       {fretBuffered && <p className="editor-fret-buffer" role="status">Fret {fretDraft} typed — press Enter to apply or Escape to cancel.</p>}
       {selection.kind === 'note' && <>
@@ -45,5 +56,6 @@ export function SelectionInspector({ selection, details, measureCount, eventCoun
         <CommandButton id="move-string" command={commands['move-string']} />
       </>}
     </div>}
+    {selection.kind === 'note' && <div className="properties-actions"><CommandButton id="make-rest" command={commands['make-rest']} /><CommandButton id="remove-note" command={commands['remove-note']} /></div>}
   </>;
 }

@@ -20,7 +20,6 @@ test('ED-14 authors a cross-bar hammer-on by pointer and a slide by keyboard, th
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const click = async (target: typeof origin) => { const box = (await target.boundingBox())!; await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2); };
   await click(origin);
-  await page.locator('summary', { hasText: /^Techniques$/ }).click();
   await page.getByRole('button', { name: 'Pull-off', exact: true }).click();
   await click(destination);
   await expect(page.getByRole('alert')).toContainText('A pull-off must go to a lower fret.');

@@ -73,6 +73,8 @@ const ICONS = {
   settings: <><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1" /><circle cx={15} cy={6} r={2} /><circle cx={9} cy={12} r={2} /><circle cx={17} cy={18} r={2} /></>,
   keyboard: <><path d="M3 6h18v12H3z" /><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10" /></>,
   'edit-tools': <><path d="M16 3l5 5L8 21H3v-5z" /><path d="m13 6 5 5" /></>,
+  chevron: <path d="m6 9 6 6 6-6" />,
+  minus: <path d="M5 12h14" />,
   more: <path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth={3} />,
 } satisfies Record<string, ReactNode>;
 

@@ -18,7 +18,6 @@ test('ED-16 adds a grace chord before a note and saves it without changing the n
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await firstFret.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByText('Techniques', { exact: true }).click();
   await page.getByRole('button', { name: 'Add grace…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add grace group' });
   await expect(dialog).toContainText('Destination: measure 1, event 1');
@@ -71,7 +70,6 @@ test('ED-16 edits and removes grace notes without disturbing the destination', a
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await firstFret.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByText('Techniques', { exact: true }).click();
   await page.getByRole('button', { name: 'Add grace…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add grace group' });
   await dialog.getByLabel('Grace event 1 fret 1', { exact: true }).fill('2');
@@ -127,7 +125,6 @@ test('ED-16 edits a grace group with a pull-off into the main note and reopens i
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await firstFret.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByText('Techniques', { exact: true }).click();
   await page.getByRole('button', { name: 'Add grace…' }).click();
   let dialog = page.getByRole('dialog', { name: 'Add grace group' });
   await dialog.getByLabel('Grace event 1 fret 1', { exact: true }).fill('5');
@@ -191,7 +188,6 @@ test('ED-16 keeps an imported grace group read-only until it is removed whole', 
   await page.getByRole('combobox', { name: 'Selection event' }).selectOption('1');
   await page.getByRole('combobox', { name: 'Selection string' }).selectOption('4');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
-  await page.getByText('Techniques', { exact: true }).click();
   await page.getByRole('button', { name: 'Edit grace…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit grace group' });
   await expect(dialog.getByRole('note')).toContainText('Grace event 1, string 4 has the marking “TEF grace effect 5”.');

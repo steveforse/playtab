@@ -8,10 +8,12 @@ test('UI-06 the status bar summarises the selection, fret buffer, range and last
   await expect(page.getByRole('status', { name: 'Editor status' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Edit score' }).click();
   const bar = page.getByRole('status', { name: 'Editor status' });
-  await expect(bar).toHaveText('Nothing selected');
+  await expect(bar).toContainText('Nothing selected');
+  await expect(bar).toContainText('Click a note to select');
   const box = (await zeros.first().boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect(bar).toContainText(/^M1 E1 S3 · fret 0 · [A-G]#?\d · 1\/8$/);
+  await expect(bar.locator('.editor-status-selection')).toHaveText(/^M1 E1 S3 · fret 0 · [A-G]#?\d · 1\/8$/);
+  await expect(bar.locator('.editor-status-keys')).toHaveText('0–9 fret · ←/→ move · ↑/↓ string · Del remove · right-click for more');
   await page.keyboard.press('7');
   await expect(bar).toContainText('Fret 7 typed — Enter applies, Escape cancels');
   await page.keyboard.press('Escape');

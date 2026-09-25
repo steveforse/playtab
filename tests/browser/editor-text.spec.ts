@@ -23,7 +23,6 @@ test('ED-18 anchors a chord, section and annotation at the selected event and ke
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
   await selectEvent(page, '2', '2', '3');
-  await page.locator('summary', { hasText: /^Text$/ }).click();
   await page.getByRole('button', { name: 'Chord name…' }).click();
   let dialog = page.getByRole('dialog', { name: 'Chord name' });
   await dialog.getByLabel('Quality').selectOption('minor');
@@ -59,7 +58,6 @@ test('ED-18 anchors a chord, section and annotation at the selected event and ke
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles({ name: 'reopened.musicxml', mimeType: 'application/xml', buffer: Buffer.from(savedSource) });
   await selectEvent(page, '2', '2', '3');
-  await page.locator('summary', { hasText: /^Text$/ }).click();
   await page.getByRole('button', { name: 'Chord name…' }).click();
   dialog = page.getByRole('dialog', { name: 'Chord name' });
   await expect(dialog.getByLabel('Existing item')).toHaveValue('0');
@@ -81,7 +79,6 @@ test('ED-18 edits a timed lyric verse and the separate Lyrics & chords text', as
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/editor-rich.musicxml');
   await selectEvent(page, '1', '2', '2');
-  await page.locator('summary', { hasText: /^Text$/ }).click();
   await page.getByRole('button', { name: 'Lyric syllable…' }).click();
   let dialog = page.getByRole('dialog', { name: 'Lyric syllable' });
   await expect(dialog.getByLabel('Lyric text')).toHaveValue('Low');

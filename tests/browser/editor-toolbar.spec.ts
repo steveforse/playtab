@@ -9,8 +9,15 @@ test('UI-02 the editing toolbar reflects the selection and runs the shared comma
   await page.getByRole('button', { name: 'Edit score' }).click();
   const toolbar = page.getByRole('toolbar', { name: 'Editing toolbar' });
   await expect(toolbar).toBeVisible();
-  await expect(toolbar.getByRole('button', { name: 'Tie' })).toBeDisabled();
-  await expect(toolbar.getByRole('button', { name: 'Tie' })).toHaveAttribute('title', 'Tie — Select a note first');
+  await expect(toolbar.getByRole('button', { name: 'Copy' })).toBeDisabled();
+  await expect(toolbar.getByRole('button', { name: 'Copy' })).toHaveAttribute('title', 'Copy passage — Select a range first');
+  await toolbar.getByRole('button', { name: 'Techniques' }).click();
+  const techniques = page.getByRole('menu', { name: 'Techniques' });
+  await expect(techniques.getByRole('menuitem', { name: /^Tie/ })).toHaveAttribute('aria-disabled', 'true');
+  await expect(techniques.getByRole('menuitem', { name: /^Tie/ })).toContainText('Select a note first');
+  await page.keyboard.press('Escape');
+  await expect(techniques).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: 'Techniques' })).toBeFocused();
   const box = (await zeros.first().boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(toolbar.getByRole('button', { name: '1/8 duration' })).toHaveAttribute('aria-pressed', 'true');

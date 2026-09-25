@@ -27,7 +27,6 @@ test('ED-17 edits picking, fretting and bend independently on a hammer-on note',
   await page.getByRole('combobox', { name: 'Selection voice' }).selectOption('2');
   await page.getByRole('combobox', { name: 'Selection event' }).selectOption('2');
   await page.getByRole('combobox', { name: 'Selection string' }).selectOption('4');
-  await page.getByText('Techniques', { exact: true }).click();
   await expect(page.getByLabel('Picking hand', { exact: true })).toHaveValue('T');
   await expect(page.getByLabel('Fretting hand', { exact: true })).toHaveValue('1');
   await page.getByLabel('Fretting hand', { exact: true }).selectOption('3');

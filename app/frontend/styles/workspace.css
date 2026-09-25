@@ -399,3 +399,226 @@ html:has(.shell.edit-mode) {
     scroll-padding-bottom: 52vh;
   }
 }
+/* Ribbon controls. */
+.ribbon-fret {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--label);
+}
+.ribbon-fret-value {
+  display: inline-grid;
+  place-items: center;
+  min-width: 38px;
+  height: 30px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: #f8faf4;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ribbon-fret-value.typing {
+  border-color: #c56b2a;
+  box-shadow: 0 0 0 3px #c56b2a26;
+}
+.editor-toolbar-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.editor-toolbar-menu:hover,
+.editor-toolbar-menu[aria-expanded="true"] {
+  background: #eef2e8;
+  border-color: var(--rule);
+}
+.editor-toolbar-menu:focus-visible {
+  outline: 2px solid #2c5f8a;
+  outline-offset: 1px;
+}
+.editor-status-keys {
+  margin-left: auto;
+  color: var(--faint);
+  font-weight: 400;
+}
+
+/* Properties panel. */
+.edit-properties .editor-sidebar {
+  padding: 0;
+  font-size: 12px;
+}
+.edit-properties .editor-selection {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.properties-heading,
+.properties-empty,
+.properties-range {
+  display: grid;
+  gap: 3px;
+  padding: 14px 16px 10px;
+  background: #fff;
+  border-bottom: 1px solid var(--rule);
+}
+.properties-kind {
+  font-size: 10.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 600;
+}
+.properties-where {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.properties-hint {
+  margin: 4px 0 0;
+  color: var(--label);
+  line-height: 1.55;
+}
+.properties-range {
+  background: #eef4fa;
+  border-bottom-color: #c9d9e8;
+}
+.properties-range .editor-range-summary {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+}
+.edit-properties .editor-selection-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 8px 16px 10px;
+  background: #fff;
+  border-bottom: 1px solid var(--rule);
+  color: var(--label);
+  font-size: 11.5px;
+}
+.edit-properties .editor-selection-summary span {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.edit-properties .editor-selection-fields {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.edit-properties .editor-selection-fields label {
+  font-size: 10.5px;
+}
+.edit-properties .editor-note-tools,
+.edit-properties .editor-rhythm-tools,
+.edit-properties details,
+.edit-properties .properties-actions {
+  margin: 0;
+  padding: 10px 16px 12px;
+  border-top: 0;
+  border-bottom: 1px solid var(--rule);
+}
+.edit-properties details > summary {
+  padding: 2px 0 8px;
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--label);
+  font-weight: 600;
+}
+.properties-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.edit-properties .editor-note-tools > label {
+  min-width: 0;
+}
+.properties-stepper input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+  font-weight: 700;
+}
+.properties-stepper .command-button.icon-only {
+  flex: none;
+  width: 32px;
+}
+.properties-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.properties-range .properties-actions {
+  padding: 6px 0 0;
+  border: 0;
+}
+.properties-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.properties-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 3px 0 10px;
+  border: 1px solid var(--edge);
+  border-radius: 99px;
+  background: #fff;
+  font-size: 12px;
+}
+.properties-chip button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  min-height: 0 !important;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+}
+.properties-chip button:hover {
+  background: #f3e4dc;
+  color: var(--danger-ink);
+}
+.properties-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.edit-properties .editor-sidebar .command-button {
+  justify-content: flex-start;
+}
+.properties-fret {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.properties-field-label {
+  color: var(--label);
+  font-size: 9px;
+}
