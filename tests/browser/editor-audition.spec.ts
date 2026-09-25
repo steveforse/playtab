@@ -40,7 +40,8 @@ test('ED-06 Shift-click selects a written passage and Loop does not change its e
   await page.mouse.click(third.x + third.width / 2, third.y + third.height / 2);
   await page.keyboard.up('Shift');
   await expect(page.getByText('Passage: M1 E1–M1 E3')).toBeVisible();
-  await expect(notation.locator('.editor-passage-selection')).toHaveCount(3);
+  await expect(notation.locator('.editor-passage-selection')).toHaveCount(1);
+  await expect(notation.locator('.editor-range-endpoint')).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath('edit-passage.png') });
   await page.getByRole('button', { name: 'Play selection' }).click();
   await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
@@ -65,7 +66,8 @@ test('ED-06 sets passage endpoints through keyboard-accessible inspector control
   await notation.press('ArrowRight');
   await page.getByRole('button', { name: 'Set range end' }).click();
   await expect(page.getByText('Passage: M1 E1–M1 E3')).toBeVisible();
-  await expect(notation.locator('.editor-passage-selection')).toHaveCount(3);
+  await expect(notation.locator('.editor-passage-selection')).toHaveCount(1);
+  await expect(notation.locator('.editor-range-endpoint')).toHaveCount(2);
   await page.getByRole('button', { name: 'Play selection' }).click();
   await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
   await page.getByRole('button', { name: 'Clear passage' }).click();

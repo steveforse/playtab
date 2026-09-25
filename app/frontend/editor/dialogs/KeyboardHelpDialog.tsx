@@ -11,11 +11,15 @@ export function KeyboardHelpDialog({ open, onClose, returnFocus }: { open: boole
       <dt>Arrow keys</dt><dd>Move between events (Left/Right) and strings (Up/Down). The first arrow selects the first event.</dd>
       <dt>0–9</dt><dd>Type a fret of up to two digits; it is shown but not applied yet.</dd>
       <dt>Enter or Tab</dt><dd>Apply the typed fret.</dd>
-      <dt>Escape</dt><dd>Cancel the typed fret, or close a dialog.</dd>
+      <dt>Escape</dt><dd>Cancel the typed fret, clear the selected range, or close a dialog.</dd>
       <dt>Backspace</dt><dd>Remove the last typed digit; with nothing typed, remove the selected note.</dd>
       <dt>Delete</dt><dd>Remove the selected note.</dd>
       <dt>Space</dt><dd>Play or pause.</dd>
       <dt>Shift-click</dt><dd>Extend the passage to the clicked event.</dd>
+        <dt>Shift+Left/Right</dt><dd>Extend the range by one event.</dd>
+        <dt>Ctrl/Cmd+Shift+Left/Right</dt><dd>Extend the range by a measure.</dd>
+        <dt>Ctrl/Cmd+A</dt><dd>Select every event in the voice.</dd>
+        <dt>Click above the staff</dt><dd>Select the whole measure; Shift-click there extends by measures.</dd>
       <dt>Ctrl/Cmd+Z</dt><dd>Undo. Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y: redo.</dd>
       <dt>Ctrl/Cmd+S</dt><dd>Apply a typed fret and save.</dd>
     </dl>

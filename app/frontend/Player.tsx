@@ -360,40 +360,47 @@ function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat
   return clampTabString((y - rows.top) / rows.spacing + 1);
 }
 
-export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection, extend: boolean) => void) {
+export type SelectionScope = 'event' | 'measure';
+
+export function createEditingStaffInteractionHandler(root: HTMLElement, api: AlphaTabApi, view: ScoreView, onSelection: (selection: ScoreSelection, extend: boolean, scope?: SelectionScope) => void) {
   let dragStart: { x: number; y: number } | null = null;
-  const selectionAt = (event: MouseEvent): ScoreSelection | null => {
+  const hitAt = (event: MouseEvent): { selection: ScoreSelection; scope: SelectionScope } | null => {
     const point = scorePoint(root, event, view);
     const lookup = api.boundsLookup;
     if (!point || !lookup) return null;
     const beat = lookup.getBeatAtPos(point.x, point.y);
-    if (!beat || !lookup.findBeat(beat)) return null;
+    const beatBounds = beat && lookup.findBeat(beat);
+    if (!beat || !beatBounds) return null;
     const note = lookup.getNoteAtPos(beat, point.x, point.y);
     if (note) {
       const source = note as model.Note & { playtabMappingReason?: string };
-      return selectionFromNote(note, source.playtabMappingReason);
+      return { selection: selectionFromNote(note, source.playtabMappingReason), scope: 'event' };
     }
+    // Above the top staff (the measure number and tempo zone) selects the
+    // whole measure, like clicking a measure in other notation editors.
+    const staffTop = beatBounds.barBounds?.masterBarBounds?.bars?.[0]?.visualBounds.y;
+    if (staffTop !== undefined && point.y < staffTop - 2) return { selection: selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', null), scope: 'measure' };
     const string = editingStringAtY(lookup, beat, point.y);
-    return selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string);
+    return { selection: selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string), scope: 'event' };
   };
   const onMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return;
-    const selection = selectionAt(event);
-    if (!selection) return;
+    const hit = hitAt(event);
+    if (!hit) return;
     event.preventDefault();
     // Resolve populated note heads here as well as through alphaTab's event.
     // SVG glyphs (clefs, stems, and labels) can sit above a note's text in the
     // DOM, so relying only on alphaTab's noteMouseDown event leaves real mouse
     // clicks unable to select an otherwise valid note.
     dragStart = { x: event.clientX, y: event.clientY };
-    onSelection(selection, event.shiftKey);
+    onSelection(hit.selection, event.shiftKey, hit.scope);
   };
   const onMouseMove = (event: MouseEvent) => {
     if (!dragStart || (event.buttons & 1) === 0 || Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) < 6) return;
-    const selection = selectionAt(event);
-    if (!selection) return;
+    const hit = hitAt(event);
+    if (!hit) return;
     event.preventDefault();
-    onSelection(selection, true);
+    onSelection(hit.selection, true, hit.scope);
   };
   const onMouseUp = () => { dragStart = null; };
   root.addEventListener('mousedown', onMouseDown, true);
@@ -564,6 +571,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const editingRef = useRef(editing);
   const selectionRef = useRef<ScoreSelection | null>(selection);
   const passageRef = useRef<PlaybackEndpoints | null>(passage);
+  const rangeAnchor = useRef<PlaybackEndpoints | null>(null);
   const selectionCallbackRef = useRef(onSelectionChange);
   const passageCallbackRef = useRef(onPassageChange);
   const fretKeyCallbackRef = useRef(onFretKey);
@@ -667,14 +675,15 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     };
     const detachNoteMouseDown = instance.noteMouseDown?.on(selectNote);
     const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
-    const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, (selection, extend) => {
+    const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, (selection, extend, scope = 'event') => {
       if (editingRef.current) {
         element.current?.focus({ preventScroll: true });
-        if (extend && selectionRef.current) {
-          const anchor = passageRef.current?.start ?? selectionRef.current;
-          passageCallbackRef.current?.(compareSelections(anchor, selection) <= 0 ? { start: anchor, end: selection } : { start: selection, end: anchor });
-        } else passageCallbackRef.current?.(null);
-        selectionCallbackRef.current?.(selection);
+        const span = scope === 'measure' ? measureSpan(selection) : { start: selection, end: selection };
+        if (!span) return;
+        if (extend && selectionRef.current) extendRange(span);
+        else if (scope === 'measure') { rangeAnchor.current = span; passageCallbackRef.current?.(span); }
+        else { rangeAnchor.current = null; passageCallbackRef.current?.(null); }
+        selectionCallbackRef.current?.(span.start === selection ? selection : span.start);
       }
     });
     let detachPaginatedInteraction: (() => void) | undefined;
@@ -762,15 +771,21 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     if (api.current) api.current.settings.player.enableUserInteraction = !editing;
   }, [editing]);
 
-  function renderRangeOverlay(endpoints: PlaybackEndpoints | null, className: string) {
+  // Draws a range as one band per system row spanning the staff height,
+  // like alphaTab's playback highlight, and outlines its first and last events.
+  function renderRangeOverlay(endpoints: PlaybackEndpoints | null, className: string, endpointClass?: string) {
     const root = element.current;
     if (!root) return;
-    root.querySelectorAll(`.${className}`).forEach(node => node.remove());
+    root.querySelectorAll(`.${className}${endpointClass ? `, .${endpointClass}` : ''}`).forEach(node => node.remove());
     const instance = api.current;
     if (!editingRef.current || !instance?.score || !endpoints || !instance.boundsLookup) return;
     const range = writtenPlaybackRange(instance.score, endpoints);
     const surface = root.querySelector<HTMLElement>('.at-surface');
     if (!range || !surface) return;
+    type Box = { x: number; y: number; w: number; h: number };
+    const rows = new Map<number, { left: number; right: number; line: Box }>();
+    let first: { start: number; bounds: Box; line: Box } | null = null;
+    let last: { start: number; bounds: Box; line: Box } | null = null;
     const seen = new Set<number>();
     for (const bar of instance.score.tracks[0]?.staves[0]?.bars ?? []) {
       for (const voice of bar.voices) for (const beat of voice.beats) {
@@ -778,19 +793,35 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
         seen.add(beat.id);
         const start = instance.score.masterBars[bar.index].start + beat.playbackStart;
         if (start >= range.endTick || start + beat.playbackDuration <= range.startTick) continue;
-        const bounds = instance.boundsLookup.findBeat(beat)?.visualBounds;
-        if (!bounds) continue;
-        const page = scoreView === 'continuous' ? { x: 0, y: bounds.y } : paginatedCursorPosition(root, bounds.y);
-        const overlay = document.createElement('div');
-        overlay.className = className;
-        overlay.setAttribute('aria-hidden', 'true');
-        overlay.style.left = `${bounds.x + page.x}px`;
-        overlay.style.top = `${page.y}px`;
-        overlay.style.width = `${bounds.w}px`;
-        overlay.style.height = `${bounds.h}px`;
-        surface.append(overlay);
+        const beatBounds = instance.boundsLookup.findBeat(beat);
+        if (!beatBounds) continue;
+        const bounds: Box = beatBounds.realBounds ?? beatBounds.visualBounds;
+        const line: Box = beatBounds.barBounds?.masterBarBounds?.lineAlignedBounds ?? beatBounds.visualBounds;
+        const row = rows.get(line.y);
+        if (row) { row.left = Math.min(row.left, bounds.x); row.right = Math.max(row.right, bounds.x + bounds.w); }
+        else rows.set(line.y, { left: bounds.x, right: bounds.x + bounds.w, line });
+        if (!first || start < first.start) first = { start, bounds: beatBounds.visualBounds, line };
+        if (!last || start >= last.start) last = { start, bounds: beatBounds.visualBounds, line };
       }
     }
+    const place = (name: string, x: number, width: number, line: Box) => {
+      const page = scoreView === 'continuous' ? { x: 0, y: line.y } : paginatedCursorPosition(root, line.y);
+      const overlay = document.createElement('div');
+      overlay.className = name;
+      overlay.setAttribute('aria-hidden', 'true');
+      overlay.style.left = `${x + page.x}px`;
+      // Pad the staff height so fret numbers on the outer lines sit inside.
+      overlay.style.top = `${page.y - 7}px`;
+      overlay.style.width = `${width}px`;
+      overlay.style.height = `${line.h + 14}px`;
+      surface.append(overlay);
+    };
+    for (const row of rows.values()) place(className, row.left, row.right - row.left, row.line);
+    if (!endpointClass) return;
+    const edges: Array<{ bounds: Box; line: Box }> = [];
+    if (first) edges.push(first);
+    if (last && last.start !== first?.start) edges.push(last);
+    for (const edge of edges) place(endpointClass, edge.bounds.x - 2, edge.bounds.w + 4, edge.line);
   }
 
   function renderSelectionOverlay() {
@@ -799,7 +830,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const currentSelection = selectionRef.current;
     if (!root) return;
     renderRangeOverlay(playbackEndpointsRef.current, 'editor-playback-selection');
-    renderRangeOverlay(passageRef.current, 'editor-passage-selection');
+    renderRangeOverlay(passageRef.current, 'editor-passage-selection', 'editor-range-endpoint');
     root.querySelectorAll('.editor-note-selection').forEach(node => node.remove());
     if (!editingRef.current || !currentApi || !currentSelection) return;
     const renderedScore = currentApi.score;
@@ -861,6 +892,73 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     surface.append(overlay);
   }
 
+  // The fixed end of a range while it is extended by Shift-click, dragging
+  // or Shift+arrows; a measure click anchors the whole measure.
+  function currentAnchor(): PlaybackEndpoints | null {
+    const passage = passageRef.current;
+    const anchor = rangeAnchor.current;
+    if (passage && anchor && compareSelections(passage.start, anchor.start) <= 0 && compareSelections(anchor.end, passage.end) <= 0) return anchor;
+    if (passage) return { start: passage.start, end: passage.start };
+    return selectionRef.current ? { start: selectionRef.current, end: selectionRef.current } : null;
+  }
+
+  function extendRange(span: PlaybackEndpoints) {
+    const anchor = currentAnchor() ?? span;
+    rangeAnchor.current = anchor;
+    passageCallbackRef.current?.({
+      start: compareSelections(anchor.start, span.start) <= 0 ? anchor.start : span.start,
+      end: compareSelections(anchor.end, span.end) >= 0 ? anchor.end : span.end,
+    });
+  }
+
+  function voiceLocations(voice: number) {
+    const targets = selectionTargetsForNavigation();
+    const reference = selectionRef.current ?? targets[0]?.selection;
+    return targets.filter(target => target.selection.voice === voice && target.selection.staff === reference?.staff && target.selection.track === reference?.track)
+      .reduce<ScoreSelection[]>((events, target) => {
+        if (!events.some(existing => sameLocation(existing, target.selection))) events.push(target.selection);
+        return events;
+      }, []);
+  }
+
+  function measureSpan(selection: ScoreSelection): PlaybackEndpoints | null {
+    const events = voiceLocations(selectionRef.current?.voice ?? selection.voice).filter(item => item.measure === selection.measure);
+    return events.length ? { start: events[0], end: events[events.length - 1] } : null;
+  }
+
+  function extendByKeyboard(direction: 'left' | 'right', byMeasure: boolean) {
+    const current = selectionRef.current;
+    if (!current) return;
+    if (beforeNavigateRef.current && !beforeNavigateRef.current()) return;
+    const events = voiceLocations(current.voice);
+    const index = events.findIndex(item => sameLocation(item, current));
+    if (index < 0) return;
+    let next: ScoreSelection | undefined;
+    if (!byMeasure) next = events[index + (direction === 'right' ? 1 : -1)];
+    else if (direction === 'right') {
+      // To the end of this measure, then to the end of each following one.
+      const endOfMeasure = events.filter(item => item.measure === current.measure).at(-1)!;
+      const target = sameLocation(endOfMeasure, current) ? current.measure + 1 : current.measure;
+      next = events.filter(item => item.measure === target).at(-1);
+    } else {
+      const startOfMeasure = events.find(item => item.measure === current.measure)!;
+      const target = sameLocation(startOfMeasure, current) ? current.measure - 1 : current.measure;
+      next = events.find(item => item.measure === target);
+    }
+    if (!next) return;
+    extendRange({ start: next, end: next });
+    selectionCallbackRef.current?.(next);
+  }
+
+  function selectAllEvents() {
+    const events = voiceLocations(selectionRef.current?.voice ?? 1);
+    if (!events.length) return;
+    const all = { start: events[0], end: events[events.length - 1] };
+    rangeAnchor.current = all;
+    passageCallbackRef.current?.(all);
+    if (!selectionRef.current) selectionCallbackRef.current?.(events[0]);
+  }
+
   function selectionTargetsForNavigation() {
     return api.current?.score ? buildSelectionTargets(api.current.score).sort((a, b) => compareSelections(a.selection, b.selection)) : [];
   }
@@ -898,9 +996,20 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     selectionCallbackRef.current?.((sameString ?? nextLocation).selection);
   }
 
-  function handleEditorKeyDown(event: { key: string; preventDefault: () => void; target?: EventTarget | null }) {
+  function handleEditorKeyDown(event: { key: string; preventDefault: () => void; target?: EventTarget | null; shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }) {
     if (!editingRef.current) return;
     const key = event.key.toLowerCase();
+    const command = Boolean(event.ctrlKey || event.metaKey);
+    if (command && key === 'a' && !event.shiftKey) {
+      event.preventDefault();
+      selectAllEvents();
+      return;
+    }
+    if (event.shiftKey && (key === 'arrowleft' || key === 'arrowright')) {
+      event.preventDefault();
+      extendByKeyboard(key === 'arrowleft' ? 'left' : 'right', command);
+      return;
+    }
     if (key === ' ' && event.target instanceof Node && element.current?.contains(event.target)) {
       event.preventDefault();
       if (updatingScoreRef.current) api.current?.pause(); else api.current?.playPause();
@@ -920,8 +1029,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       return;
     }
     if (/^[0-9]$/.test(event.key) || key === 'enter' || key === 'escape') {
-      if (current.string === null) return;
-      if (fretKeyCallbackRef.current?.(current, event.key)) event.preventDefault();
+      const consumed = current.string !== null && Boolean(fretKeyCallbackRef.current?.(current, event.key));
+      if (consumed) event.preventDefault();
+      else if (key === 'escape' && passageRef.current) {
+        // Escape clears the range once no typed fret is left to cancel.
+        event.preventDefault();
+        rangeAnchor.current = null;
+        passageCallbackRef.current?.(null);
+      }
       return;
     }
     // Tab leaves the surface normally after committing a buffered fret.

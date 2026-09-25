@@ -14,6 +14,12 @@ import type { PlaybackEndpoints } from './editor/audition';
 import { sourceEventCount, type IdentityCarry, type SourceIdentityMap } from './music/source-identity';
 import { readSourceDocument } from './music/xml-cache';
 
+function rangeDescription(passage: PlaybackEndpoints, whole: { first: number; last: number } | null) {
+  if (whole) return whole.first === whole.last ? `Measure ${whole.first} selected` : `Measures ${whole.first}–${whole.last} selected`;
+  const { start, end } = passage;
+  return `M${start.measure} E${start.event} – M${end.measure} E${end.event} selected`;
+}
+
 type LibraryItem = { id: number; title: string; revision?: number };
 type RemovalMode = 'note' | 'rest' | 'grace';
 type PendingRemoval = { beforeSource: string; afterSource: string; selection: ScoreSelection; mode: RemovalMode; dependencies: string[] };
@@ -1662,6 +1668,7 @@ export function App() {
         <p className="editor-selection-empty">Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z redoes. History lasts while this score is open; older actions expire after 100 edits or 32 MB.</p>
         <p className="editor-sidebar-status"><strong>Edit mode</strong><span>{selection ? 'Selection is ready for an edit.' : 'Select a note or empty string position to begin editing.'}</span></p>
         <div className="editor-selection" aria-label="Selection inspector">
+          {passage && <p className="editor-range-summary" role="status">{rangeDescription(passage, wholeMeasurePassage())}</p>}
           {!selection ? <p className="editor-selection-empty">No note, rest, or staff position selected.</p> : <>
             <SelectionInspector selection={selection} details={selectedDetails} measureCount={measureCount} eventCount={selectedEventCount}
               onNavigate={navigateInspector} fretDraft={fretDraft} onFretDraft={setFretDraft} fretBuffered={Boolean(surfaceBuffer)}

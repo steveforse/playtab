@@ -418,8 +418,16 @@
   z-index: 7;
   box-sizing: border-box;
   pointer-events: none;
-  border: 1px solid #4b78a0;
-  background: #5d91c01a;
+  border: 1px solid #4b78a066;
+  background: #5d91c02e;
+  border-radius: 3px;
+}
+.editor-range-endpoint {
+  position: absolute;
+  z-index: 7;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px solid #4b78a0;
   border-radius: 3px;
 }
 .editor-playback-selection {
@@ -427,6 +435,7 @@
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
+  background: #a7c17333;
   outline: 2px solid #52844a;
   outline-offset: -2px;
   border-radius: 3px;
@@ -781,4 +790,13 @@
 }
 .keyboard-help dd {
   margin: 0;
+}
+.editor-range-summary {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-left: 3px solid #4b78a0;
+  background: #5d91c01a;
+  color: #2c4f6e;
+  font-size: 11px;
+  font-weight: 600;
 }
