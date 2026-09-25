@@ -7,6 +7,8 @@ import { demo } from '../../app/frontend/music/score';
 import { exportAscii } from '../../app/frontend/music/ascii';
 
 const { readMusicXml, promoteNativeScore, musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords } = vi.hoisted(() => ({ readMusicXml: vi.fn(), promoteNativeScore: vi.fn(), musicXmlEditorState: vi.fn(), applyMusicXmlEdits: vi.fn(), addMusicXmlNote: vi.fn(), addMusicXmlRepeat: vi.fn(), addMusicXmlEndings: vi.fn(), inspectMusicXmlRepeats: vi.fn(() => []), inspectMusicXmlRepeatEndings: vi.fn(() => null), removeMusicXmlRepeat: vi.fn(), removeMusicXmlNotes: vi.fn(), changeMusicXmlDuration: vi.fn(), changeMusicXmlMeter: vi.fn(), changeMusicXmlPickup: vi.fn(), connectMusicXmlTie: vi.fn(), inspectMusicXmlTie: vi.fn(() => ({ canRemove: false })), removeMusicXmlTie: vi.fn(), inspectMusicXmlDuration: vi.fn(() => ({ denominator: 4, dots: 0, rest: false })), inspectMusicXmlMeterRange: vi.fn(() => ({ firstMeasure: 1, lastMeasure: 2 })), insertMusicXmlEvent: vi.fn(), createMusicXmlTriplet: vi.fn(), removeMusicXmlTriplet: vi.fn(), inspectMusicXmlTriplet: vi.fn(() => ({ triplet: false, canRemove: false })), insertMusicXmlMeasure: vi.fn(), duplicateMusicXmlMeasure: vi.fn(), deleteMusicXmlMeasure: vi.fn(), sourceTabNoteRecords: vi.fn(() => []) }));
+const { inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo } = vi.hoisted(() => ({
+  inspectMusicXmlScoreSettings: vi.fn(), applyMusicXmlScoreSettings: vi.fn(), inspectMusicXmlTempo: vi.fn(), setMusicXmlLocalTempo: vi.fn() }));
 const { inspectMusicXmlAnchor, changeMusicXmlAnchor, inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics } = vi.hoisted(() => ({
   inspectMusicXmlAnchor: vi.fn(), changeMusicXmlAnchor: vi.fn(), inspectMusicXmlLyrics: vi.fn(), setMusicXmlLyric: vi.fn(), setMusicXmlStandaloneLyrics: vi.fn() }));
 const { inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand } = vi.hoisted(() => ({
@@ -37,7 +39,8 @@ vi.mock('../../app/frontend/music/musicxml', () => ({
     sourceFormat: preview.sourceFormat, source: preview.source, warnings,
   }),
 }));
-vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, inspectMusicXmlAnchor, changeMusicXmlAnchor, ANCHOR_TEXT_LIMIT: 160, LYRIC_VERSES: 8, STANDALONE_LYRICS_LIMIT: 20000,
+vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState, applyMusicXmlEdits, addMusicXmlNote, inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo,
+  TEMPO_LIMITS: { min: 30, max: 240 }, TUNING_LIMITS: { min: 36, max: 96 }, inspectMusicXmlAnchor, changeMusicXmlAnchor, ANCHOR_TEXT_LIMIT: 160, LYRIC_VERSES: 8, STANDALONE_LYRICS_LIMIT: 20000,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics,
   chordSpellingName: (chord: { step: string; alter: number; quality: string; bass: { step: string } | null }) => `${chord.step}${chord.alter === -1 ? '♭' : chord.alter === 1 ? '♯' : ''}${chord.quality === 'minor' ? 'm' : chord.quality === 'major' ? '' : chord.quality}${chord.bass ? `/${chord.bass.step}` : ''}`,
   inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords }));
@@ -73,7 +76,7 @@ describe('workspace application', () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); readMusicXml.mockReset(); promoteNativeScore.mockReset(); musicXmlEditorState.mockReset(); applyMusicXmlEdits.mockReset(); addMusicXmlNote.mockReset(); addMusicXmlRepeat.mockReset(); inspectMusicXmlRepeats.mockReset(); removeMusicXmlNotes.mockReset(); changeMusicXmlDuration.mockReset(); changeMusicXmlMeter.mockReset(); changeMusicXmlPickup.mockReset(); connectMusicXmlTie.mockReset(); inspectMusicXmlTie.mockReset(); removeMusicXmlTie.mockReset(); inspectMusicXmlDuration.mockReset(); inspectMusicXmlMeterRange.mockReset(); insertMusicXmlEvent.mockReset(); createMusicXmlTriplet.mockReset(); removeMusicXmlTriplet.mockReset(); inspectMusicXmlTriplet.mockReset(); insertMusicXmlMeasure.mockReset(); duplicateMusicXmlMeasure.mockReset(); deleteMusicXmlMeasure.mockReset(); sourceTabNoteRecords.mockReset(); sourceTabNoteRecords.mockReturnValue([]); inspectMusicXmlRepeats.mockReturnValue([]); inspectMusicXmlTie.mockReturnValue({ canRemove: false }); inspectMusicXmlDuration.mockReturnValue({ denominator: 4, dots: 0, rest: false }); inspectMusicXmlMeterRange.mockReturnValue({ firstMeasure: 1, lastMeasure: 2 }); inspectMusicXmlTriplet.mockReturnValue({ triplet: false, canRemove: false }); });
   afterEach(() => { addMusicXmlEndings.mockReset(); inspectMusicXmlRepeatEndings.mockReset(); inspectMusicXmlRepeatEndings.mockReturnValue(null); removeMusicXmlRepeat.mockReset(); });
-  afterEach(() => { inspectMusicXmlAnchor.mockReset(); changeMusicXmlAnchor.mockReset(); inspectMusicXmlLyrics.mockReset(); setMusicXmlLyric.mockReset(); setMusicXmlStandaloneLyrics.mockReset(); inspectMusicXmlNoteTechniques.mockReset(); inspectMusicXmlNoteTechniques.mockReturnValue({ picking: 'none', fretting: 'none', bend: 'none' }); setMusicXmlBend.mockReset(); setMusicXmlHand.mockReset(); applyMusicXmlGraceGroup.mockReset(); inspectMusicXmlGraceGroup.mockReset(); removeMusicXmlGraceGroup.mockReset(); removeMusicXmlGrace.mockReset(); });
+  afterEach(() => { inspectMusicXmlScoreSettings.mockReset(); applyMusicXmlScoreSettings.mockReset(); inspectMusicXmlTempo.mockReset(); setMusicXmlLocalTempo.mockReset(); inspectMusicXmlAnchor.mockReset(); changeMusicXmlAnchor.mockReset(); inspectMusicXmlLyrics.mockReset(); setMusicXmlLyric.mockReset(); setMusicXmlStandaloneLyrics.mockReset(); inspectMusicXmlNoteTechniques.mockReset(); inspectMusicXmlNoteTechniques.mockReturnValue({ picking: 'none', fretting: 'none', bend: 'none' }); setMusicXmlBend.mockReset(); setMusicXmlHand.mockReset(); applyMusicXmlGraceGroup.mockReset(); inspectMusicXmlGraceGroup.mockReset(); removeMusicXmlGraceGroup.mockReset(); removeMusicXmlGrace.mockReset(); });
   afterAll(() => { vi.unstubAllGlobals(); });
 
   it('sets and clears keyboard-accessible passage endpoints without editing the document', async () => {
@@ -1536,6 +1539,109 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Lyrics & chords…' }));
     expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret');
     fireEvent.click(screen.getByRole('button', { name: 'Lyric syllable…' }));
+    expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret');
+  });
+
+  it('applies title, opening tempo and tuning together and undoes them together', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, score: { ...preview.score, title: 'Imported tune',
+      tracks: [{ staves: [{ bars: [{ voices: [{ beats: [{ notes: [{ string: 3, fret: 0, id: 1 }], playbackStart: 0, graceType: 0, isRest: false }] }] }] }] }] } }));
+    inspectMusicXmlScoreSettings.mockReturnValue({ title: 'Imported tune', tempo: 96, tuning: [62, 59, 55, 50, 67], tuningRange: { first: 1, last: 2 } });
+    applyMusicXmlScoreSettings.mockImplementation((_source: string, _score: unknown, settings: { tempo: number }) => {
+      if (settings.tempo < 30) throw new Error('Opening tempo must be a whole number from 30 to 240 BPM.');
+      return { source: `<score-partwise tempo="${settings.tempo}"/>`, tuningRange: { first: 1, last: 2 } };
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('player'));
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByText('Score', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Score settings…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Score settings' });
+    expect(within(dialog).getByLabelText<HTMLInputElement>('Title').value).toBe('Imported tune');
+    expect(within(dialog).getByLabelText<HTMLInputElement>('Opening tempo').value).toBe('96');
+    expect(within(dialog).getByLabelText('String 5 note').textContent).toBe('G4');
+    expect(dialog.textContent).toContain('A tuning change would apply to measures 1–2.');
+    fireEvent.change(within(dialog).getByLabelText('Opening tempo'), { target: { value: '29' } });
+    expect(within(dialog).getByRole('alert').textContent).toContain('30 to 240 BPM');
+    expect(within(dialog).getByRole('button', { name: 'Apply settings' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText('Opening tempo'), { target: { value: '120' } });
+    fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: '  New name ' } });
+    fireEvent.change(within(dialog).getByLabelText('String 4 pitch'), { target: { value: '48' } });
+    expect(within(dialog).getByLabelText('String 4 note').textContent).toBe('C3');
+    fireEvent.click(within(dialog).getByLabelText('Keep pitches (frets change)'));
+    expect(dialog.textContent).toContain('Tuning applies to measures 1–2.');
+    expect(applyMusicXmlScoreSettings).toHaveBeenLastCalledWith(source, expect.anything(), { title: '  New name ', tempo: 120, tuning: [62, 59, 55, 48, 67], mode: 'pitches' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply settings' }));
+    expect(screen.getByText('Score settings applied. Tuning changed for measures 1–2.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'New name' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Score settings…' }));
+    fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: 'Other' } });
+    readMusicXml.mockImplementationOnce(() => { throw new Error('Settings preview could not be rendered.'); });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply settings' }));
+    expect(within(dialog).getAllByRole('alert').at(-1)!.textContent).toContain('could not be rendered');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Score settings…' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply settings' }));
+    expect(screen.getByText('Score settings applied.')).toBeTruthy();
+    inspectMusicXmlScoreSettings.mockImplementationOnce(() => { throw new Error('This score has no part to configure.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Score settings…' }));
+    expect(screen.getByRole('alert').textContent).toContain('no part to configure');
+  });
+
+  it('sets and removes a local tempo, and points the first event at Score settings', async () => {
+    const source = '<score-partwise version="4.0"><part/></score-partwise>';
+    readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, score: { ...preview.score,
+      tracks: [{ staves: [{ bars: [{ voices: [{ beats: [{ notes: [{ string: 3, fret: 0, id: 1 }], playbackStart: 0, graceType: 0, isRest: false }] }] }] }] }] } }));
+    inspectMusicXmlTempo.mockReturnValue({ local: null, inherited: 108, opening: false });
+    setMusicXmlLocalTempo.mockImplementation((_source: string, _score: unknown, _position: unknown, tempo: number | null) => `<score-partwise local="${tempo}"/>`);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response([])));
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('player')).toBeTruthy());
+    openImport();
+    selectFile('import.musicxml', source);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
+    fireEvent.click(screen.getByTestId('choose-note'));
+    fireEvent.click(screen.getByRole('button', { name: 'Set tempo here…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Set tempo here' });
+    expect(dialog.textContent).toContain('108 BPM continues here from earlier in the score.');
+    expect(within(dialog).queryByRole('button', { name: 'Remove local tempo' })).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Tempo'), { target: { value: '80' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply tempo' }));
+    expect(setMusicXmlLocalTempo).toHaveBeenLastCalledWith(source, expect.anything(), { measure: 0, beat: 0, voice: 0 }, 80);
+    expect(screen.getByText('Tempo 80 BPM set at measure 1, event 1.')).toBeTruthy();
+    inspectMusicXmlTempo.mockReturnValue({ local: 80, inherited: 108, opening: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Set tempo here…' }));
+    expect(dialog.textContent).toContain('A local tempo of 80 BPM starts here; without it, 108 BPM continues.');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove local tempo' }));
+    expect(screen.getByText('Local tempo removed at measure 1, event 1; 108 BPM continues.')).toBeTruthy();
+    setMusicXmlLocalTempo.mockImplementationOnce(() => { throw new Error('Tempo must be a whole number from 30 to 240 BPM.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Set tempo here…' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply tempo' }));
+    expect(within(dialog).getByRole('alert').textContent).toContain('30 to 240');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    inspectMusicXmlTempo.mockReturnValue({ local: 96, inherited: 120, opening: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Set tempo here…' }));
+    expect(dialog.textContent).toContain('The first event uses the opening tempo (96 BPM). Change it in Score settings.');
+    expect(within(dialog).queryByRole('button', { name: 'Apply tempo' })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    inspectMusicXmlTempo.mockImplementationOnce(() => { throw new Error('Select an ordinary event to anchor text to it.'); });
+    fireEvent.click(screen.getByRole('button', { name: 'Set tempo here…' }));
+    expect(screen.getByRole('alert').textContent).toContain('Select an ordinary event');
+    fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Set tempo here…' }));
+    expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret');
+    fireEvent.click(screen.getByText('Score', { selector: 'summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Score settings…' }));
     expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret');
   });
 
