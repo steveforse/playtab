@@ -3,43 +3,63 @@ import type { MusicXmlPreview } from '../../music/musicxml';
 import { applyMusicXmlGraceGroup, type GraceEventSpec, type GracePlacement, type GraceTransition } from '../../music/musicxml-editor';
 import { useModalDialog } from '../useModalDialog';
 
+// One side of an event: its grace group before it, or after it. A side the
+// event cannot take (for example because the source cannot be matched)
+// carries the reason instead.
+export type GraceSide = { existing: boolean; first: number; readOnly: string[]; connections: string[]; initialEvents: GraceEventSpec[] } | { unavailable: string };
 export type GraceDialogTarget = { base: MusicXmlPreview; selection: { measure: number; voice: number }; destination: number; placement: GracePlacement;
-  existing: boolean; readOnly: string[]; connections: string[]; initialEvents: GraceEventSpec[] };
+  sides: Record<GracePlacement, GraceSide> };
 
-// Add or edit the grace group before an event, or after it (an after-grace). The rewritten source is
+// Add or edit the grace group before an event, or after it (an after-grace);
+// the Position menu switches between the two groups of the same event. The rewritten source is
 // previewed live; onApply and onRemove return an error or null.
 export function GraceDialog({ target, onApply, onRemove, onClose, returnFocus }: {
-  target: GraceDialogTarget | null; onApply: (candidate: string, events: GraceEventSpec[]) => string | null; onRemove: () => string | null;
+  target: GraceDialogTarget | null; onApply: (candidate: string, events: GraceEventSpec[], placement: GracePlacement) => string | null;
+  onRemove: (placement: GracePlacement) => string | null;
   onClose: () => void; returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const ref = useModalDialog(target !== null, returnFocus);
-  const [graceEvents, setGraceEvents] = useState<GraceEventSpec[]>([]);
+  const [placement, setPlacement] = useState<GracePlacement>('before');
+  const [drafts, setDrafts] = useState<Record<GracePlacement, GraceEventSpec[]>>({ before: [], after: [] });
   const [graceError, setGraceError] = useState('');
-  useEffect(() => { if (target) { setGraceEvents(target.initialEvents); setGraceError(''); } }, [target]);
+  useEffect(() => {
+    if (!target) return;
+    const initial = (side: GraceSide) => 'unavailable' in side ? [] : side.initialEvents;
+    setPlacement(target.placement);
+    setDrafts({ before: initial(target.sides.before), after: initial(target.sides.after) });
+    setGraceError('');
+  }, [target]);
+  const graceEvents = drafts[placement];
+  const side = target?.sides[placement];
+  const group = side && !('unavailable' in side) ? side : null;
+  const setGraceEvents = (change: (current: GraceEventSpec[]) => GraceEventSpec[]) => setDrafts(current => ({ ...current, [placement]: change(current[placement]) }));
   function updateGraceEvent(eventIndex: number, change: (event: GraceEventSpec) => GraceEventSpec) {
     setGraceError('');
     setGraceEvents(current => current.map((event, index) => index === eventIndex ? change(event) : event));
   }
   const gracePreview = (() => {
-    if (!target || target.readOnly.length) return null;
+    if (!target || !group || group.readOnly.length) return null;
     try {
       return { candidate: applyMusicXmlGraceGroup(target.base.source, target.base.score,
-        { measure: target.selection.measure - 1, beat: target.destination, voice: target.selection.voice - 1 }, graceEvents, target.placement), error: '' };
+        { measure: target.selection.measure - 1, beat: target.destination, voice: target.selection.voice - 1 }, graceEvents, placement), error: '' };
     } catch (failure) { return { candidate: null, error: (failure as Error).message }; }
   })();
-  const after = target?.placement === 'after';
-  const title = `${target?.existing ? 'Edit' : 'Add'} grace group${after ? ' after' : ''}`;
+  const after = placement === 'after';
+  const title = `${group?.existing ? 'Edit' : 'Add'} grace group${after ? ' after' : ''}`;
   return (
   <dialog ref={ref} className="duplicate-dialog grace-dialog" aria-label={title}
     onCancel={event => { event.preventDefault(); onClose(); }}>
     <h2>{title}</h2>
+    {target && <label className="grace-position">Position<select aria-label="Grace position" value={placement}
+      onChange={change => { setGraceError(''); setPlacement(change.target.value as GracePlacement); }}>
+      <option value="before">Before the note</option><option value="after">After the note</option></select></label>}
     <p>{after
       ? <>After: measure {target?.selection.measure}, event {(target?.destination ?? 0) + 1}. Grace notes play at the end of it, taking their time from it, and are drawn after it (before the barline at the end of a measure).</>
       : <>Destination: measure {target?.selection.measure}, event {(target?.destination ?? 0) + 1}. Grace notes play before it without using measure time.</>}</p>
-    {!target ? null : target.readOnly.length ? <div className="grace-read-only" role="note">
+    {!target ? null : side && 'unavailable' in side ? <p className="alert" role="alert">{side.unavailable}</p> : group?.readOnly.length ? <div className="grace-read-only" role="note">
       <p>This imported grace group is read-only, so Playtab keeps it exactly as written:</p>
-      <ul>{target.readOnly.map(reason => <li key={reason}>{reason}</li>)}</ul>
-      <p>Cancel keeps it unchanged. Remove grace group deletes the whole group{target.connections.length ? ` and disconnects its ${target.connections.join(', ')}` : ''}.</p>
+      <ul>{group.readOnly.map(reason => <li key={reason}>{reason}</li>)}</ul>
+      <p>Cancel keeps it unchanged. Remove grace group deletes the whole group{group.connections.length ? ` and disconnects its ${group.connections.join(', ')}` : ''}.</p>
     </div> : <>
       {graceEvents.map((event, eventIndex) => <fieldset key={eventIndex} className="grace-event">
         <legend>Grace event {eventIndex + 1}</legend>
@@ -79,10 +99,10 @@ export function GraceDialog({ target, onApply, onRemove, onClose, returnFocus }:
     {gracePreview?.error && <p className="alert" role="alert">{gracePreview.error}</p>}
     {graceError && <p className="alert" role="alert">{graceError}</p>}
     <div className="duplicate-dialog-actions">
-      <button type="button" data-dialog-first={target?.readOnly.length ? '' : undefined} onClick={() => onClose()}>Cancel</button>
-      {target?.existing && <button type="button" onClick={() => setGraceError(onRemove() ?? '')}>Remove grace group</button>}
-      {!target?.readOnly.length && <button type="button" disabled={!gracePreview?.candidate}
-        onClick={() => { if (gracePreview?.candidate) setGraceError(onApply(gracePreview.candidate, graceEvents) ?? ''); }}>Apply grace group</button>}
+      <button type="button" data-dialog-first={!group || group.readOnly.length ? '' : undefined} onClick={() => onClose()}>Cancel</button>
+      {group?.existing && <button type="button" onClick={() => setGraceError(onRemove(placement) ?? '')}>Remove grace group</button>}
+      {group && !group.readOnly.length && <button type="button" disabled={!gracePreview?.candidate}
+        onClick={() => { if (gracePreview?.candidate) setGraceError(onApply(gracePreview.candidate, graceEvents, placement) ?? ''); }}>Apply grace group</button>}
     </div>
   </dialog>
   );
