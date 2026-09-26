@@ -43,10 +43,11 @@ module Tef2
       measure_signatures = parsed[:measure_signatures]
       capo = (parsed[:track_data] || []).map { |track| track[:capo].to_i }.max.to_i
       lyrics_text = parsed[:lyrics_text].to_s
+      instrument = (parsed[:track_data] || []).first || {}
 
       builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
         xml.send("score-partwise", version: "3.1") do
-          write_lyrics_metadata(xml, lyrics_text) unless lyrics_text.empty?
+          write_identification(xml, lyrics_text, instrument)
 
           xml.send("part-list") do
             xml.send("score-part", id: "P1") do
@@ -56,8 +57,10 @@ module Tef2
               end
               xml.send("midi-instrument", id: "P1-I1") do
                 xml.send("midi-channel", 1)
-                xml.send("midi-program", 105)  # Banjo
-                xml.send("midi-bank", 0)
+                # MusicXML program and bank numbers are one-based; TablEdit's
+                # are zero-based (105 is the General MIDI banjo).
+                xml.send("midi-program", (instrument[:midi_voice] || 105).to_i.clamp(0, 127) + 1)
+                xml.send("midi-bank", instrument[:midi_bank].to_i + 1)
               end
             end
           end
@@ -533,7 +536,7 @@ module Tef2
           end
 
           write_bend_technical(xml, note)
-          write_effect_technical(xml, note)
+          write_effect_technical(xml, note, tab: tab)
           write_modern_fingerings(xml, note) if tab
 
           # TEF2 stores these as annotation payloads rather than as fret
@@ -561,7 +564,7 @@ module Tef2
       end
     end
 
-    def self.write_effect_technical(xml, note)
+    def self.write_effect_technical(xml, note, tab: false)
       effect1 = note[:effect1].to_i
       effect2 = note[:effect2].to_i
       effect3 = note[:effect3].to_i
@@ -593,16 +596,42 @@ module Tef2
       metadata << "TEF effect1 #{effect1}" unless (0..15).cover?(effect1)
       metadata << "TEF effect2 #{low}" unless [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15 ].include?(low)
       metadata << "TEF effect3 #{effect3}" if note[:effect3] && !(0..11).cover?(effect3)
-      metadata.each { |value| xml.send("other-technical") { xml.text value } }
+      metadata.concat(tef3_note_metadata(note)) if tab && note[:modern_tabledit]
+      metadata.uniq.each { |value| xml.send("other-technical") { xml.text value } }
+    end
+
+    # TablEdit 3 note fields that Playtab does not render yet. They ride on
+    # the tab note as metadata so TEF3 export writes the same bytes back:
+    # the raw secondary effects (their rendered forms above are ambiguous or
+    # lossy), a dynamic other than TablEdit's default level 2, and a pick
+    # stroke other than none or the thumb marker.
+    def self.tef3_note_metadata(note)
+      metadata = []
+      metadata << "TEF effect2 #{note[:effect2]}" if note[:effect2].to_i.positive?
+      metadata << "TEF effect3 #{note[:effect3]}" if note[:effect3].to_i.positive?
+      metadata << "TEF dynamic #{note[:dynamic]}" if note[:dynamic] && note[:dynamic].to_i != 2
+      metadata << "TEF stroke #{note[:stroke]}" if note[:stroke].to_i > 1
+      metadata
     end
 
     # TEF2 stores its optional "LYRICS & CHORDS" page as free text rather
     # than as note-aligned lyric events. Keep it in standard MusicXML metadata
     # so the frontend can render it as a separate section below the score.
-    def self.write_lyrics_metadata(xml, lyrics_text)
+    # TablEdit clef, middle-C and 5th-string capo bytes that Playtab does not
+    # render are kept alongside it so TEF3 export can write them back.
+    def self.write_identification(xml, lyrics_text, instrument)
+      fields = {}
+      fields["playtab-lyrics"] = lyrics_text.delete("\0") unless lyrics_text.empty?
+      fields["playtab-tef-clef"] = instrument[:clef].to_s if instrument[:clef].to_i.positive?
+      fields["playtab-tef-middle-c"] = instrument[:middle_c].to_s if instrument[:middle_c].to_i.positive?
+      # The 5th-string capo byte normally equals the capo; a few files set
+      # its 0x10 bit as well (meaning unknown), so keep any other value.
+      fields["playtab-tef-banjo5"] = instrument[:banjo5].to_s if instrument[:banjo5] && instrument[:banjo5].to_i != instrument[:capo].to_i
+      return if fields.empty?
+
       xml.identification do
         xml.miscellaneous do
-          xml.send("miscellaneous-field", name: "playtab-lyrics") { xml.text lyrics_text.delete("\0") }
+          fields.each { |name, value| xml.send("miscellaneous-field", name: name) { xml.text value } }
         end
       end
     end

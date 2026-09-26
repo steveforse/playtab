@@ -22,7 +22,9 @@ export function protectedNoteAttachment(note: Element): string | null {
   const inspect = (parent: Element): string | null => {
     for (const item of children(parent)) {
       if (!allowed[parent.localName]?.has(item.localName)) return item.localName;
-      if (item.localName === 'other-technical' && !/TEF fingering\s+(?:T|Thumb)$/i.test(text(item))) return item.localName;
+      // The note's own TEF3 fields (dynamic, pick stroke, raw secondary
+      // effects) go with it; other metadata may describe something else.
+      if (item.localName === 'other-technical' && !/^TEF (?:fingering\s+(?:T|Thumb)|dynamic \d+|stroke \d+|effect[23] \d+)$/i.test(text(item).trim())) return item.localName;
       if (allowed[item.localName]) {
         const nested = inspect(item);
         if (nested) return nested;

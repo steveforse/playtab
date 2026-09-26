@@ -125,6 +125,66 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert note[:tuplet]
   end
 
+  test "round trips TEF3 note and instrument fields through import and export" do
+    notes = [
+      { string: 0, fret: 2, dynamic: 5, stroke: 6, effect2: 4 },
+      { string: 1, fret: 3, effect3: 6 },
+      { string: 2, fret: 0, effect1: 6, effect3: 12 },
+      { string: 3, fret: 5, effect2: 7, grace: true, grace_fret: 3, grace_effect: 2 },
+      { string: 4, fret: 7, dynamic: 0 },
+      { string: 0, fret: 4, effect1: 11, fingering: "T" }
+    ].each_with_index.map do |note, index|
+      { measure: 0, position: index * 128, duration: 128, effect1: 0, effect2: 0, effect3: 0, dynamic: 2, stroke: 0, tie: false, grace: false }.merge(note)
+    end
+    source = Tef2::Exporter::Model.new(
+      title: "Fields", tempo: 100, tuning: [ 62, 59, 55, 50, 67 ], measures: [ { numerator: 4, denominator: 4 } ],
+      notes: notes, texts: [], chords: [], lyrics: nil, warnings: [],
+      instrument: { midi_voice: 25, midi_bank: 1, capo: 2, banjo5: 18, clef: 1, middle_c: 3 }
+    )
+    original = Tef2::TableditV3Parser.parse(Tef2::Exporter::TableditWriter.build(source))
+    imported = Tef2.convert(Tef2::Exporter::TableditWriter.build(source))
+    assert_includes imported[:warnings], "Native Ruby TablEdit 3.00 conversion"
+
+    result = Tef2::Exporter.export({ "version" => 2, "title" => "Fields", "source" => imported[:musicxml] }, version: "tef3")
+    exported = Tef2::TableditV3Parser.parse(result[:bytes])
+    fields = %i[string fret dynamic stroke effect1 effect2 effect3 grace grace_note_fret grace_note_effect fingerings tie]
+    assert_equal original[:notes].map { |note| note.slice(*fields) }, exported[:notes].map { |note| note.slice(*fields) }
+    instrument = %i[midi_voice midi_bank capo banjo5 clef middle_c output]
+    assert_equal original[:track_data].first.slice(*instrument), exported[:track_data].first.slice(*instrument)
+    assert_equal({ midi_voice: 25, midi_bank: 1, capo: 2, banjo5: 18, clef: 1, middle_c: 3, output: 0x0710 }, exported[:track_data].first.slice(*instrument))
+    assert_equal [ 5, 6, 4 ], original[:notes].first.values_at(:dynamic, :stroke, :effect2)
+    refute original[:notes].first[:tie], "a dynamic above 3 is not a tie"
+    refute_includes result[:warnings], "Some MusicXML techniques are not represented in the selected TEF export."
+    assert_empty exported[:texts]
+  end
+
+  test "reads the capo element, program and graces from MusicXML that did not come from TEF" do
+    grace = '<note><grace slash="yes"/><pitch><step>A</step><octave>3</octave></pitch><voice>1</voice><notations><technical><string>3</string><fret>2</fret></technical></notations></note>'
+    after = '<note><grace slash="yes" steal-time-previous="25"/><pitch><step>A</step><octave>3</octave></pitch><voice>1</voice><notations><technical><string>1</string><fret>2</fret></technical></notations></note>'
+    main = ->(string, fret, extra = "") { "<note><pitch><step>G</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice>#{extra}<notations><technical><string>#{string}</string><fret>#{fret}</fret></technical></notations></note>" }
+    source = <<~XML
+      <score-partwise><part-list><score-part id="P1"><part-name>Banjo</part-name><score-instrument id="P1-I1"><instrument-name>Banjo</instrument-name></score-instrument><midi-instrument id="P1-I1"><midi-program>26</midi-program></midi-instrument></score-part></part-list>
+      <part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><staff-details><capo>3</capo></staff-details></attributes>
+      #{grace}#{main.("3", 4)}#{main.("5", 0, '<notehead parentheses="yes">normal</notehead>')}#{main.("1", 0)}#{after}#{main.("2", 1)}</measure></part></score-partwise>
+    XML
+    result = Tef2::Exporter.export({ "version" => 2, "title" => "Other", "source" => source }, version: "tef3")
+    parsed = Tef2::TableditV3Parser.parse(result[:bytes])
+    assert_equal [ 3, 25 ], parsed[:track_data].first.values_at(:capo, :midi_voice)
+    assert_equal [ [ 2, 4, true, 2, 0, 2 ], [ 4, 3, false, 0, 4, 2 ], [ 0, 0, false, 0, 0, 2 ], [ 1, 1, false, 0, 0, 2 ] ],
+      parsed[:notes].map { |note| [ note[:string], note[:fret], note[:grace], note[:grace] ? note[:grace_note_fret] : 0, note[:effect2], note[:dynamic] ] }
+    assert_includes result[:warnings], "Some grace notes are not represented: TablEdit keeps one grace note before a note on the same string."
+
+    legacy = source.sub("<midi-program>26</midi-program>", "<midi-program>105</midi-program>").sub("<capo>3</capo>", "")
+      .sub("<attributes>", "<direction><direction-type><words>Capo 2</words></direction-type></direction><attributes>")
+      .sub("</part-list>", '</part-list><identification><miscellaneous><miscellaneous-field name="playtab-fifth-string-capo">9</miscellaneous-field></miscellaneous></identification>')
+    result = Tef2::Exporter.export({ "version" => 2, "title" => "Other", "source" => legacy }, version: "tef3")
+    parsed = Tef2::TableditV3Parser.parse(result[:bytes])
+    assert_equal [ 2, 105 ], parsed[:track_data].first.values_at(:capo, :midi_voice)
+    assert_empty parsed[:texts]
+    assert_equal 2, parsed[:notes][1][:fret], "5th-string frets are written absolute"
+    assert_includes result[:warnings], "The 5th-string capo is written at capo + 5; fret 9 is not represented."
+  end
+
   test "reports malformed documents and TEF2 limits" do
     assert_raises(Tef2::Exporter::Invalid) { Tef2::Exporter::Model.from(nil) }
     assert_raises(Tef2::Exporter::Invalid) { Tef2::Exporter::Model.from_native({ "version" => 2 }) }

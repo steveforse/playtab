@@ -242,7 +242,8 @@ module Tef2
             note_attributes: byte8,
             attributes: (byte3 >> 4) & 0x03,
             annotation: nil,
-            tie: (byte8 & 0x02) != 0 || (byte2 & 0x80) != 0,
+            # Byte 2's top bit belongs to the three-bit dynamic, not the tie.
+            tie: (byte8 & 0x02) != 0,
             grace: (byte1 & 0x40) != 0,
             voice: (((byte3 >> 4) & 0x03) == 3 ? 2 : 1)
           }

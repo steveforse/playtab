@@ -99,6 +99,14 @@ describe('MusicXML score editing', () => {
     const protectedPreview = readMusicXml(protectedSource, 'unknown.musicxml');
     expect(() => removeMusicXmlNotes(protectedSource, protectedPreview.score, { measure: 0, beat: 0, voice: 0 }))
       .toThrow('protected tap attachment');
+
+    const ownFields = source.replace('<hammer-on type="start">H</hammer-on>', '<other-technical>TEF dynamic 5</other-technical><other-technical>TEF effect2 4</other-technical>')
+      .replace('<hammer-on type="stop"/>', '');
+    const ownPreview = readMusicXml(ownFields, 'tef3.musicxml');
+    expect(removeMusicXmlNotes(ownFields, ownPreview.score, { measure: 0, beat: 0, voice: 0 })!.source).not.toContain('TEF dynamic 5');
+    const otherMetadata = ownFields.replace('TEF effect2 4', 'TEF grace effect 3');
+    expect(() => removeMusicXmlNotes(otherMetadata, readMusicXml(otherMetadata, 'tef3.musicxml').score, { measure: 0, beat: 0, voice: 0 }))
+      .toThrow('protected other-technical attachment');
   });
 
   it.skipIf(!process.env.PLAYTAB_STORED_WELLERMAN)('preserves every local Wellerman three-note chord through two-digit entry', () => {
