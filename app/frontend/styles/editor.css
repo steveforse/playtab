@@ -124,18 +124,6 @@
   background: #faf4f0;
   color: #78462f;
 }
-.editor-event-tools {
-  margin-top: 8px;
-}
-.editor-event-tools button {
-  width: 100%;
-  min-height: 32px;
-  border: 1px solid var(--edge);
-  border-radius: 4px;
-  background: var(--surface-soft);
-  color: var(--ink);
-  padding: 6px 10px;
-}
 .removal-dialog {
   width: min(360px,calc(100vw - 32px));
   border: 1px solid var(--edge);
@@ -227,7 +215,7 @@
   font-size: 11px;
   line-height: 1.4;
 }
-.editor-insert-event {
+.editor-insert-beat {
   width: 100%;
   margin-top: 6px;
 }
@@ -455,19 +443,19 @@
   overflow: auto;
 }
 .grace-dialog>label,
-.grace-event>label {
+.grace-beat>label {
   display: grid;
   gap: 5px;
   font-size: 12px;
   margin-bottom: 8px;
 }
-.grace-event {
+.grace-beat {
   border: 1px solid #d6e0cf;
   border-radius: 6px;
   margin: 12px 0;
   padding: 8px 12px 12px;
 }
-.grace-event legend {
+.grace-beat legend {
   font-size: 12px;
   font-weight: 600;
   padding: 0 4px;
@@ -494,13 +482,13 @@
   color: var(--ink);
   padding: 5px;
 }
-.grace-event-actions {
+.grace-beat-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
-.grace-dialog .grace-event button,
-.grace-add-event {
+.grace-dialog .grace-beat button,
+.grace-add-beat {
   min-height: 32px;
   border: 1px solid var(--edge);
   border-radius: 4px;

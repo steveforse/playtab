@@ -130,7 +130,7 @@ describe('notation player', () => {
   });
 
   it('disables new audition while updating but keeps Pause and Restart operable', () => {
-    const selection = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+    const selection = { noteId: null, track: 1, staff: 1, measure: 1, beat: 1, voice: 1,
       string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
     const { rerender } = render(<Player score={demo} editing selection={selection} />);
     const api = alphaTab.FakeAlphaTabApi.latest;
@@ -149,7 +149,7 @@ describe('notation player', () => {
   });
 
   it('auditions and clears a written range without replacing normal MIDI when there are no repeats', () => {
-    const selection = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+    const selection = { noteId: null, track: 1, staff: 1, measure: 1, beat: 1, voice: 1,
       string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
     render(<Player score={demo} editing selection={selection} />);
     const api = alphaTab.FakeAlphaTabApi.latest;
@@ -160,7 +160,7 @@ describe('notation player', () => {
     expect(api.tickPosition).toBe(0);
     expect(api.play).toHaveBeenCalledOnce();
     expect(api.player.loadMidiFile).not.toHaveBeenCalled();
-    expect(screen.getByText('Playing range: M1 E1–M1 E1')).toBeTruthy();
+    expect(screen.getByText('Playing range: M1 B1–M1 B1')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Clear playback range' }));
     expect(api.playbackRange).toBeNull();
     expect(api.loadMidiForScore).not.toHaveBeenCalled();
@@ -168,7 +168,7 @@ describe('notation player', () => {
 
   it('loads linear MIDI for repeats, restores full-score MIDI on clear, and retains the range after an edit', () => {
     audition.scoreHasRepeats.mockReturnValueOnce(true).mockReturnValueOnce(true);
-    const selection = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+    const selection = { noteId: null, track: 1, staff: 1, measure: 1, beat: 1, voice: 1,
       string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
     const { rerender } = render(<Player score={demo} editing selection={selection} />);
     const api = alphaTab.FakeAlphaTabApi.latest;
@@ -188,7 +188,7 @@ describe('notation player', () => {
   });
 
   it('projects and removes a blue written-passage overlay independently of note selection', () => {
-    const endpoint = { noteId: null, track: 1, staff: 1, measure: 1, event: 1, voice: 1,
+    const endpoint = { noteId: null, track: 1, staff: 1, measure: 1, beat: 1, voice: 1,
       string: 3, fret: 0, kind: 'note' as const, graceIndex: null, graceGroupId: null };
     const { rerender } = render(<Player score={demo} editing passage={{ start: endpoint, end: endpoint }} />);
     const api = alphaTab.FakeAlphaTabApi.latest;
@@ -216,8 +216,8 @@ describe('notation player', () => {
       voice: { index: 0, beats: [], bar: { index: 0, staff: { index: 0, track: { index: 0 } } } },
     } as any;
     const note = { id: 42, string: 3, fret: 2, beat } as any;
-    expect(selectionFromNote(note)).toMatchObject({ noteId: 42, measure: 1, event: 2, voice: 1, string: 3, fret: 2, kind: 'note' });
-    expect(selectionFromBeat({ ...beat, isRest: true } as any)).toMatchObject({ measure: 1, event: 2, voice: 1, string: null, kind: 'rest' });
+    expect(selectionFromNote(note)).toMatchObject({ noteId: 42, measure: 1, beat: 2, voice: 1, string: 3, fret: 2, kind: 'note' });
+    expect(selectionFromBeat({ ...beat, isRest: true } as any)).toMatchObject({ measure: 1, beat: 2, voice: 1, string: null, kind: 'rest' });
   });
 
   it('emits note and empty-beat selections only in edit mode', () => {
@@ -230,12 +230,12 @@ describe('notation player', () => {
     } as any;
     const note = { id: 7, string: 5, fret: 0, beat: { ...beat, isRest: false, notes: [{}] } } as any;
     act(() => api.noteMouseDown.emit(note));
-    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ noteId: 7, string: 1, measure: 1, event: 1 }));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ noteId: 7, string: 1, measure: 1, beat: 1 }));
     act(() => api.beatMouseDown.emit(beat));
     expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ kind: 'rest', string: null }));
   });
 
-  it('navigates to the next event while retaining the selected string', () => {
+  it('navigates to the next beat while retaining the selected string', () => {
     const onSelectionChange = vi.fn();
     const bar = { index: 0, staff: { index: 0, track: { index: 0 } } } as any;
     const voice = { index: 0, beats: [], bar } as any;
@@ -251,7 +251,7 @@ describe('notation player', () => {
     const api = alphaTab.FakeAlphaTabApi.latest;
     (api as any).score = scoreModel;
     fireEvent.keyDown(screen.getByTestId('notation'), { key: 'ArrowRight' });
-    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 2, string: 3, fret: 2 }));
+    expect(onSelectionChange).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, beat: 2, string: 3, fret: 2 }));
   });
 
   it('extends, selects all and clears an editing range from the keyboard', () => {
@@ -275,20 +275,20 @@ describe('notation player', () => {
     (api as any).score = { tracks: [{ staves: [{ bars }] }] };
     const notation = screen.getByTestId('notation');
     fireEvent.keyDown(notation, { key: 'ArrowRight', shiftKey: true });
-    expect(onPassageChange).toHaveBeenLastCalledWith({ start: expect.objectContaining({ measure: 1, event: 1 }), end: expect.objectContaining({ measure: 1, event: 2 }) });
-    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, event: 2 }));
+    expect(onPassageChange).toHaveBeenLastCalledWith({ start: expect.objectContaining({ measure: 1, beat: 1 }), end: expect.objectContaining({ measure: 1, beat: 2 }) });
+    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, beat: 2 }));
     const second = onSelectionChange.mock.lastCall![0];
     rerender(<Player score={demo} editing selection={second} passage={onPassageChange.mock.lastCall![0]} onSelectionChange={onSelectionChange} onPassageChange={onPassageChange} />);
     fireEvent.keyDown(notation, { key: 'ArrowRight', shiftKey: true, ctrlKey: true });
-    expect(onPassageChange).toHaveBeenLastCalledWith({ start: expect.objectContaining({ measure: 1, event: 1 }), end: expect.objectContaining({ measure: 2, event: 2 }) });
+    expect(onPassageChange).toHaveBeenLastCalledWith({ start: expect.objectContaining({ measure: 1, beat: 1 }), end: expect.objectContaining({ measure: 2, beat: 2 }) });
     const last = onSelectionChange.mock.lastCall![0];
     rerender(<Player score={demo} editing selection={last} passage={onPassageChange.mock.lastCall![0]} onSelectionChange={onSelectionChange} onPassageChange={onPassageChange} />);
     fireEvent.keyDown(notation, { key: 'ArrowLeft', shiftKey: true, metaKey: true });
-    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 2, event: 1 }));
+    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 2, beat: 1 }));
     fireEvent.keyDown(notation, { key: 'Escape' });
     expect(onPassageChange).toHaveBeenLastCalledWith(null);
     fireEvent.keyDown(notation, { key: 'a', ctrlKey: true });
-    expect(onPassageChange).toHaveBeenLastCalledWith({ start: expect.objectContaining({ measure: 1, event: 1 }), end: expect.objectContaining({ measure: 2, event: 2 }) });
+    expect(onPassageChange).toHaveBeenLastCalledWith({ start: expect.objectContaining({ measure: 1, beat: 1 }), end: expect.objectContaining({ measure: 2, beat: 2 }) });
   });
 
   it('selects an empty staff string from a point inside a beat', () => {
@@ -317,11 +317,11 @@ describe('notation player', () => {
     const onSelection = vi.fn();
     const detach = createEditingStaffInteractionHandler(root, api as any, 'continuous', onSelection);
     fireEvent.mouseDown(root, { button: 0, clientX: 20, clientY: 20 });
-    expect(onSelection).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, event: 1, string: 3, kind: 'empty' }), false, 'event');
+    expect(onSelection).toHaveBeenCalledWith(expect.objectContaining({ measure: 1, beat: 1, string: 3, kind: 'empty' }), false, 'beat');
     fireEvent.mouseMove(window, { clientX: 24, clientY: 20, buttons: 1 });
     expect(onSelection).toHaveBeenCalledTimes(1);
     fireEvent.mouseMove(window, { clientX: 35, clientY: 20, buttons: 1 });
-    expect(onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, event: 1, string: 3, kind: 'empty' }), true, 'event');
+    expect(onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, beat: 1, string: 3, kind: 'empty' }), true, 'beat');
     fireEvent.mouseUp(window);
     const count = onSelection.mock.calls.length;
     detach();
@@ -352,7 +352,7 @@ describe('notation player', () => {
       const detach = createEditingStaffInteractionHandler(root, api as any, 'continuous', vi.fn(), onContext, () => keyboard);
       const menu = (init: MouseEventInit) => { const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ...init }); root.dispatchEvent(event); return event; };
       expect(menu({ button: 2, clientX: 20, clientY: 20 }).defaultPrevented).toBe(true);
-      expect(onContext).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, event: 1 }), 'event', 20, 20);
+      expect(onContext).toHaveBeenLastCalledWith(expect.objectContaining({ measure: 1, beat: 1 }), 'beat', 20, 20);
       expect(menu({ button: 0, clientX: 0, clientY: 0 }).defaultPrevented).toBe(false);
       keyboard = true;
       expect(menu({ button: 0, clientX: 0, clientY: 0 }).defaultPrevented).toBe(true);
@@ -376,7 +376,7 @@ describe('notation player', () => {
       pointer('pointerdown', 40, 40);
       keyboard = false;
       expect(menu({ button: 0, clientX: 40, clientY: 40 }).defaultPrevented).toBe(true);
-      expect(onContext).toHaveBeenLastCalledWith(expect.anything(), 'event', 40, 40);
+      expect(onContext).toHaveBeenLastCalledWith(expect.anything(), 'beat', 40, 40);
       pointer('pointerup', 40, 40);
       detach();
       root.remove();
@@ -403,7 +403,7 @@ describe('notation player', () => {
     const onSelection = vi.fn();
     const detach = createEditingStaffInteractionHandler(root, api as any, 'continuous', onSelection);
     fireEvent.mouseDown(root, { button: 0, clientX: 20, clientY: 20, shiftKey: true });
-    expect(onSelection).toHaveBeenCalledWith(expect.objectContaining({ measure: 2, event: 1, string: null }), true, 'measure');
+    expect(onSelection).toHaveBeenCalledWith(expect.objectContaining({ measure: 2, beat: 1, string: null }), true, 'measure');
     detach();
   });
 
@@ -412,7 +412,7 @@ describe('notation player', () => {
     const onFretKey = vi.fn((_: unknown, key: string) => consumed.has(key));
     const onSelectionDelete = vi.fn();
     const onBeforeNavigate = vi.fn(() => false);
-    const initial = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null } as any;
+    const initial = { track: 1, staff: 1, measure: 1, beat: 1, voice: 1, string: 3, fret: 0, kind: 'note', noteId: 1, graceIndex: null, graceGroupId: null } as any;
     const onSelection = vi.fn();
     render(<Player score={demo} editing selection={initial} onFretKey={onFretKey} onBeforeNavigate={onBeforeNavigate} onSelectionChange={onSelection} onSelectionDelete={onSelectionDelete} />);
     const notation = screen.getByTestId('notation');
@@ -834,7 +834,7 @@ describe('notation player', () => {
     document.body.appendChild(sidebarHost);
     const hosts = { transport: document.createElement('div'), view: document.createElement('div'), export: document.createElement('div') };
     Object.values(hosts).forEach(host => document.body.appendChild(host));
-    const selection = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note' as const, noteId: 1, graceIndex: null, graceGroupId: null };
+    const selection = { track: 1, staff: 1, measure: 1, beat: 1, voice: 1, string: 3, fret: 0, kind: 'note' as const, noteId: 1, graceIndex: null, graceGroupId: null };
     const onPreferencesChange = vi.fn();
     const { rerender } = render(<Player score={demo} editing selection={selection} editChrome={hosts} onPreferencesChange={onPreferencesChange} />);
     const api = alphaTab.FakeAlphaTabApi.latest;

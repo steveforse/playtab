@@ -10,7 +10,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlEvent,
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlBeat,
   type ChordSpelling } from '../../../app/frontend/music/musicxml-editor';
 
 import './support';
@@ -50,7 +50,7 @@ describe('ED-21 blank scores', () => {
     expect(current().tracks[0].staves[0].bars[0].voices[0].beats.map(beat => beat.duration)).toEqual([4, 2, 4]);
     source = addMusicXmlNote(source, current(), { measure: 0, beat: 0, voice: 0, string: 4, fret: 0 });
     source = addMusicXmlNote(source, current(), { measure: 0, beat: 1, voice: 0, string: 4, fret: 2 });
-    source = insertMusicXmlEvent(source, current(), { measure: 0, beat: 1, voice: 0, placement: 'after', kind: 'note', denominator: 4, dotted: false, string: 3, fret: 0 });
+    source = insertMusicXmlBeat(source, current(), { measure: 0, beat: 1, voice: 0, placement: 'after', kind: 'note', denominator: 4, dotted: false, string: 3, fret: 0 });
     source = insertMusicXmlMeasure(source, current(), 1, 'after');
     source = connectMusicXmlTransition(source, current(), 'hammer-on', { measure: 0, beat: 0, voice: 1, string: 4, fret: 0 }, { measure: 0, beat: 1, voice: 1, string: 4, fret: 2 });
     const after = current();
@@ -62,7 +62,7 @@ describe('ED-21 blank scores', () => {
 });
 
 describe('ED-22 exports carry the current draft', () => {
-  it('reimports an edited MusicXML export to the same events and plays the corrected pitch in MIDI', () => {
+  it('reimports an edited MusicXML export to the same beats and plays the corrected pitch in MIDI', () => {
     const source = fs.readFileSync('tests/fixtures/editor-tie.musicxml', 'utf8');
     const original = readMusicXml(source, 'tie.musicxml');
     const state = musicXmlEditorState(source, original.score);

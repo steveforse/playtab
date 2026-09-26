@@ -33,12 +33,12 @@ describe('technique playback contract', () => {
     expect(transitions[0].value).toBeGreaterThan(2_147_483_648);
     expect(transitions[1].value).toBeLessThan(2_147_483_648);
   });
-  it('emits changing pitch events for imported bends', () => {
+  it('emits changing pitch beats for imported bends', () => {
     const bent = plain.replace('</technical>', '<bend><bend-alter>1</bend-alter></bend></technical>');
     const pitch = events(bent).filter((e): e is midi.NoteBendEvent => e instanceof midi.NoteBendEvent);
     expect(new Set(pitch.map(e => e.value)).size).toBeGreaterThan(2);
   });
-  it('emits changing pitch events for imported slides', () => {
+  it('emits changing pitch beats for imported slides', () => {
     let index = 0;
     const slide = plain.replace(/<\/notations>/g, end => ++index === 1 ? '<slide type="start" number="1"/>' + end : index === 2 ? '<slide type="stop" number="1"/>' + end : end);
     const pitch = events(slide).filter((e): e is midi.NoteBendEvent => e instanceof midi.NoteBendEvent);

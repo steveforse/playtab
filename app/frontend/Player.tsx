@@ -36,7 +36,7 @@ export type ScoreSelection = {
   track: number;
   staff: number;
   measure: number;
-  event: number;
+  beat: number;
   voice: number;
   string: number | null;
   fret: number | null;
@@ -45,13 +45,13 @@ export type ScoreSelection = {
   graceGroupId: string | null;
   mappingReason?: string;
   sourceId?: string;
-  sourceEventId?: string;
+  sourceBeatId?: string;
   sourceMeasureId?: string;
 };
 
 type SelectionTarget = { selection: ScoreSelection; beat: model.Beat; note: model.Note | null };
 
-function beatEventNumber(beat: model.Beat) {
+function beatNumberOf(beat: model.Beat) {
   if (Number.isInteger(beat.index) && beat.index >= 0) return beat.index + 1;
   return Math.max(1, beat.voice.beats.indexOf(beat) + 1);
 }
@@ -63,7 +63,7 @@ function locationForBeat(beat: model.Beat) {
     track: staff.track.index + 1,
     staff: staff.index + 1,
     measure: bar.index + 1,
-    event: beatEventNumber(beat),
+    beat: beatNumberOf(beat),
     voice: beat.voice.index + 1,
     graceIndex: Number(beat.graceType ?? 0) === 0 ? null : beat.graceIndex,
     graceGroupId: beat.graceGroup?.id ?? null,
@@ -120,7 +120,7 @@ export function buildSelectionTargets(score: model.Score): SelectionTarget[] {
 }
 
 function sameLocation(a: ScoreSelection, b: ScoreSelection) {
-  return a.track === b.track && a.staff === b.staff && a.measure === b.measure && a.event === b.event && a.voice === b.voice && a.graceIndex === b.graceIndex;
+  return a.track === b.track && a.staff === b.staff && a.measure === b.measure && a.beat === b.beat && a.voice === b.voice && a.graceIndex === b.graceIndex;
 }
 
 function sameSelectionIdentity(a: ScoreSelection, b: ScoreSelection) {
@@ -144,13 +144,13 @@ export function resolveSelectionTarget(score: model.Score, selection: ScoreSelec
 }
 
 function selectionSortKey(selection: ScoreSelection) {
-  return [selection.track, selection.staff, selection.measure, selection.event, selection.voice, selection.graceIndex ?? -1];
+  return [selection.track, selection.staff, selection.measure, selection.beat, selection.voice, selection.graceIndex ?? -1];
 }
 
-// Whether an event lies inside a range, whichever string was clicked.
+// Whether a beat lies inside a range, whichever string was clicked.
 function withinRange(range: PlaybackEndpoints | null, selection: ScoreSelection) {
   if (!range) return false;
-  const at = (item: ScoreSelection) => [item.measure, item.event] as const;
+  const at = (item: ScoreSelection) => [item.measure, item.beat] as const;
   const before = (a: readonly [number, number], b: readonly [number, number]) => a[0] < b[0] || a[0] === b[0] && a[1] <= b[1];
   return before(at(range.start), at(selection)) && before(at(selection), at(range.end));
 }
@@ -368,7 +368,7 @@ function editingStringAtY(lookup: NonNullable<AlphaTabApi['boundsLookup']>, beat
   return clampTabString((y - rows.top) / rows.spacing + 1);
 }
 
-export type SelectionScope = 'event' | 'measure';
+export type SelectionScope = 'beat' | 'measure';
 export type EditChromeHosts = { transport: HTMLElement | null; view: HTMLElement | null; export: HTMLElement | null };
 export type ContextMenuRequest = { x: number; y: number; scope: SelectionScope | 'range' };
 export type PlayerControls = { playFrom: () => void; playSelection: () => void; canPlay: boolean };
@@ -386,21 +386,21 @@ export function createEditingStaffInteractionHandler(root: HTMLElement, api: Alp
     const note = lookup.getNoteAtPos(beat, point.x, point.y);
     if (note) {
       const source = note as model.Note & { playtabMappingReason?: string };
-      return { selection: selectionFromNote(note, source.playtabMappingReason), scope: 'event' };
+      return { selection: selectionFromNote(note, source.playtabMappingReason), scope: 'beat' };
     }
     // Above the top staff (the measure number and tempo zone) selects the
     // whole measure, like clicking a measure in other notation editors.
     const staffTop = beatBounds.barBounds?.masterBarBounds?.bars?.[0]?.visualBounds.y;
     if (staffTop !== undefined && point.y < staffTop - 2) return { selection: selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', null), scope: 'measure' };
     const string = editingStringAtY(lookup, beat, point.y);
-    return { selection: selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string), scope: 'event' };
+    return { selection: selectionFromBeat(beat, beat.isRest ? 'rest' : 'empty', string), scope: 'beat' };
   };
   const onMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return;
     const hit = hitAt(event);
     if (!hit) return;
     event.preventDefault();
-    // Resolve populated note heads here as well as through alphaTab's event.
+    // Resolve populated note heads here as well as through alphaTab's beat.
     // SVG glyphs (clefs, stems, and labels) can sit above a note's text in the
     // DOM, so relying only on alphaTab's noteMouseDown event leaves real mouse
     // clicks unable to select an otherwise valid note.
@@ -773,7 +773,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     };
     const detachNoteMouseDown = instance.noteMouseDown?.on(selectNote);
     const detachBeatMouseDown = instance.beatMouseDown?.on(selectBeat);
-    const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, (selection, extend, scope = 'event') => {
+    const detachEditingStaffInteraction = createEditingStaffInteractionHandler(element.current!, instance, scoreView, (selection, extend, scope = 'beat') => {
       staffHandledAt = Date.now();
       if (editingRef.current) {
         element.current?.focus({ preventScroll: true });
@@ -788,7 +788,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       if (!editingRef.current || !contextMenuRef.current) return false;
       element.current?.focus({ preventScroll: true });
       const passage = passageRef.current;
-      if (withinRange(passage, selection) && scope === 'event') { contextMenuRef.current({ x, y, scope: 'range' }); return true; }
+      if (withinRange(passage, selection) && scope === 'beat') { contextMenuRef.current({ x, y, scope: 'range' }); return true; }
       if (scope === 'measure') {
         const span = measureSpan(selection);
         if (!span) return false;
@@ -904,7 +904,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   });
 
   // Draws a range as one band per system row spanning the staff height,
-  // like alphaTab's playback highlight, and outlines its first and last events.
+  // like alphaTab's playback highlight, and outlines its first and last beats.
   function renderRangeOverlay(endpoints: PlaybackEndpoints | null, className: string, endpointClass?: string) {
     const root = element.current;
     if (!root) return;
@@ -1082,7 +1082,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     selectionCallbackRef.current?.(next);
   }
 
-  function selectAllEvents() {
+  function selectAllBeats() {
     const events = voiceLocations(selectionRef.current?.voice ?? 1);
     if (!events.length) return;
     const all = { start: events[0], end: events[events.length - 1] };
@@ -1103,14 +1103,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const current = selectionRef.current;
     const targets = selectionTargetsForNavigation();
     if (targets.length === 0) return;
-    // A keyboard-only user starts from the first event of the score.
+    // A keyboard-only user starts from the first beat of the score.
     if (!current) { selectionCallbackRef.current?.(targets[0].selection); return; }
-    const sameEvent = (target: SelectionTarget) => sameLocation(target.selection, current);
+    const sameBeat = (target: SelectionTarget) => sameLocation(target.selection, current);
     if (direction === 'up' || direction === 'down') {
       const currentString = current.string ?? 1;
       const nextString = Math.max(1, Math.min(5, currentString + (direction === 'up' ? -1 : 1)));
-      const candidates = targets.filter(target => sameEvent(target) && target.selection.string === nextString);
-      const nearest = candidates[0] ?? targets.filter(target => sameEvent(target) && target.selection.string !== null)
+      const candidates = targets.filter(target => sameBeat(target) && target.selection.string === nextString);
+      const nearest = candidates[0] ?? targets.filter(target => sameBeat(target) && target.selection.string !== null)
         .sort((a, b) => Math.abs((a.selection.string ?? 1) - nextString) - Math.abs((b.selection.string ?? 1) - nextString))[0];
       selectionCallbackRef.current?.(nearest?.selection ?? { ...current, noteId: null, fret: null, string: nextString, kind: 'empty' });
       return;
@@ -1134,7 +1134,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const command = Boolean(event.ctrlKey || event.metaKey);
     if (command && key === 'a' && !event.shiftKey) {
       event.preventDefault();
-      selectAllEvents();
+      selectAllBeats();
       return;
     }
     if (key === 'contextmenu' || (event.shiftKey && key === 'f10')) {
@@ -1145,7 +1145,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
         ?? element.current?.getBoundingClientRect();
       const current = selectionRef.current;
       const passage = passageRef.current;
-      contextMenuRef.current({ x: anchor ? anchor.left + anchor.width / 2 : 0, y: anchor ? anchor.bottom : 0, scope: withinRange(passage, current) ? 'range' : 'event' });
+      contextMenuRef.current({ x: anchor ? anchor.left + anchor.width / 2 : 0, y: anchor ? anchor.bottom : 0, scope: withinRange(passage, current) ? 'range' : 'beat' });
       return;
     }
     if (event.shiftKey && (key === 'arrowleft' || key === 'arrowright')) {
@@ -1227,7 +1227,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const endpoints = passage ?? (selection ? { start: selection, end: selection } : null);
     if (!instance?.score || !endpoints || !ready || updatingScore) return;
     const ticks = writtenPlaybackRange(instance.score, endpoints);
-    if (!ticks) { setError('The selected passage cannot be mapped to playable score events.'); return; }
+    if (!ticks) { setError('The selected passage cannot be mapped to playable score beats.'); return; }
     if (playing) instance.stop();
     usingLinearMidi.current = scoreHasRepeats(instance.score);
     if (usingLinearMidi.current) instance.player?.loadMidiFile(linearAuditionMidi(instance.score));
@@ -1238,13 +1238,13 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     setPlaybackMessage('');
     instance.play();
   }
-  // Plays from the selected event to the end of the score.
+  // Plays from the selected beat to the end of the score.
   function playFrom() {
     const instance = api.current;
     const current = selectionRef.current;
     if (!instance?.score || !current || !ready || updatingScore) return;
     const ticks = writtenPlaybackRange(instance.score, { start: current, end: current });
-    if (!ticks) { setError('The selected event cannot be mapped to a playable position.'); return; }
+    if (!ticks) { setError('The selected beat cannot be mapped to a playable position.'); return; }
     if (playing) instance.stop();
     clearPlaybackRange();
     instance.tickPosition = ticks.startTick;
@@ -1290,14 +1290,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
       </select>
     </label>;
   const playSelectionDisabled = !selection || !ready || updatingScore || Boolean(error);
-  const playingRange = playbackEndpoints && `M${playbackEndpoints.start.measure} E${playbackEndpoints.start.event}–M${playbackEndpoints.end.measure} E${playbackEndpoints.end.event}`;
+  const playingRange = playbackEndpoints && `M${playbackEndpoints.start.measure} B${playbackEndpoints.start.beat}–M${playbackEndpoints.end.measure} B${playbackEndpoints.end.beat}`;
   const playbackPanel = <section className="playback-panel" aria-label="Playback settings">
     <div className="sidebar-section playback-heading">PLAYBACK</div>
     <PlaybackTransport {...transport} ariaLabel="Playback controls" />
     {editing && <div className="audition-controls" aria-label="Selection playback">
       <button type="button" disabled={playSelectionDisabled} onClick={playSelection}>Play selection</button>
       <button type="button" disabled={!playbackEndpoints} onClick={clearPlaybackRange}>Clear playback range</button>
-      {passage && <span className="audition-range">Passage: M{passage.start.measure} E{passage.start.event}–M{passage.end.measure} E{passage.end.event}</span>}
+      {passage && <span className="audition-range">Passage: M{passage.start.measure} B{passage.start.beat}–M{passage.end.measure} B{passage.end.beat}</span>}
       {playingRange && <span className="audition-range">Playing range: {playingRange}</span>}
       {updatingScore && <span role="status">Updating score</span>}
       {playbackMessage && <span role="status">{playbackMessage}</span>}
@@ -1319,7 +1319,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     <button type="button" className="edit-play" aria-label={playing || updatingScore ? 'Pause' : 'Play'} title={playing || updatingScore ? 'Pause (Space)' : 'Play (Space)'}
       disabled={!transport.ready && !updatingScore} onClick={transport.onPlayPause}><Icon name={playing || updatingScore ? 'pause' : 'play'} size={16} /></button>
     <button type="button" className="edit-transport-button" aria-label="Loop" title="Loop" aria-pressed={loop} onClick={toggleLoop}><Icon name="loop" /></button>
-    <button type="button" className="edit-transport-text" disabled={playSelectionDisabled} onClick={playSelection} title="Play the selected event or range">Play selection</button>
+    <button type="button" className="edit-transport-text" disabled={playSelectionDisabled} onClick={playSelection} title="Play the selected beat or range">Play selection</button>
     {playingRange && <span className="edit-playing-range">Playing range: {playingRange}
       <button type="button" aria-label="Clear playback range" title="Clear playback range" onClick={clearPlaybackRange}><Icon name="clear" size={12} /></button></span>}
     <span className="edit-time">{formatSeconds(position.currentTime)} / {formatSeconds(position.endTime)}</span>

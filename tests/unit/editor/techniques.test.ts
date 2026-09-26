@@ -10,7 +10,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlEvent,
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlBeat,
   type ChordSpelling } from '../../../app/frontend/music/musicxml-editor';
 
 import './support';
@@ -43,7 +43,7 @@ describe('ED-14 tie endpoint foundation', () => {
     expect(() => connectMusicXmlTie(untied, score, origin, { ...destination, voice: 1 })).toThrow('same voice');
     expect(() => connectMusicXmlTie(untied, score, destination, origin)).toThrow('must follow');
     expect(() => connectMusicXmlTie(untied, score, { measure: 0, beat: 1, voice: 2, string: 4, fret: 0 }, destination))
-      .toThrow('Another event or rest');
+      .toThrow('Another beat or rest');
     expect(() => connectMusicXmlTie(untied, score, { measure: 0, beat: 2, voice: 2, string: 4, fret: 2 },
       { measure: 0, beat: 3, voice: 2, string: 4, fret: 4 })).toThrow('same pitch');
     const withTie = connectMusicXmlTie(untied, score, origin, destination);
@@ -59,7 +59,7 @@ describe('ED-14 tie endpoint foundation', () => {
     const score = readMusicXml(withGap, 'gap.musicxml').score;
     expect(() => connectMusicXmlTie(withGap, score,
       { measure: 0, beat: 0, voice: 1, string: 4, fret: 0 },
-      { measure: 1, beat: 0, voice: 1, string: 4, fret: 0 })).toThrow('Another event or rest');
+      { measure: 1, beat: 0, voice: 1, string: 4, fret: 0 })).toThrow('Another beat or rest');
   });
 
   it('removes an imported outgoing tie without disturbing other effects and blocks tied pitch correction', () => {
@@ -107,8 +107,8 @@ describe('ED-14 hammer-on, pull-off and slide authoring', () => {
     const file = new midi.MidiFile();
     new midi.MidiFileGenerator(after, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
     expect(file.events.some(event => event instanceof midi.NoteBendEvent && (event as midi.NoteBendEvent & { isHammerPull?: boolean }).isHammerPull)).toBe(true);
-    expect(inspectMusicXmlTransitions(hammer, after, m1)).toEqual([{ kind: 'hammer-on', direction: 'outgoing', other: { measure: 2, event: 1, fret: 2 } }]);
-    expect(inspectMusicXmlTransitions(hammer, after, m2)).toEqual([{ kind: 'hammer-on', direction: 'incoming', other: { measure: 1, event: 1, fret: 0 } }]);
+    expect(inspectMusicXmlTransitions(hammer, after, m1)).toEqual([{ kind: 'hammer-on', direction: 'outgoing', other: { measure: 2, beat: 1, fret: 2 } }]);
+    expect(inspectMusicXmlTransitions(hammer, after, m2)).toEqual([{ kind: 'hammer-on', direction: 'incoming', other: { measure: 1, beat: 1, fret: 0 } }]);
     expect(removeMusicXmlTransition(hammer, after, m2, 'hammer-on', 'incoming')).toBe(new XMLSerializer().serializeToString(new DOMParser().parseFromString(crossBar, 'application/xml')));
     const slide = connectMusicXmlTransition(crossBar, score(crossBar), 'slide', m1, m2);
     expect(slide.match(/<slide type="(start|stop)" number="1"\/>/g)).toHaveLength(2);
@@ -177,7 +177,7 @@ describe('ED-14 hammer-on, pull-off and slide authoring', () => {
 });
 
 describe('ED-17 bends and independent hand annotations', () => {
-  // Rich fixture TAB voice 2, event 2 (after the grace chord): D on string 4,
+  // Rich fixture TAB voice 2, beat 2 (after the grace chord): D on string 4,
   // fret 0 with fretting 1, picking T and a hammer-on start.
   const low = { measure: 0, beat: 1, voice: 2, string: 4, fret: 0 };
   const lowNote = (source: string) => readMusicXml(source, 'rich.musicxml').score.tracks[0].staves[0].bars[0].voices[1].beats[1];

@@ -18,7 +18,7 @@ export const subtractTime = (left: Rational, right: Rational): Rational => ratio
 
 export const timeGreater = (left: Rational, right: Rational) => left[0] * right[1] > right[0] * left[1];
 
-export function timingBoundary(document: Document, measureIndex: number, staff: number, voice: string, event?: Element[]): string | null {
+export function timingBoundary(document: Document, measureIndex: number, staff: number, voice: string, beatNotes?: Element[]): string | null {
   const part = scorePart(document);
   if (!part) return 'This source has no playable part.';
   const measures = directMeasures(part);
@@ -67,19 +67,19 @@ export function timingBoundary(document: Document, measureIndex: number, staff: 
       return 'This voice extends past the measure boundary. Correcting a fret is safe, but structural edits here are blocked until the timing is repaired.';
     }
   }
-  if (event?.some(note => {
+  if (beatNotes?.some(note => {
     const modification = child(note, 'time-modification');
     if (!modification) return false;
     return text(child(modification, 'actual-notes')) !== '3' || text(child(modification, 'normal-notes')) !== '2';
-  })) return 'This event uses an unsupported tuplet. Correcting a fret is safe, but structural edits to its timing are blocked.';
+  })) return 'This beat uses an unsupported tuplet. Correcting a fret is safe, but structural edits to its timing are blocked.';
   return null;
 }
 
-export function musicXmlTimingBoundary(source: string, position: { measure: number; staff: number; voice: string; event?: number }): string | null {
+export function musicXmlTimingBoundary(source: string, position: { measure: number; staff: number; voice: string; beat?: number }): string | null {
   const document = readDocument(source);
   const part = scorePart(document);
   const measure = part ? directMeasures(part)[position.measure] : undefined;
-  const group = measure && position.event !== undefined ? sourceBeatGroups(measure, position.staff, position.voice)[position.event] : undefined;
+  const group = measure && position.beat !== undefined ? sourceBeatGroups(measure, position.staff, position.voice)[position.beat] : undefined;
   return timingBoundary(document, position.measure, position.staff, position.voice, group);
 }
 
@@ -137,9 +137,9 @@ export function rescaleDivisions(part: Element, measureIndex: number, oldDivisio
   }
 }
 
-export function eventTime(group: Element[], divisions: bigint): RationalTime {
+export function beatTime(group: Element[], divisions: bigint): RationalTime {
   const values = group.map(note => text(child(note, 'duration')));
-  if (values.some(value => !/^\d+$/.test(value))) throw new Error('This event has an unsupported source duration.');
+  if (values.some(value => !/^\d+$/.test(value))) throw new Error('This beat has an unsupported source duration.');
   if (new Set(values).size !== 1) throw new Error('This chord has inconsistent member durations.');
   return rationalTime(BigInt(values[0]), divisions);
 }
@@ -178,10 +178,10 @@ export function makeRest(document: Document, voice: string, staff: number, denom
   return note;
 }
 
-export function rhythmLanes(document: Document, measure: Element, tabStaff: number, voice: string, eventIndex: number) {
+export function rhythmLanes(document: Document, measure: Element, tabStaff: number, voice: string, beatIndex: number) {
   const tabGroups = sourceBeatGroups(measure, tabStaff, voice);
-  const target = tabGroups[eventIndex];
-  if (!target) throw new Error('The selected source event cannot be identified safely.');
+  const target = tabGroups[beatIndex];
+  if (!target) throw new Error('The selected source beat cannot be identified safely.');
   const lanes = [{ staff: tabStaff, voice, groups: tabGroups }];
   const otherStaves = [...new Set(children(measure).filter(item => item.localName === 'note').map(note => Number(text(child(note, 'staff')) || '1')))]
     .filter(staff => staff !== tabStaff);
@@ -200,7 +200,7 @@ export function rhythmLanes(document: Document, measure: Element, tabStaff: numb
     if (!counterpart && matchingRestVoices.length !== 1) throw new Error('The paired notation voice cannot be matched safely for rhythm editing.');
     const pairedVoice = counterpart ? text(child(counterpart, 'voice')) || '1' : matchingRestVoices[0];
     const groups = sourceBeatGroups(measure, staff, pairedVoice);
-    if (groups.length !== tabGroups.length || !groups[eventIndex]) throw new Error('The paired notation events do not align safely for rhythm editing.');
+    if (groups.length !== tabGroups.length || !groups[beatIndex]) throw new Error('The paired notation beats do not align safely for rhythm editing.');
     lanes.push({ staff, voice: pairedVoice, groups });
   }
   return lanes;

@@ -2,7 +2,7 @@
 import type { model } from '@coderline/alphatab';
 import { addTime as addRhythmTime, subtractTime as subtractRhythmTime, durationTime, fillRestTime, rationalTime, compareTime, type DurationDenominator, type RationalTime } from '../../editor/rhythm';
 import { child, children, descendants, directMeasures, parseDocument, readDocument, scorePart, setText, text } from './xml';
-import { eventTime, makeRest, rescaleDivisions, setMeasureDivisions, simpleRest, sourceDivisions } from './time';
+import { beatTime, makeRest, rescaleDivisions, setMeasureDivisions, simpleRest, sourceDivisions } from './time';
 
 export function insertMusicXmlMeasure(source: string, score: model.Score, measureIndex: number,
   placement: 'before' | 'after'): string {
@@ -336,8 +336,8 @@ export function resizeMeterBar(document: Document, part: Element, measureIndex: 
   }
   if (!lanes.size) throw new Error(`Measure ${measureIndex + 1}: no source voices to resize.`);
   const backups = children(measure).filter(item => item.localName === 'backup');
-  if (backups.length !== lanes.size - 1 || backups.some(item => eventTime([item], oldDivisions)[0] * oldCapacity[1]
-    !== oldCapacity[0] * eventTime([item], oldDivisions)[1])) {
+  if (backups.length !== lanes.size - 1 || backups.some(item => beatTime([item], oldDivisions)[0] * oldCapacity[1]
+    !== oldCapacity[0] * beatTime([item], oldDivisions)[1])) {
     throw new Error(`Measure ${measureIndex + 1}: voice timing cannot be aligned safely.`);
   }
   const delta = subtractRhythmTime(newCapacity, oldCapacity);
@@ -346,14 +346,14 @@ export function resizeMeterBar(document: Document, part: Element, measureIndex: 
   for (const lane of lanes.values()) {
     const { groups, voice } = lane;
     let total = rationalTime(0n);
-    for (const group of groups) if (!child(group[0], 'grace')) total = addRhythmTime(total, eventTime(group, oldDivisions));
+    for (const group of groups) if (!child(group[0], 'grace')) total = addRhythmTime(total, beatTime(group, oldDivisions));
     if (compareTime(total, oldCapacity) !== 0) {
       throw new Error(`Measure ${measureIndex + 1}, voice ${voice}: source timing does not match the current meter.`);
     }
     const trailing: Element[][] = [];
     for (let index = groups.length - 1; index >= 0 && simpleRest(groups[index]); index--) trailing.unshift(groups[index]);
     let trailingTime = rationalTime(0n);
-    for (const group of trailing) trailingTime = addRhythmTime(trailingTime, eventTime(group, oldDivisions));
+    for (const group of trailing) trailingTime = addRhythmTime(trailingTime, beatTime(group, oldDivisions));
     const replacement = addRhythmTime(trailingTime, delta);
     if (compareTime(replacement, rationalTime(0n)) < 0) {
       throw new Error(`Measure ${measureIndex + 1}, voice ${voice}: final time is not removable rest.`);
@@ -429,7 +429,7 @@ export function firstLaneLength(measure: Element, divisions: bigint): RationalTi
   for (const note of notes) {
     if ((text(child(note, 'voice')) || '1') !== voice || (text(child(note, 'staff')) || '1') !== staff
       || child(note, 'chord') || child(note, 'grace')) continue;
-    result = addRhythmTime(result, eventTime([note], divisions));
+    result = addRhythmTime(result, beatTime([note], divisions));
   }
   return result;
 }

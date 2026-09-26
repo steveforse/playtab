@@ -1,7 +1,7 @@
 import { importer, model } from '@coderline/alphatab';
 import { extractTechniques, applyTechniques } from './musicxml-techniques';
 import type { ImportedScoreDocument, Score } from './score';
-import { createSourceIdentityMap, reconcileSourceIdentityMap, sourceEventIdsByAddress, type IdentityCarry, type SourceIdentityMap } from './source-identity';
+import { createSourceIdentityMap, reconcileSourceIdentityMap, sourceBeatIdsByAddress, type IdentityCarry, type SourceIdentityMap } from './source-identity';
 import { musicXmlEditorState } from './musicxml-editor';
 import { durationTime, fillRestTime, rationalTime } from '../editor/rhythm';
 import { readSourceDocument } from './xml-cache';
@@ -23,9 +23,9 @@ export type MusicXmlPreview = {
   chordDiagrams: ChordDiagramPreview[];
   sourceIdentity?: SourceIdentityMap;
   sourceIdByModelNoteId?: Map<number, string>;
-  sourceLocationById?: Map<string, { measure: number; event: number; voice: number; string: number; fret: number }>;
+  sourceLocationById?: Map<string, { measure: number; beat: number; voice: number; string: number; fret: number }>;
   sourceIdByLocation?: Map<string, string>;
-  sourceEventIdByAddress?: Map<string, string>;
+  sourceBeatIdByAddress?: Map<string, string>;
 };
 
 type ChordMetadata = { measure: number; position: number; name: string; strings: number[]; firstFret: number };
@@ -190,17 +190,17 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   const sourceIdentity = previous
     ? reconcileSourceIdentityMap(previous.source, previous.map, source, previous.carries)
     : createSourceIdentityMap(source);
-  const sourceEventIdByAddress = sourceEventIdsByAddress(source, sourceIdentity);
+  const sourceBeatIdByAddress = sourceBeatIdsByAddress(source, sourceIdentity);
   const editorNotes = musicXmlEditorState(source, score, sourceIdentity).notes;
   const sourceIdByModelNoteId = new Map<number, string>();
-  const sourceLocationById = new Map<string, { measure: number; event: number; voice: number; string: number; fret: number }>();
+  const sourceLocationById = new Map<string, { measure: number; beat: number; voice: number; string: number; fret: number }>();
   const sourceIdByLocation = new Map<string, string>();
   editorNotes.forEach(note => {
     if (!note.sourceIdentity || note.modelNoteId === undefined) return;
     sourceIdByModelNoteId.set(note.modelNoteId, note.sourceIdentity.id);
-    const location = { measure: note.measure + 1, event: note.beat + 1, voice: (note.voice ?? 0) + 1, string: note.string, fret: note.fret };
+    const location = { measure: note.measure + 1, beat: note.beat + 1, voice: (note.voice ?? 0) + 1, string: note.string, fret: note.fret };
     sourceLocationById.set(note.sourceIdentity.id, location);
-    sourceIdByLocation.set(`${location.measure}:${location.event}:${location.voice}:${location.string}:${location.fret}`, note.sourceIdentity.id);
+    sourceIdByLocation.set(`${location.measure}:${location.beat}:${location.voice}:${location.string}:${location.fret}`, note.sourceIdentity.id);
   });
   const names = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
   const tuningLabel = [...tab.tuning].reverse().map((n, i) => i === 0 ? names[n % 12].toLowerCase() : names[n % 12]).join(' ');
@@ -208,7 +208,7 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   return {
     id: previewId(), source, filename, sourceFormat, score, tuningLabel,
     lyricsSection: techniques.lyricsSection, timedLyrics: timedLyricEntries, chordDiagrams: diagramEntries,
-    sourceIdentity, sourceIdByModelNoteId, sourceLocationById, sourceIdByLocation, sourceEventIdByAddress,
+    sourceIdentity, sourceIdByModelNoteId, sourceLocationById, sourceIdByLocation, sourceBeatIdByAddress,
   };
 }
 
@@ -237,13 +237,13 @@ export function promoteNativeScore(score: Score): string {
   const tuning = score.tuning.map((midi, index) => `<staff-tuning line="${5 - index}">${pitch(midi, 'tuning-')}</staff-tuning>`).reverse().join('');
   const measures = score.measures.map((measure, index) => {
     const attributes = index === 0 ? `<attributes><divisions>16</divisions><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>TAB</sign><line>5</line></clef><staff-details><staff-lines>5</staff-lines>${tuning}</staff-details></attributes><direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>${score.tempo}</per-minute></metronome></direction-type><sound tempo="${score.tempo}"/></direction>` : '';
-    const events = measure.beats.map(beat => {
+    const beatXml = measure.beats.map(beat => {
       const duration = 64 / beat.duration;
       const type = beat.duration === 4 ? 'quarter' : beat.duration === 8 ? 'eighth' : '16th';
       if (!beat.notes.length) return `<note><rest/><duration>${duration}</duration><voice>1</voice><type>${type}</type><staff>1</staff></note>`;
       return beat.notes.map((note, member) => `<note>${member ? '<chord/>' : ''}<pitch>${pitch(score.tuning[note.string - 1] + note.fret)}</pitch><duration>${duration}</duration><voice>1</voice><type>${type}</type><staff>1</staff><notations><technical><string>${note.string}</string><fret>${note.fret}</fret></technical></notations></note>`).join('');
     }).join('');
-    return `<measure number="${index + 1}">${attributes}${events}</measure>`;
+    return `<measure number="${index + 1}">${attributes}${beatXml}</measure>`;
   }).join('');
   return `<?xml version="1.0" encoding="utf-8"?><score-partwise version="4.0"><work><work-title>${escape(score.title)}</work-title></work><part-list><score-part id="P1"><part-name>Banjo</part-name></score-part></part-list><part id="P1">${measures}</part></score-partwise>`;
 }

@@ -48,7 +48,7 @@ const ICONS = {
   apply: <path d="m5 12.5 4.5 4.5L19 7.5" />,
   move: <><path d="M12 3v18" /><path d="m8 7 4-4 4 4" /><path d="m8 17 4 4 4-4" /></>,
   'remove-note': <><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="m6 7 1 13h10l1-13" /><path d="M9 7V4h6v3" /></>,
-  'insert-event': <><circle cx={12} cy={12} r={9} /><path d="M12 8v8M8 12h8" /></>,
+  'insert-beat': <><circle cx={12} cy={12} r={9} /><path d="M12 8v8M8 12h8" /></>,
   tempo: <>{note(0, true, true, -3)}<path d="M14.5 10h6M14.5 14h6" /></>,
   'select-measure': <><path d="M4 5h16v14H4z" strokeDasharray="3 2" /><path d="M9 5v14" /></>,
   'insert-measure-before': <><path d="M11 5h9v14h-9z" /><path d="M6 9v6M3 12h6" /></>,

@@ -1,11 +1,11 @@
 import { useEffect, useState, type RefObject } from 'react';
-import { ANCHOR_TEXT_LIMIT, LYRIC_VERSES, type EventLyric, type LyricSyllabic } from '../../music/musicxml-editor';
+import { ANCHOR_TEXT_LIMIT, LYRIC_VERSES, type BeatLyric, type LyricSyllabic } from '../../music/musicxml-editor';
 import { useModalDialog } from '../useModalDialog';
 
-export type LyricDialogTarget = { selection: { measure: number; event: number }; lyrics: EventLyric[] };
+export type LyricDialogTarget = { selection: { measure: number; beat: number }; lyrics: BeatLyric[] };
 type Draft = { verse: number; text: string; syllabic: LyricSyllabic };
 
-// One verse of a timed lyric on one event. onApply returns an error or null.
+// One verse of a timed lyric on one beat. onApply returns an error or null.
 export function LyricDialog({ target, onApply, onClose, returnFocus }: {
   target: LyricDialogTarget | null; onApply: (verse: number, value: { text: string; syllabic: LyricSyllabic } | null) => string | null;
   onClose: () => void; returnFocus?: RefObject<HTMLElement | null>;
@@ -13,7 +13,7 @@ export function LyricDialog({ target, onApply, onClose, returnFocus }: {
   const ref = useModalDialog(target !== null, returnFocus);
   const [lyricDraft, setLyricDraft] = useState<Draft>({ verse: 1, text: '', syllabic: 'single' });
   const [lyricError, setLyricError] = useState('');
-  function chooseLyricVerse(verse: number, lyrics: EventLyric[]) {
+  function chooseLyricVerse(verse: number, lyrics: BeatLyric[]) {
     const current = lyrics.find(lyric => lyric.verse === verse);
     setLyricError('');
     setLyricDraft({ verse, text: current?.text ?? '', syllabic: current?.syllabic ?? 'single' });
@@ -27,7 +27,7 @@ export function LyricDialog({ target, onApply, onClose, returnFocus }: {
       const kept = target.lyrics.filter(lyric => lyric.verse === 0);
       return <>
         <h2>Lyric syllable</h2>
-        <p>Measure {target.selection.measure}, event {target.selection.event}. Other verses and the Lyrics &amp; chords text are not changed.</p>
+        <p>Measure {target.selection.measure}, beat {target.selection.beat}. Other verses and the Lyrics &amp; chords text are not changed.</p>
         <div className="insert-dialog-fields">
           <label>Verse<select aria-label="Verse" data-dialog-first="" value={lyricDraft.verse} onChange={event => chooseLyricVerse(Number(event.target.value), target.lyrics)}>
             {Array.from({ length: LYRIC_VERSES }, (_, index) => index + 1).map(verse => <option key={verse} value={verse}>

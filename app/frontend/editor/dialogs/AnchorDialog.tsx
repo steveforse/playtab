@@ -3,7 +3,7 @@ import { ANCHOR_TEXT_LIMIT, chordSpellingName, type AnchorItem, type AnchorKind,
 import { ANCHOR_NAMES, CHORD_QUALITIES, CHORD_STEPS, DEFAULT_CHORD } from '../labels';
 import { useModalDialog } from '../useModalDialog';
 
-export type AnchorDialogTarget = { kind: AnchorKind; items: AnchorItem[]; selection: { measure: number; event: number } };
+export type AnchorDialogTarget = { kind: AnchorKind; items: AnchorItem[]; selection: { measure: number; beat: number } };
 
 // Chord name, section label or annotation anchored at the selection. The
 // user picks an existing item or Add new; onApply returns an error or null.
@@ -39,7 +39,7 @@ export function AnchorDialog({ target: target_, onApply, onClose, returnFocus }:
       </>;
       return <>
         <h2>{ANCHOR_NAMES[kind].title}</h2>
-        <p>{kind === 'section' ? `Anchored at the start of measure ${target.measure}.` : `Anchored at measure ${target.measure}, event ${target.event}.`}</p>
+        <p>{kind === 'section' ? `Anchored at the start of measure ${target.measure}.` : `Anchored at measure ${target.measure}, beat ${target.beat}.`}</p>
         {items.length > 0 && <label className="anchor-choice">Item<select aria-label="Existing item" data-dialog-first="" value={anchorChoice}
           onChange={event => chooseAnchorItem(event.target.value === 'new' ? 'new' : Number(event.target.value), items)}>
           {items.map((item, index) => <option key={index} value={index}>{item.text}</option>)}

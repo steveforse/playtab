@@ -16,20 +16,20 @@ describe('MusicXML score editing', () => {
     const source = saved.source as string;
     const preview = readMusicXml(source, 'wellerman.musicxml', 'tef');
     const candidate = preview.score.tracks[0].staves[0].bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats
-      .map((beat, event) => ({ beat, measure, voice: voiceIndex, event }))))
+      .map((beat, beatIndex) => ({ beat, measure, voice: voiceIndex, beatIndex }))))
       .find(item => item.beat.notes.length >= 2 && !item.beat.graceType)!;
     expect(candidate).toBeTruthy();
     const string = 6 - candidate.beat.notes[0].string;
-    const planned = removeMusicXmlNotes(source, preview.score, { measure: candidate.measure, beat: candidate.event, voice: candidate.voice, string })!;
+    const planned = removeMusicXmlNotes(source, preview.score, { measure: candidate.measure, beat: candidate.beatIndex, voice: candidate.voice, string })!;
     expect(planned).toBeTruthy();
     expect(source).toBe(saved.source);
     const after = readMusicXml(planned.source, 'wellerman.musicxml', 'tef');
-    const next = after.score.tracks[0].staves[0].bars[candidate.measure].voices[candidate.voice].beats[candidate.event];
+    const next = after.score.tracks[0].staves[0].bars[candidate.measure].voices[candidate.voice].beats[candidate.beatIndex];
     expect(next.notes.length).toBe(candidate.beat.notes.length - 1);
     expect(next.playbackStart).toBe(candidate.beat.playbackStart);
   }, 60000);
 
-  it('removes one paired chord member or makes the whole event a rest without shifting later music', () => {
+  it('removes one paired chord member or makes the whole beat a rest without shifting later music', () => {
     const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
     const preview = readMusicXml(source, 'paired.musicxml', 'tef');
     const before = preview.score.tracks[0].staves[0].bars[0].voices[1].beats.map(beat => beat.playbackStart);
@@ -85,7 +85,7 @@ describe('MusicXML score editing', () => {
     expect(plannedStandardTie.source).not.toContain('<tie');
   });
 
-  it('removes a preceding grace group with its destination event and blocks unknown attachments', () => {
+  it('removes a preceding grace group with its destination beat and blocks unknown attachments', () => {
     const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
     const grace = '<note><grace slash="yes"/><pitch><step>C</step><octave>3</octave></pitch><type>16th</type><notations><technical><string>4</string><fret>0</fret></technical></notations></note>';
     const withGrace = source.replace('    <note><pitch><step>C</step><octave>3</octave></pitch>', `    ${grace}\n    <note><pitch><step>C</step><octave>3</octave></pitch>`);
@@ -107,20 +107,20 @@ describe('MusicXML score editing', () => {
     const source = saved.source as string;
     const preview = readMusicXml(source, 'wellerman.musicxml', 'tef');
     const targets = preview.score.tracks[0].staves[0].bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats
-      .map((beat, event) => ({ beat, measure, voice: voiceIndex, event }))))
+      .map((beat, beatIndex) => ({ beat, measure, voice: voiceIndex, beatIndex }))))
       .filter(item => item.beat.notes.map(note => 6 - note.string).sort().join(',') === '1,2,3');
     expect(targets.length).toBeGreaterThan(0);
-    targets.forEach(({ beat, measure, voice, event }) => {
-      const withOne = addMusicXmlNote(source, preview.score, { measure, beat: event, voice, string: 4, fret: 1 });
+    targets.forEach(({ beat, measure, voice, beatIndex }) => {
+      const withOne = addMusicXmlNote(source, preview.score, { measure, beat: beatIndex, voice, string: 4, fret: 1 });
       const parsed = readMusicXml(withOne, 'wellerman.musicxml', 'tef');
       const state = musicXmlEditorState(withOne, parsed.score);
-      const added = state.notes.find(note => note.measure === measure && note.beat === event && note.string === 4);
-      expect(added, `measure ${measure + 1}, event ${event + 1}`).toBeTruthy();
+      const added = state.notes.find(note => note.measure === measure && note.beat === beatIndex && note.string === 4);
+      expect(added, `measure ${measure + 1}, beat ${beatIndex + 1}`).toBeTruthy();
       added!.fret = 12;
       const withTwelve = applyMusicXmlEdits(withOne, state, [added!.index]);
       const result = readMusicXml(withTwelve, 'wellerman.musicxml', 'tef');
-      const notes = result.score.tracks[0].staves[0].bars[measure].voices[voice].beats[event].notes;
-      expect(notes.map(note => [6 - note.string, note.fret]).sort((a, b) => a[0] - b[0]), `measure ${measure + 1}, event ${event + 1}`)
+      const notes = result.score.tracks[0].staves[0].bars[measure].voices[voice].beats[beatIndex].notes;
+      expect(notes.map(note => [6 - note.string, note.fret]).sort((a, b) => a[0] - b[0]), `measure ${measure + 1}, beat ${beatIndex + 1}`)
         .toEqual([...beat.notes.map(note => [6 - note.string, note.fret]), [4, 12]].sort((a, b) => a[0] - b[0]));
     });
   }, 60000);
@@ -128,18 +128,18 @@ describe('MusicXML score editing', () => {
     const source = fs.readFileSync(process.env.PLAYTAB_EDITOR_XML!, 'utf8');
     const preview = readMusicXml(source, 'private.musicxml', 'tef');
     const bars = preview.score.tracks[0].staves[0].bars;
-    const target = bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats.map((beat, event) => ({ beat, measure, voice: voiceIndex, event }))))
+    const target = bars.flatMap((bar, measure) => bar.voices.flatMap((voice, voiceIndex) => voice.beats.map((beat, beatIndex) => ({ beat, measure, voice: voiceIndex, beatIndex }))))
       .find(item => item.beat.notes.length > 1 && item.beat.notes.length < 5 && !item.beat.graceType)!;
     expect(target).toBeTruthy();
     const occupied = new Set(target.beat.notes.map(note => 6 - note.string));
     const string = [1, 2, 3, 4, 5].find(value => !occupied.has(value))!;
-    const edited = addMusicXmlNote(source, preview.score, { measure: target.measure, beat: target.event, voice: target.voice, string, fret: 0 });
+    const edited = addMusicXmlNote(source, preview.score, { measure: target.measure, beat: target.beatIndex, voice: target.voice, string, fret: 0 });
     const next = readMusicXml(edited, 'private.musicxml', 'tef');
-    const notes = next.score.tracks[0].staves[0].bars[target.measure].voices[target.voice].beats[target.event].notes;
+    const notes = next.score.tracks[0].staves[0].bars[target.measure].voices[target.voice].beats[target.beatIndex].notes;
     expect(notes).toHaveLength(target.beat.notes.length + 1);
     expect(notes.some(note => 6 - note.string === string && note.fret === 0)).toBe(true);
   });
-  it('adds a chord member and replaces a paired rest without moving later events', () => {
+  it('adds a chord member and replaces a paired rest without moving later beats', () => {
     const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
     const preview = readMusicXml(source, 'paired.musicxml', 'tef');
     const original = preview.score.tracks[0].staves[0].bars[0].voices[1].beats;
@@ -384,7 +384,7 @@ describe('MusicXML score editing', () => {
     expect(edited).toContain('<custom:opaque data="retain"><custom:nested>yes</custom:nested></custom:opaque>');
     expect(edited).toContain('<duration>2</duration><type>half</type>');
     expect(edited).not.toContain('<duration>1</duration><type>half</type>');
-    expect(musicXmlTimingBoundary(source, { measure: 0, staff: 1, voice: '1', event: 0 })).toContain('extends past the measure boundary');
+    expect(musicXmlTimingBoundary(source, { measure: 0, staff: 1, voice: '1', beat: 0 })).toContain('extends past the measure boundary');
     expect(() => removeMusicXmlNotes(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 4 })).toThrow('extends past the measure boundary');
     expect(() => addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 2, fret: 0 })).toThrow('extends past the measure boundary');
   });
@@ -392,7 +392,7 @@ describe('MusicXML score editing', () => {
   it('reports an unsupported tuplet boundary without preventing a local fret correction', () => {
     const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
       .replace('<type>quarter</type><notations>', '<type>quarter</type><time-modification><actual-notes>5</actual-notes><normal-notes>4</normal-notes></time-modification><notations>');
-    expect(musicXmlTimingBoundary(source, { measure: 0, staff: 1, voice: '1', event: 0 })).toContain('unsupported tuplet');
+    expect(musicXmlTimingBoundary(source, { measure: 0, staff: 1, voice: '1', beat: 0 })).toContain('unsupported tuplet');
     const preview = readMusicXml(source, 'tuplet.xml');
     const state = musicXmlEditorState(source, preview.score);
     const first = state.notes.find(note => note.string === 4 && note.beat === 0)!;
@@ -403,7 +403,7 @@ describe('MusicXML score editing', () => {
     expect(() => addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: 0, string: 2, fret: 0 })).toThrow('unsupported tuplet');
   });
 
-  it('edits one voice without mistaking another voice’s event for the target', () => {
+  it('edits one voice without mistaking another voice’s beat for the target', () => {
     const standard = '<backup><duration>4</duration></backup><note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>3</voice><type>quarter</type><staff>1</staff></note><note><rest/><duration>3</duration><voice>3</voice><type>half</type><dot/><staff>1</staff></note>';
     const tab = '<backup><duration>4</duration></backup><note><pitch><step>D</step><octave>3</octave></pitch><duration>1</duration><voice>4</voice><type>quarter</type><staff>2</staff><notations><technical><string>4</string><fret>0</fret></technical></notations></note><note><rest/><duration>3</duration><voice>4</voice><type>half</type><dot/><staff>2</staff></note>';
     const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8').replace('</measure></part>', `${standard}${tab}</measure></part>`);
@@ -437,7 +437,7 @@ describe('MusicXML score editing', () => {
     expect(edited.score.tracks[0].staves[0].bars[0].voices[1].beats[0].notes[0].fret).toBe(2);
   });
 
-  it('maps a grace note separately from its ordinary destination event', () => {
+  it('maps a grace note separately from its ordinary destination beat', () => {
     const grace = '<note><grace slash="yes"/><pitch><step>D</step><octave>3</octave></pitch><type>16th</type><notations><technical><string>4</string><fret>2</fret></technical></notations></note>';
     const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8')
       .replace('    <note><pitch><step>C</step><octave>3</octave></pitch>', `    ${grace}\n    <note><pitch><step>C</step><octave>3</octave></pitch>`);

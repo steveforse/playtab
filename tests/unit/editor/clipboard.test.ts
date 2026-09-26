@@ -10,7 +10,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlEvent,
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlBeat,
   type ChordSpelling } from '../../../app/frontend/music/musicxml-editor';
 
 import './support';
@@ -143,6 +143,6 @@ describe('ED-20 copy and paste whole measures', () => {
     expect(() => score(keepPitches)).not.toThrow();
     const raised = applyMusicXmlScoreSettings(single, score(single), { title: 'Raised', tempo: 96, tuning: [62, 59, 55, 52, 67], mode: 'frets' }).source;
     expect(() => pasteMusicXmlMeasures(raised, score(raised), clip, 0, 'insert', 'pitches'))
-      .toThrow('Copied measure 1, event 1, string 4: keeping its pitch would need fret -2, outside 0–36. Nothing was pasted.');
+      .toThrow('Copied measure 1, beat 1, string 4: keeping its pitch would need fret -2, outside 0–36. Nothing was pasted.');
   });
 });

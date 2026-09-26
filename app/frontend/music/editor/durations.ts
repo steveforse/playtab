@@ -1,9 +1,9 @@
-// Event durations, inserted events and 3:2 triplets.
+// Beat durations, inserted beats and 3:2 triplets.
 import type { model } from '@coderline/alphatab';
 import { DURATION_DENOMINATORS, REST_SPACE_ERROR, durationTime, fillRestTime, planDurationChange, rationalTime, compareTime, type DurationDenominator, type RationalTime } from '../../editor/rhythm';
 import { child, children, descendants, directMeasures, ensure, parseDocument, readDocument, removeChildren, scorePart, setText, sourceTabStaff, text } from './xml';
 import { sourceBeatGroups } from './records';
-import { addTime, eventTime, makeRest, rescaleDivisions, rhythmLanes, simpleRest, sourceDivisions, subtractTime, timingBoundary, type RhythmPosition, writeDuration } from './time';
+import { addTime, beatTime, makeRest, rescaleDivisions, rhythmLanes, simpleRest, sourceDivisions, subtractTime, timingBoundary, type RhythmPosition, writeDuration } from './time';
 import { protectedNoteAttachment, replaceRestWithNote } from './notes';
 import { openTabTuning } from './tuning';
 
@@ -14,7 +14,7 @@ export function inspectMusicXmlDuration(source: string, position: RhythmPosition
   const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const group = measure && sourceBeatGroups(measure, sourceTabStaff(document), String(position.voice + 1))[position.beat];
-  if (!group) return { denominator: null, dots: 0, rest: false, reason: 'Select an ordinary event to edit its rhythm.' };
+  if (!group) return { denominator: null, dots: 0, rest: false, reason: 'Select an ordinary beat to edit its rhythm.' };
   const note = group[0];
   const rest = Boolean(child(note, 'rest'));
   if (group.some(item => child(item, 'grace'))) return { denominator: null, dots: 0, rest, reason: 'Grace durations are edited with their group.' };
@@ -32,7 +32,7 @@ export function changeMusicXmlDuration(source: string, score: model.Score, posit
   denominator: DurationDenominator, dotted = false): string {
   if (!DURATION_DENOMINATORS.includes(denominator)) throw new Error('Unsupported note duration.');
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
-  if (!rendered || rendered.graceType) throw new Error('Select an ordinary event to change its duration.');
+  if (!rendered || rendered.graceType) throw new Error('Select an ordinary beat to change its duration.');
   const document = parseDocument(source);
   const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
@@ -47,7 +47,7 @@ export function changeMusicXmlDuration(source: string, score: model.Score, posit
   }).sort();
   const renderedMembers = rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort();
   if (sourceMembers.join('|') !== renderedMembers.join('|') || Boolean(child(target[0], 'rest')) !== Boolean(rendered.isRest)) {
-    throw new Error('The selected source event does not match the rendered score. Rhythm editing is blocked here.');
+    throw new Error('The selected source beat does not match the rendered score. Rhythm editing is blocked here.');
   }
   const boundary = timingBoundary(document, position.measure, tabStaff, voice, target);
   if (boundary) throw new Error(boundary);
@@ -55,7 +55,7 @@ export function changeMusicXmlDuration(source: string, score: model.Score, posit
     throw new Error('Edit this tuplet or grace group as a group.');
   }
   const oldDivisions = sourceDivisions(part, position.measure);
-  const current = eventTime(target, oldDivisions);
+  const current = beatTime(target, oldDivisions);
   const desired = durationTime(denominator, dotted);
   if (compareTime(current, desired) === 0 && target.every(note => text(child(note, 'type')) === ({ 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' } as Record<number, string>)[denominator]
     && children(note).filter(item => item.localName === 'dot').length === (dotted ? 1 : 0))) return source;
@@ -63,19 +63,19 @@ export function changeMusicXmlDuration(source: string, score: model.Score, posit
   if (compareTime(desired, current) > 0) {
     for (const group of lanes[0].groups.slice(position.beat + 1)) {
       if (!simpleRest(group)) { following.push({ duration: rationalTime(0n), rest: false }); break; }
-      following.push({ duration: eventTime(group, oldDivisions), rest: true });
+      following.push({ duration: beatTime(group, oldDivisions), rest: true });
     }
   }
   const plan = planDurationChange(current, desired, following);
   for (const lane of lanes) {
     const group = lane.groups[position.beat];
-    if (compareTime(eventTime(group, oldDivisions), current) !== 0 || Boolean(child(group[0], 'rest')) !== Boolean(child(target[0], 'rest'))
+    if (compareTime(beatTime(group, oldDivisions), current) !== 0 || Boolean(child(group[0], 'rest')) !== Boolean(child(target[0], 'rest'))
       || group.some(note => child(note, 'grace') || child(note, 'time-modification'))) {
-      throw new Error('The paired notation event does not match the selected rhythm.');
+      throw new Error('The paired notation beat does not match the selected rhythm.');
     }
     for (let index = 1; index <= plan.consumeRests; index++) {
       const adjacent = lane.groups[position.beat + index];
-      if (!adjacent || !simpleRest(adjacent) || compareTime(eventTime(adjacent, oldDivisions), following[index - 1].duration) !== 0) {
+      if (!adjacent || !simpleRest(adjacent) || compareTime(beatTime(adjacent, oldDivisions), following[index - 1].duration) !== 0) {
         throw new Error('The paired notation rest space does not match this voice.');
       }
     }
@@ -104,12 +104,12 @@ export function changeMusicXmlDuration(source: string, score: model.Score, posit
   return new XMLSerializer().serializeToString(document);
 }
 
-export type InsertEventOptions = RhythmPosition & { placement: 'before' | 'after'; kind: 'note' | 'rest';
+export type InsertBeatOptions = RhythmPosition & { placement: 'before' | 'after'; kind: 'note' | 'rest';
   denominator: DurationDenominator; dotted: boolean; string?: number; fret?: number };
 
-export function shiftedEventProtection(group: Element[]): string | null {
+export function shiftedBeatProtection(group: Element[]): string | null {
   for (const note of group) {
-    if (child(note, 'grace') || child(note, 'time-modification')) return 'A grace or tuplet event in the shifted region prevents insertion.';
+    if (child(note, 'grace') || child(note, 'time-modification')) return 'A grace or tuplet beat in the shifted region prevents insertion.';
     if (child(note, 'tie') || child(note, 'beam') || child(note, 'lyric')
       || descendants(note, 'tied').length || descendants(note, 'slide').length
       || descendants(note, 'hammer-on').length || descendants(note, 'pull-off').length) {
@@ -120,32 +120,32 @@ export function shiftedEventProtection(group: Element[]): string | null {
   return null;
 }
 
-export function insertMusicXmlEvent(source: string, score: model.Score, options: InsertEventOptions): string {
-  const { measure: measureIndex, beat: eventIndex, voice: voiceIndex, placement, kind, denominator, dotted } = options;
+export function insertMusicXmlBeat(source: string, score: model.Score, options: InsertBeatOptions): string {
+  const { measure: measureIndex, beat: beatIndex, voice: voiceIndex, placement, kind, denominator, dotted } = options;
   if (!DURATION_DENOMINATORS.includes(denominator)) throw new Error('Unsupported note duration.');
-  if (placement !== 'before' && placement !== 'after' || kind !== 'note' && kind !== 'rest') throw new Error('Invalid event insertion choice.');
+  if (placement !== 'before' && placement !== 'after' || kind !== 'note' && kind !== 'rest') throw new Error('Invalid beat insertion choice.');
   if (kind === 'note' && (!Number.isInteger(options.string) || options.string! < 1 || options.string! > 5
     || !Number.isInteger(options.fret) || options.fret! < 0 || options.fret! > 36)) throw new Error('Choose a valid string and fret for the new note.');
-  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[measureIndex]?.voices?.[voiceIndex]?.beats?.[eventIndex];
-  if (!rendered || rendered.graceType) throw new Error('Select an ordinary event before inserting another event.');
+  const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[measureIndex]?.voices?.[voiceIndex]?.beats?.[beatIndex];
+  if (!rendered || rendered.graceType) throw new Error('Select an ordinary beat before inserting another beat.');
   const document = parseDocument(source);
   const part = scorePart(document);
   const measure = part && directMeasures(part)[measureIndex];
   if (!part || !measure) throw new Error('The source measure cannot be identified safely.');
   const tabStaff = sourceTabStaff(document);
-  const lanes = rhythmLanes(document, measure, tabStaff, String(voiceIndex + 1), eventIndex);
-  const target = lanes[0].groups[eventIndex];
+  const lanes = rhythmLanes(document, measure, tabStaff, String(voiceIndex + 1), beatIndex);
+  const target = lanes[0].groups[beatIndex];
   const sourceMembers = target.filter(note => !child(note, 'rest')).map(note => {
     const technical = child(child(note, 'notations') ?? note, 'technical');
     return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
   }).sort();
   if (sourceMembers.join('|') !== rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort().join('|')
     || Boolean(child(target[0], 'rest')) !== Boolean(rendered.isRest)) {
-    throw new Error('The selected source event does not match the rendered score.');
+    throw new Error('The selected source beat does not match the rendered score.');
   }
   const boundary = timingBoundary(document, measureIndex, tabStaff, String(voiceIndex + 1), target);
   if (boundary) throw new Error(boundary);
-  const insertIndex = eventIndex + (placement === 'after' ? 1 : 0);
+  const insertIndex = beatIndex + (placement === 'after' ? 1 : 0);
   const oldDivisions = sourceDivisions(part, measureIndex);
   const desired = durationTime(denominator, dotted);
   const tail: number[] = [];
@@ -154,22 +154,22 @@ export function insertMusicXmlEvent(source: string, score: model.Score, options:
     const group = lanes[0].groups[index];
     if (!simpleRest(group)) break;
     tail.unshift(index);
-    available = addTime(available, eventTime(group, oldDivisions));
+    available = addTime(available, beatTime(group, oldDivisions));
     if (compareTime(available, desired) >= 0) break;
   }
   if (compareTime(available, desired) < 0) throw new Error(REST_SPACE_ERROR);
   const remaining = subtractTime(available, desired);
   const replacementRests = fillRestTime(remaining);
   for (const lane of lanes) {
-    if (lane.groups.length !== lanes[0].groups.length) throw new Error('The paired notation events do not align safely for insertion.');
+    if (lane.groups.length !== lanes[0].groups.length) throw new Error('The paired notation beats do not align safely for insertion.');
     for (let index = insertIndex; index < lane.groups.length; index++) {
       const group = lane.groups[index];
-      if (eventTime(group, oldDivisions)[0] !== eventTime(lanes[0].groups[index], oldDivisions)[0]
-        || eventTime(group, oldDivisions)[1] !== eventTime(lanes[0].groups[index], oldDivisions)[1]
+      if (beatTime(group, oldDivisions)[0] !== beatTime(lanes[0].groups[index], oldDivisions)[0]
+        || beatTime(group, oldDivisions)[1] !== beatTime(lanes[0].groups[index], oldDivisions)[1]
         || Boolean(child(group[0], 'rest')) !== Boolean(child(lanes[0].groups[index][0], 'rest'))) {
-        throw new Error('The paired notation events do not align safely for insertion.');
+        throw new Error('The paired notation beats do not align safely for insertion.');
       }
-      const protection = shiftedEventProtection(group);
+      const protection = shiftedBeatProtection(group);
       if (protection) throw new Error(protection);
     }
     for (const index of tail) if (!simpleRest(lane.groups[index])) throw new Error('The paired notation rest space does not match this voice.');
@@ -238,7 +238,7 @@ export function setTupletMarker(note: Element, type: 'start' | 'stop') {
 
 export function createMusicXmlTriplet(source: string, score: model.Score, position: RhythmPosition): string {
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
-  if (!rendered || rendered.graceType) throw new Error('Select an ordinary event to make a triplet.');
+  if (!rendered || rendered.graceType) throw new Error('Select an ordinary beat to make a triplet.');
   const document = parseDocument(source);
   const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
@@ -254,7 +254,7 @@ export function createMusicXmlTriplet(source: string, score: model.Score, positi
   }).sort();
   if (sourceMembers.join('|') !== rendered.notes.map(note => `${6 - note.string}:${note.fret}`).sort().join('|')
     || Boolean(child(target[0], 'rest')) !== Boolean(rendered.isRest)) {
-    throw new Error('The selected source event does not match the rendered score.');
+    throw new Error('The selected source beat does not match the rendered score.');
   }
   if (target.some(note => child(note, 'grace') || child(note, 'time-modification'))) {
     throw new Error('Edit this triplet or grace group as a group.');
@@ -262,19 +262,19 @@ export function createMusicXmlTriplet(source: string, score: model.Score, positi
   const denominator = durationTypes[text(child(target[0], 'type'))];
   if (!denominator || target.some(note => children(note).some(item => item.localName === 'dot'))
     || target.some(note => child(note, 'duration') === undefined)) {
-    throw new Error('Triplet requires an undotted ordinary event with a supported duration.');
+    throw new Error('Triplet requires an undotted ordinary beat with a supported duration.');
   }
   if (denominator === 64) throw new Error('Triplet children cannot be shorter than 1/64.');
   const childDenominator = (denominator * 2) as DurationDenominator;
   const oldDivisions = sourceDivisions(part, position.measure);
-  const parentTime = eventTime(target, oldDivisions);
+  const parentTime = beatTime(target, oldDivisions);
   if (compareTime(parentTime, durationTime(denominator)) !== 0) throw new Error('The selected source duration does not match its notation.');
   for (const lane of lanes) {
     const group = lane.groups[position.beat];
-    if (compareTime(eventTime(group, oldDivisions), parentTime) !== 0
+    if (compareTime(beatTime(group, oldDivisions), parentTime) !== 0
       || Boolean(child(group[0], 'rest')) !== Boolean(child(target[0], 'rest'))
       || group.some(note => child(note, 'grace') || child(note, 'time-modification') || children(note).some(item => item.localName === 'dot'))) {
-      throw new Error('The paired notation event cannot be converted to the same triplet.');
+      throw new Error('The paired notation beat cannot be converted to the same triplet.');
     }
   }
   const childTime = rationalTime(parentTime[0], parentTime[1] * 3n);
@@ -335,7 +335,7 @@ export function inspectMusicXmlTriplet(source: string, position: RhythmPosition)
   const measure = part && directMeasures(part)[position.measure];
   const groups = measure ? sourceBeatGroups(measure, sourceTabStaff(document), String(position.voice + 1)) : [];
   const selected = groups[position.beat];
-  if (!selected) return { triplet: false, canRemove: false, reason: 'Select an ordinary event.' };
+  if (!selected) return { triplet: false, canRemove: false, reason: 'Select an ordinary beat.' };
   if (selected.some(note => child(note, 'time-modification')) && !isThreeTwo(selected)) {
     return { triplet: false, canRemove: false, reason: 'This imported tuplet ratio is preserved; timing editing is unavailable.' };
   }
@@ -374,7 +374,7 @@ export function removeMusicXmlTriplet(source: string, score: model.Score, positi
   if (!childDenominator || childDenominator === 1) throw new Error('This triplet has an unsupported child duration.');
   const parentDenominator = (childDenominator / 2) as DurationDenominator;
   const divisions = sourceDivisions(part, position.measure);
-  const childTime = eventTime(lanes[0].groups[start], divisions);
+  const childTime = beatTime(lanes[0].groups[start], divisions);
   const parentTime = rationalTime(childTime[0] * 3n, childTime[1]);
   if (compareTime(parentTime, durationTime(parentDenominator)) !== 0) {
     throw new Error('This triplet has an unsupported source duration.');
@@ -385,7 +385,7 @@ export function removeMusicXmlTriplet(source: string, score: model.Score, positi
       throw new Error('Remove the last two notes or protected attachments before removing this triplet.');
     }
     for (let index = start; index < start + 3; index++) {
-      if (compareTime(eventTime(lane.groups[index], divisions), childTime) !== 0) {
+      if (compareTime(beatTime(lane.groups[index], divisions), childTime) !== 0) {
         throw new Error('The paired triplet children do not have matching durations.');
       }
     }

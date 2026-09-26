@@ -31,7 +31,7 @@ test('adds an imported chord tone and rest note on paired staves with an aligned
   await notation.focus();
   await notation.press('ArrowRight');
   await notation.press('ArrowRight');
-  await expect(inspector).toContainText('Event 3');
+  await expect(inspector).toContainText('Beat 3');
   await page.getByLabel('Fret', { exact: true }).fill('0');
   await page.getByRole('button', { name: 'Add note' }).click();
   await expect(inspector).toContainText('Fret 0');

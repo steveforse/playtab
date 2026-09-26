@@ -19,7 +19,7 @@ test('UI-03 right-clicking a note opens a keyboard-operable menu that runs comma
   await page.mouse.click(point.x, point.y, { button: 'right' });
   const menu = page.getByRole('menu', { name: 'Score actions' });
   await expect(menu).toBeVisible();
-  await expect(page.getByLabel('Selection inspector')).toContainText('Event 1');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Beat 1');
   await expect(menu.getByRole('menuitem', { name: /Edit fret/ })).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(menu.getByRole('menuitem', { name: /Remove note/ })).toBeFocused();
@@ -53,7 +53,7 @@ test('UI-03 range, keyboard and dismissal behaviour', async ({ page }) => {
   await expect(menu.getByRole('menuitem', { name: /Copy passage/ })).toHaveAttribute('aria-disabled', 'true');
   await expect(menu.getByRole('menuitem', { name: /Copy passage/ })).toContainText('Select whole measures first');
   await expect(menu.getByRole('menuitem', { name: /Clear to rests/ })).not.toHaveAttribute('aria-disabled', 'true');
-  await expect(page.locator('.editor-range-summary')).toHaveText('M1 E1 – M1 E2 selected');
+  await expect(page.locator('.editor-range-summary')).toHaveText('M1 B1 – M1 B2 selected');
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
   await expect(notation).toBeFocused();

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { demo } from '../../app/frontend/music/score';
 import { inspectSelection, tiePosition } from '../../app/frontend/editor/selectionInfo';
 
-const note = { track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 3, fret: 0, kind: 'note' as const, noteId: 1, graceIndex: null, graceGroupId: null };
+const note = { track: 1, staff: 1, measure: 1, beat: 1, voice: 1, string: 3, fret: 0, kind: 'note' as const, noteId: 1, graceIndex: null, graceGroupId: null };
 
 describe('selection info', () => {
   it('reports nothing without a selection', () => {

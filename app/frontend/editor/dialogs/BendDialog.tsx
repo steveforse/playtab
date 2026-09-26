@@ -3,7 +3,7 @@ import type { BendAmount, NoteBend } from '../../music/musicxml-editor';
 import { BEND_LABELS } from '../labels';
 import { useModalDialog } from '../useModalDialog';
 
-export type BendDialogTarget = { selection: { measure: number; event: number; string: number | null }; existing: NoteBend | 'none' | null; reason?: string };
+export type BendDialogTarget = { selection: { measure: number; beat: number; string: number | null }; existing: NoteBend | 'none' | null; reason?: string };
 
 // A null `existing` is an imported curve kept as written; applying replaces it.
 export function BendDialog({ target, onApply, onClose, returnFocus }: {
@@ -16,7 +16,7 @@ export function BendDialog({ target, onApply, onClose, returnFocus }: {
   }, [target]);
   return <dialog ref={ref} className="duplicate-dialog bend-dialog" aria-label="Bend" onCancel={event => { event.preventDefault(); onClose(); }}>
     <h2>Bend</h2>
-    <p>Measure {target?.selection.measure}, event {target?.selection.event}, string {target?.selection.string}. The pitch reaches the bend by the middle of the note.</p>
+    <p>Measure {target?.selection.measure}, beat {target?.selection.beat}, string {target?.selection.string}. The pitch reaches the bend by the middle of the note.</p>
     {target?.reason && <p className="grace-read-only" role="note">{target.reason}</p>}
     <div className="insert-dialog-fields">
       <label>Amount<select data-dialog-first="" value={draft.amount} onChange={event => setDraft(current => ({ ...current, amount: Number(event.target.value) as BendAmount }))}>

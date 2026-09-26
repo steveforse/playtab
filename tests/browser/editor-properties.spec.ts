@@ -15,7 +15,7 @@ test('UX-03 the Properties panel follows the selection and edits the note it sho
   const box = (await zero.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(panel.locator('.properties-kind').first()).toHaveText('Note');
-  await expect(panel.locator('.properties-where')).toHaveText('Measure 1 · Event 1');
+  await expect(panel.locator('.properties-where')).toHaveText('Measure 1 · Beat 1');
   await expect(panel.locator('.properties-chip')).toContainText('Hammer-on → m1 e2');
   await expect(panel.getByRole('button', { name: 'Remove hammer-on to m1 e2' })).toBeVisible();
   const ribbonFret = page.getByLabel('Fret entry');
@@ -38,7 +38,7 @@ test('UX-03 the Properties panel follows the selection and edits the note it sho
 
   await page.keyboard.press('Shift+ArrowRight');
   await expect(panel.locator('.properties-range .properties-kind')).toHaveText('Range');
-  await expect(panel.locator('.properties-range')).toContainText('M1 E1 – M1 E2 selected');
+  await expect(panel.locator('.properties-range')).toContainText('M1 B1 – M1 B2 selected');
   await expect(panel.locator('.properties-range').getByRole('button', { name: 'Copy passage' })).toBeDisabled();
   await expect(panel.locator('.properties-range').getByRole('button', { name: 'Clear to rests…' })).toBeEnabled();
 });
@@ -56,7 +56,7 @@ test('UX-02 ribbon menus run the shared commands and keep one row at 1080 px', a
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await toolbar.getByRole('button', { name: 'Measure' }).click();
   await page.getByRole('menu', { name: 'Measure' }).getByRole('menuitem', { name: /Insert measure after/ }).click();
-  await expect(page.getByRole('status', { name: 'Editor status' })).toContainText('M2 E1 S3 · whole rest');
+  await expect(page.getByRole('status', { name: 'Editor status' })).toContainText('M2 B1 S3 · whole rest');
   await expect(page.getByRole('combobox', { name: 'Selection measure' }).locator('option')).toHaveCount(5);
   await toolbar.getByRole('button', { name: 'Text' }).click();
   await page.getByRole('menu', { name: 'Text' }).getByRole('menuitem', { name: /Section label/ }).click();

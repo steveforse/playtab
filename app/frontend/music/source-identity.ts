@@ -8,10 +8,10 @@ export type SourceIdentityMap = {
   noteIds: string[];
   nextMeasureId: number;
   measureIds: string[];
-  nextEventId: number;
-  eventIds: string[];
+  nextBeatId: number;
+  beatIds: string[];
 };
-export type IdentityCarry = { id: string; address: string; kind?: 'note' | 'measure' | 'event' };
+export type IdentityCarry = { id: string; address: string; kind?: 'note' | 'measure' | 'beat' };
 
 function records(source: string) {
   const document = readSourceDocument(source);
@@ -36,7 +36,7 @@ function structureRecords(source: string) {
     copy.removeAttribute('number');
     return { address: String(index), signature: serializer.serializeToString(copy) };
   });
-  const eventRecords = measures.flatMap((measure, measureIndex) => {
+  const beatRecords = measures.flatMap((measure, measureIndex) => {
     const ordinalByVoice = new Map<string, number>();
     return Array.from(measure.childNodes).filter((node): node is Element => node.nodeType === 1 && (node as Element).localName === 'note')
       .flatMap(note => {
@@ -50,7 +50,7 @@ function structureRecords(source: string) {
           signature: fingerprint(note, serializer) }];
       });
   });
-  return { measureRecords, eventRecords };
+  return { measureRecords, beatRecords };
 }
 
 function pushIndex(map: Map<string, number[]>, key: string, index: number) {
@@ -66,7 +66,7 @@ function fingerprint(note: Element, serializer: XMLSerializer) {
   return serializer.serializeToString(copy);
 }
 
-// A changed event count disables ordinal matching throughout that voice. An
+// A changed beat count disables ordinal matching throughout that voice. An
 // unchanged unique XML note can still carry its ID after a structural shift;
 // repeated indistinguishable notes receive new IDs unless the command passes
 // an explicit carry hint.
@@ -92,7 +92,7 @@ function laneCounts(source: string) {
 type StructuralRecord = { address: string; signature: string };
 
 function reconcileStructure(
-  kind: 'measure' | 'event', oldRecords: StructuralRecord[], oldIds: string[], newRecords: StructuralRecord[], nextId: number,
+  kind: 'measure' | 'beat', oldRecords: StructuralRecord[], oldIds: string[], newRecords: StructuralRecord[], nextId: number,
   carries: IdentityCarry[], noteLinks: { oldAddress: string; newAddress: string }[],
 ) {
   if (oldRecords.length !== oldIds.length || new Set(oldIds).size !== oldIds.length) {
@@ -146,19 +146,19 @@ export function createSourceIdentityMap(source: string): SourceIdentityMap {
   return { nextId: count + 1, noteIds: Array.from({ length: count }, (_, index) => `n${index + 1}`),
     nextMeasureId: structure.measureRecords.length + 1,
     measureIds: structure.measureRecords.map((_, index) => `m${index + 1}`),
-    nextEventId: structure.eventRecords.length + 1,
-    eventIds: structure.eventRecords.map((_, index) => `e${index + 1}`) };
+    nextBeatId: structure.beatRecords.length + 1,
+    beatIds: structure.beatRecords.map((_, index) => `e${index + 1}`) };
 }
 
-export function sourceEventIdsByAddress(source: string, identity: SourceIdentityMap): Map<string, string> {
-  const events = structureRecords(source).eventRecords;
-  if (events.length !== identity.eventIds.length) throw new Error('Source event identity map no longer matches this score.');
-  return new Map(events.map((event, index) => [event.address, identity.eventIds[index]]));
+export function sourceBeatIdsByAddress(source: string, identity: SourceIdentityMap): Map<string, string> {
+  const beats = structureRecords(source).beatRecords;
+  if (beats.length !== identity.beatIds.length) throw new Error('Source beat identity map no longer matches this score.');
+  return new Map(beats.map((record, index) => [record.address, identity.beatIds[index]]));
 }
 
-export function sourceEventCount(source: string, measure: number, voice: number): number {
+export function sourceBeatCount(source: string, measure: number, voice: number): number {
   const prefix = `${measure}:${voice}:`;
-  return structureRecords(source).eventRecords.filter(event => event.address.startsWith(prefix)).length;
+  return structureRecords(source).beatRecords.filter(record => record.address.startsWith(prefix)).length;
 }
 
 export function reconcileSourceIdentityMap(beforeSource: string, before: SourceIdentityMap, afterSource: string, carries: IdentityCarry[] = []): SourceIdentityMap {
@@ -217,19 +217,19 @@ export function reconcileSourceIdentityMap(beforeSource: string, before: SourceI
   const noteIds = assigned.map(id => id ?? `n${nextId++}`);
   const oldById = new Map(before.noteIds.map((id, index) => [id, oldRecords[index]]));
   const measureLinks: { oldAddress: string; newAddress: string }[] = [];
-  const eventLinks: { oldAddress: string; newAddress: string }[] = [];
+  const beatLinks: { oldAddress: string; newAddress: string }[] = [];
   noteIds.forEach((id, index) => {
     const oldNote = oldById.get(id);
     const newNote = newRecords[index];
     if (!oldNote) return;
     measureLinks.push({ oldAddress: String(oldNote.measure), newAddress: String(newNote.measure) });
-    eventLinks.push({ oldAddress: `${oldNote.measure}:${oldNote.voice}:${oldNote.beat}`,
+    beatLinks.push({ oldAddress: `${oldNote.measure}:${oldNote.voice}:${oldNote.beat}`,
       newAddress: `${newNote.measure}:${newNote.voice}:${newNote.beat}` });
   });
   const measures = reconcileStructure('measure', oldStructure.measureRecords, before.measureIds,
     newStructure.measureRecords, before.nextMeasureId, carries, measureLinks);
-  const events = reconcileStructure('event', oldStructure.eventRecords, before.eventIds,
-    newStructure.eventRecords, before.nextEventId, carries, eventLinks);
+  const beatStructure = reconcileStructure('beat', oldStructure.beatRecords, before.beatIds,
+    newStructure.beatRecords, before.nextBeatId, carries, beatLinks);
   return { nextId, noteIds, nextMeasureId: measures.nextId, measureIds: measures.ids,
-    nextEventId: events.nextId, eventIds: events.ids };
+    nextBeatId: beatStructure.nextId, beatIds: beatStructure.ids };
 }

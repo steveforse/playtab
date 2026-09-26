@@ -30,7 +30,7 @@ export function protectedNoteAttachment(note: Element): string | null {
     }
     return null;
   };
-  // An event's lyric moves to the promoted chord member or stays on the
+  // A beat's lyric moves to the promoted chord member or stays on the
   // resulting rest; only grace and later chord members would lose theirs.
   if (child(note, 'lyric') && (child(note, 'grace') || child(note, 'chord'))) return 'lyric';
   return inspect(note);
@@ -78,7 +78,7 @@ export function deleteSourceNotes(document: Document, notes: Element[]) {
     const next = siblings[siblings.indexOf(note) + 1];
     if (!child(note, 'chord') && next?.localName === 'note' && child(next, 'chord')) {
       // The first member carries the time advance; promote its successor,
-      // along with the event's timed lyrics so removing one note keeps them.
+      // along with the beat's timed lyrics so removing one note keeps them.
       removeChildren(next, 'chord');
       children(note).filter(item => item.localName === 'lyric').forEach(lyric =>
         placeLyric(next, lyric, Number(lyric.getAttribute('number') ?? '1') || 1));
@@ -86,7 +86,7 @@ export function deleteSourceNotes(document: Document, notes: Element[]) {
     } else if (child(note, 'chord') || child(note, 'grace')) {
       note.parentNode?.removeChild(note);
     } else {
-      // Keep the event duration when its last ordinary member is removed.
+      // Keep the beat duration when its last ordinary member is removed.
       ['pitch', 'notations', 'accidental', 'tie', 'stem', 'beam'].forEach(name => removeChildren(note, name));
       note.insertBefore(document.createElement('rest'), note.firstChild);
     }
@@ -105,7 +105,7 @@ export function removeMusicXmlNotes(source: string, score: model.Score, position
   const mainGroups = groups.filter(group => !group.some(note => child(note, 'grace')));
   const mainIndex = voice!.beats.slice(0, position.beat).filter(candidate => !candidate.graceType).length;
   const group = mainGroups[mainIndex];
-  if (!group || group.some(note => child(note, 'rest'))) throw new Error('The source event cannot be matched safely for removal.');
+  if (!group || group.some(note => child(note, 'rest'))) throw new Error('The source beat cannot be matched safely for removal.');
   const boundary = timingBoundary(document, position.measure, tabStaff, text(child(group[0], 'voice')) || '1', group);
   if (boundary) throw new Error(boundary);
   const sourceMembers = group.map(note => {
@@ -113,15 +113,15 @@ export function removeMusicXmlNotes(source: string, score: model.Score, position
     return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
   }).sort();
   const renderedMembers = beat.notes.map(note => `${6 - note.string}:${note.fret}`).sort();
-  if (sourceMembers.join('|') !== renderedMembers.join('|')) throw new Error('The source chord does not match the selected event.');
+  if (sourceMembers.join('|') !== renderedMembers.join('|')) throw new Error('The source chord does not match the selected beat.');
   const selected = position.string === undefined ? group : group.filter(note => {
     const technical = child(child(note, 'notations') ?? note, 'technical');
     return Number(text(child(technical ?? note, 'string'))) === position.string;
   });
   if (position.string !== undefined && selected.length !== 1) return null;
-  const removeWholeEvent = selected.length === group.length;
+  const removeWholeBeat = selected.length === group.length;
   const grace: Element[] = [];
-  if (removeWholeEvent) {
+  if (removeWholeBeat) {
     for (let index = groups.indexOf(group) - 1; index >= 0 && groups[index].every(note => child(note, 'grace')); index--) grace.unshift(...groups[index]);
   }
   const linked = linkedStaffNotes(document);
@@ -170,7 +170,7 @@ export function newChordMember(document: Document, anchor: Element, midi: number
   const added = document.createElement('note');
   added.appendChild(document.createElement('chord'));
   setPitch(added, midi);
-  // Carry only the event's timing and staff identity. Lyrics, ties, grace
+  // Carry only the beat's timing and staff identity. Lyrics, ties, grace
   // markers, techniques and other note-owned data belong to the source note.
   for (const name of ['duration', 'voice', 'type', 'dot', 'time-modification', 'staff']) {
     children(anchor).filter(item => item.localName === name).forEach(item => added.appendChild(item.cloneNode(true)));
@@ -196,18 +196,18 @@ export function replaceRestWithNote(rest: Element, midi: number, string?: number
 }
 
 // Add to the original MusicXML in one transaction, including its verified
-// duplicate notation staff. Never shift the source event's duration or onset.
+// duplicate notation staff. Never shift the source beat's duration or onset.
 export function addMusicXmlNote(source: string, score: model.Score, position: NotePosition): string {
   const document = parseDocument(source);
   const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const beat = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
-  if (!measure || !beat || beat.graceType) throw new Error('This source event cannot be mapped safely for note insertion.');
-  if (beat.notes.some(note => 6 - note.string === position.string)) throw new Error('This string already has a note at this event.');
+  if (!measure || !beat || beat.graceType) throw new Error('This source beat cannot be mapped safely for note insertion.');
+  if (beat.notes.some(note => 6 - note.string === position.string)) throw new Error('This string already has a note at this beat.');
   const tabStaff = sourceTabStaff(document);
   const tabGroups = sourceBeatGroups(measure, tabStaff, String(position.voice + 1));
   const group = tabGroups[position.beat];
-  if (!group || group.some(note => child(note, 'grace'))) throw new Error('This source event cannot be mapped safely for note insertion.');
+  if (!group || group.some(note => child(note, 'grace'))) throw new Error('This source beat cannot be mapped safely for note insertion.');
   const boundary = timingBoundary(document, position.measure, tabStaff, text(child(group[0], 'voice')) || '1', group);
   if (boundary) throw new Error(boundary);
   const midi = openTabTuning(score)[position.string - 1] + position.fret;
@@ -215,7 +215,7 @@ export function addMusicXmlNote(source: string, score: model.Score, position: No
   const otherStaves = new Set(children(measure).filter(item => item.localName === 'note').map(note => Number(text(child(note, 'staff')) || '1')));
   otherStaves.delete(tabStaff);
   if (group.length === 1 && child(group[0], 'rest')) {
-    if (!beat.isRest) throw new Error('The source rest does not match the selected event.');
+    if (!beat.isRest) throw new Error('The source rest does not match the selected beat.');
     const pairedRests = [...otherStaves].map(staff => {
       const paired = sourceBeatGroups(measure, staff)[position.beat];
       if (!paired || paired.length !== 1 || !child(paired[0], 'rest') || text(child(paired[0], 'duration')) !== text(child(group[0], 'duration'))) {
@@ -226,13 +226,13 @@ export function addMusicXmlNote(source: string, score: model.Score, position: No
     replaceRestWithNote(group[0], midi, position.string, position.fret);
     pairedRests.forEach(rest => replaceRestWithNote(rest, midi));
   } else {
-    if (beat.isRest || group.some(note => child(note, 'rest'))) throw new Error('The source chord does not match the selected event.');
+    if (beat.isRest || group.some(note => child(note, 'rest'))) throw new Error('The source chord does not match the selected beat.');
     const sourceMembers = group.map(note => {
       const technical = child(child(note, 'notations') ?? note, 'technical');
       return `${text(child(technical ?? note, 'string'))}:${text(child(technical ?? note, 'fret'))}`;
     }).sort();
     const renderedMembers = beat.notes.map(note => `${6 - note.string}:${note.fret}`).sort();
-    if (sourceMembers.join('|') !== renderedMembers.join('|')) throw new Error('The source chord does not match the selected event.');
+    if (sourceMembers.join('|') !== renderedMembers.join('|')) throw new Error('The source chord does not match the selected beat.');
     const linked = linkedStaffNotes(document);
     const paired = linked(group[0]);
     if (paired.length !== otherStaves.size) throw new Error('The paired notation chord cannot be matched safely.');

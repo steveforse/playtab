@@ -1,21 +1,21 @@
 import { useEffect, useState, type RefObject } from 'react';
-import type { InsertEventOptions } from '../../music/musicxml-editor';
+import type { InsertBeatOptions } from '../../music/musicxml-editor';
 import { DURATION_DENOMINATORS, type DurationDenominator } from '../rhythm';
 import { useModalDialog } from '../useModalDialog';
 
-export type InsertEventDraft = Omit<InsertEventOptions, 'measure' | 'beat' | 'voice'>;
+export type InsertBeatDraft = Omit<InsertBeatOptions, 'measure' | 'beat' | 'voice'>;
 
-// Inserts a note or rest before or after the selected event.
-export function InsertEventDialog({ open, initialString, error, onInsert, onClose, returnFocus }: {
-  open: boolean; initialString: number; error: string; onInsert: (draft: InsertEventDraft) => void; onClose: () => void;
+// Inserts a note or rest before or after the selected beat.
+export function InsertBeatDialog({ open, initialString, error, onInsert, onClose, returnFocus }: {
+  open: boolean; initialString: number; error: string; onInsert: (draft: InsertBeatDraft) => void; onClose: () => void;
   returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const ref = useModalDialog(open, returnFocus);
-  const [draft, setDraft] = useState<InsertEventDraft>({ placement: 'after', kind: 'rest', denominator: 4, dotted: false, string: 1, fret: 0 });
+  const [draft, setDraft] = useState<InsertBeatDraft>({ placement: 'after', kind: 'rest', denominator: 4, dotted: false, string: 1, fret: 0 });
   useEffect(() => { if (open) setDraft({ placement: 'after', kind: 'rest', denominator: 4, dotted: false, string: initialString, fret: 0 }); }, [open]);
-  return <dialog ref={ref} className="insert-dialog" aria-label="Insert event" onCancel={event => { event.preventDefault(); onClose(); }}>
-    <h2>Insert event</h2>
-    <p>Following events move within this voice and measure. Trailing rests make room.</p>
+  return <dialog ref={ref} className="insert-dialog" aria-label="Insert beat" onCancel={event => { event.preventDefault(); onClose(); }}>
+    <h2>Insert beat</h2>
+    <p>Following beats move within this voice and measure. Trailing rests make room.</p>
     {open && error && <p className="alert" role="alert">{error}</p>}
     <div className="insert-dialog-fields">
       <label>Position<select data-dialog-first value={draft.placement} onChange={event => setDraft(current => ({ ...current, placement: event.target.value as 'before' | 'after' }))}><option value="before">Before</option><option value="after">After</option></select></label>

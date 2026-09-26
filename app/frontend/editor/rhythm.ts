@@ -41,12 +41,12 @@ export function fillRestTime(duration: RationalTime): DurationDenominator[] {
 }
 
 export type RestSpacePlan = { insertRests: DurationDenominator[]; consumeRests: number; leaveRests: DurationDenominator[] };
-export const REST_SPACE_ERROR = 'Not enough rest space in this measure. Shorten another event or insert a measure.';
+export const REST_SPACE_ERROR = 'Not enough rest space in this measure. Shorten another beat or insert a measure.';
 
 export function planDurationChange(current: RationalTime, next: RationalTime,
   following: readonly { duration: RationalTime; rest: boolean }[]): RestSpacePlan {
   if (compareTime(current, rationalTime(0n)) <= 0 || compareTime(next, rationalTime(0n)) <= 0) {
-    throw new Error('Event duration must be positive.');
+    throw new Error('Beat duration must be positive.');
   }
   const change = compareTime(next, current);
   if (change === 0) return { insertRests: [], consumeRests: 0, leaveRests: [] };

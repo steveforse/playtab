@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 
-test('ED-06 auditions a selected event and keeps its playback range independent of editing', async ({ page }) => {
+test('ED-06 auditions a selected beat and keeps its playback range independent of editing', async ({ page }) => {
   const errors: string[] = [];
   let phase = 'load';
   page.on('pageerror', error => errors.push(`${phase}: ${error.stack ?? error.message}`));
@@ -15,15 +15,15 @@ test('ED-06 auditions a selected event and keeps its playback range independent 
   await expect(page.getByRole('button', { name: 'Play selection' })).toBeEnabled({ timeout: 45000 });
   phase = 'play selection';
   await page.getByRole('button', { name: 'Play selection' }).click();
-  await expect(page.getByText('Playing range: M1 E1–M1 E1')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B1')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeVisible({ timeout: 5000 });
   const second = (await notes.nth(1).boundingBox())!;
   phase = 'select next';
   await page.mouse.click(second.x + second.width / 2, second.y + second.height / 2);
-  await expect(page.getByText('Playing range: M1 E1–M1 E1')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B1')).toBeVisible();
   phase = 'clear range';
   await page.getByRole('button', { name: 'Clear playback range' }).click();
-  await expect(page.getByText('Playing range: M1 E1–M1 E1')).toHaveCount(0);
+  await expect(page.getByText('Playing range: M1 B1–M1 B1')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -39,16 +39,16 @@ test('ED-06 Shift-click selects a written passage and Loop does not change its e
   await page.keyboard.down('Shift');
   await page.mouse.click(third.x + third.width / 2, third.y + third.height / 2);
   await page.keyboard.up('Shift');
-  await expect(page.locator('.editor-range-summary')).toHaveText('M1 E1 – M1 E3 selected');
+  await expect(page.locator('.editor-range-summary')).toHaveText('M1 B1 – M1 B3 selected');
   await expect(notation.locator('.editor-passage-selection')).toHaveCount(1);
   await expect(notation.locator('.editor-range-endpoint')).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath('edit-passage.png') });
   await page.getByRole('button', { name: 'Play selection' }).click();
-  await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B3')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('playback-passage.png') });
   await page.getByRole('button', { name: 'Loop', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Loop', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B3')).toBeVisible();
 });
 
 test('ED-06 sets passage endpoints through keyboard-accessible inspector controls', async ({ page }) => {
@@ -65,14 +65,14 @@ test('ED-06 sets passage endpoints through keyboard-accessible inspector control
   await notation.press('ArrowRight');
   await notation.press('ArrowRight');
   await page.getByRole('button', { name: 'Set range end' }).click();
-  await expect(page.locator('.editor-range-summary')).toHaveText('M1 E1 – M1 E3 selected');
+  await expect(page.locator('.editor-range-summary')).toHaveText('M1 B1 – M1 B3 selected');
   await expect(notation.locator('.editor-passage-selection')).toHaveCount(1);
   await expect(notation.locator('.editor-range-endpoint')).toHaveCount(2);
   await page.getByRole('button', { name: 'Play selection' }).click();
-  await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B3')).toBeVisible();
   await page.getByRole('button', { name: 'Clear passage' }).click();
   await expect(page.locator('.editor-range-summary')).toHaveCount(0);
-  await expect(page.getByText('Playing range: M1 E1–M1 E3')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B3')).toBeVisible();
 });
 
 test('ED-06 drags a passage only after crossing the pointer threshold', async ({ page }) => {
@@ -89,7 +89,7 @@ test('ED-06 drags a passage only after crossing the pointer threshold', async ({
   await expect(page.locator('.editor-range-summary')).toHaveCount(0);
   await page.mouse.move(third.x + third.width / 2, third.y + third.height / 2, { steps: 4 });
   await page.mouse.up();
-  await expect(page.locator('.editor-range-summary')).toHaveText('M1 E1 – M1 E3 selected');
+  await expect(page.locator('.editor-range-summary')).toHaveText('M1 B1 – M1 B3 selected');
 });
 
 test('ED-06 stops selection audio on an edit and retains playback settings and endpoints', async ({ page }) => {
@@ -109,7 +109,7 @@ test('ED-06 stops selection audio on an edit and retains playback settings and e
   await notation.press('4');
   await notation.press('Enter');
   await expect(page.getByText('Score updated. Press Play to listen.')).toBeVisible();
-  await expect(page.getByText('Playing range: M1 E1–M1 E1')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B1')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Loop', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
   expect(errors).toEqual([]);
@@ -132,7 +132,7 @@ test('ED-06 auditions a repeated measure once in written order without audio err
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.getByRole('button', { name: 'Play selection' })).toBeEnabled({ timeout: 45000 });
   await page.getByRole('button', { name: 'Play selection' }).click();
-  await expect(page.getByText('Playing range: M1 E1–M1 E1')).toBeVisible();
+  await expect(page.getByText('Playing range: M1 B1–M1 B1')).toBeVisible();
   await page.getByRole('button', { name: 'Clear playback range' }).click();
   expect(errors).toEqual([]);
 });

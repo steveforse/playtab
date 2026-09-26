@@ -3,7 +3,7 @@ import type { model } from '@coderline/alphatab';
 import { child, children, descendants, directMeasures, ensure, midiToPitch, noteTechnical, parseDocument, pitchMidi, readDocument, scorePart, setPitch, setText, sourceTabStaff, text, tuningMidi } from './xml';
 import { linkedStaffNotes, sourceTabNoteRecords } from './records';
 import { measureTimeline, rational, sameTime, timeGreater, type Rational, type RhythmPosition } from './time';
-import { ANCHOR_TEXT_LIMIT, anchorEvent } from './text';
+import { ANCHOR_TEXT_LIMIT, anchorBeat } from './text';
 import { defaultFifthCapo, openTabTuning } from './tuning';
 export { defaultFifthCapo, fifthStringOffset } from './tuning';
 
@@ -218,7 +218,7 @@ export function applyMusicXmlScoreSettings(source: string, score: model.Score, s
   for (const record of records) {
     const index = record.string - 1;
     if (settings.tuning[index] === initial[index]) continue;
-    const where = `Measure ${record.measure + 1}, event ${record.beat + 1}, string ${record.string}`;
+    const where = `Measure ${record.measure + 1}, beat ${record.beat + 1}, string ${record.string}`;
     if (settings.mode === 'pitches') {
       const midi = pitchMidi(child(record.note, 'pitch')) ?? initial[index] + record.fret;
       const fret = midi - settings.tuning[index];
@@ -372,7 +372,7 @@ export function previewTuningConflicts(document: Document, fallback: number[]) {
     const midi = pitchMidi(child(record.note, 'pitch'));
     if (midi === null || midi === tuning[record.string - 1] + record.fret) continue;
     const key = `${record.measure}:${record.voice}:${record.beat}:${record.string}`;
-    conflicts.set(key, { key, where: `Measure ${record.measure + 1}, event ${record.beat + 1}, string ${record.string}` });
+    conflicts.set(key, { key, where: `Measure ${record.measure + 1}, beat ${record.beat + 1}, string ${record.string}` });
   }
   return Object.assign([...conflicts.values()], { has: (key: string) => conflicts.has(key) });
 }
@@ -394,20 +394,20 @@ export function tempoBefore(part: Element, measureIndex: number, onset: Rational
 
 export function inspectMusicXmlTempo(source: string, score: model.Score, position: RhythmPosition): LocalTempoInfo {
   const document = readDocument(source);
-  const { part, measure, onset } = anchorEvent(document, score, position);
+  const { part, measure, onset } = anchorBeat(document, score, position);
   const onsets = measureTimeline(part, position.measure).onsets;
   const local = tempoDirectives(measure, onsets, onset).map(directiveTempo).find(value => value !== null) ?? null;
   return { local, inherited: tempoBefore(part, position.measure, onset, Math.round(score.tempo || 120)), opening: position.measure === 0 && onset[0] === 0n };
 }
 
-// Sets (or removes, with null) the tempo that starts at the selected event.
+// Sets (or removes, with null) the tempo that starts at the selected beat.
 export function setMusicXmlLocalTempo(source: string, score: model.Score, position: RhythmPosition, tempo: number | null): string {
   if (tempo !== null && (!Number.isInteger(tempo) || tempo < TEMPO_LIMITS.min || tempo > TEMPO_LIMITS.max)) {
     throw new Error(`Tempo must be a whole number from ${TEMPO_LIMITS.min} to ${TEMPO_LIMITS.max} BPM.`);
   }
   const document = parseDocument(source);
-  const { part, measure, anchors, onset, tabStaff } = anchorEvent(document, score, position);
-  if (position.measure === 0 && onset[0] === 0n) throw new Error('The first event uses the opening tempo. Change it in Score settings.');
+  const { part, measure, anchors, onset, tabStaff } = anchorBeat(document, score, position);
+  if (position.measure === 0 && onset[0] === 0n) throw new Error('The first beat uses the opening tempo. Change it in Score settings.');
   const directives = tempoDirectives(measure, measureTimeline(part, position.measure).onsets, onset);
   if (tempo === null) {
     if (!directives.length) return source;

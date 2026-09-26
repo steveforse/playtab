@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 
-test('Remove note keeps the other chord tone; Make rest and Undo restore the event', async ({ page }, testInfo) => {
+test('Remove note keeps the other chord tone; Make rest and Undo restore the beat', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.getByRole('button', { name: '＋ Import a tab' }).click();
   await page.getByLabel('Choose tablature file').setInputFiles('tests/fixtures/paired-staff.musicxml');
@@ -80,7 +80,7 @@ test('unknown note attachment blocks Make rest without changing history', async 
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
 });
 
-test('Make rest confirms a grace group and Undo restores its original event', async ({ page }) => {
+test('Make rest confirms a grace group and Undo restores its original beat', async ({ page }) => {
   const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
   const grace = '<note><grace slash="yes"/><pitch><step>C</step><octave>3</octave></pitch><type>16th</type><notations><technical><string>4</string><fret>0</fret></technical></notations></note>';
   const withGrace = source.replace('    <note><pitch><step>C</step><octave>3</octave></pitch>', `    ${grace}\n    <note><pitch><step>C</step><octave>3</octave></pitch>`);
@@ -94,15 +94,15 @@ test('Make rest confirms a grace group and Undo restores its original event', as
   const box = (await zeros.nth(1).boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   const inspector = page.getByLabel('Selection inspector');
-  await expect(inspector).toContainText('Event 2');
+  await expect(inspector).toContainText('Beat 2');
   await page.getByRole('button', { name: 'Make rest', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Confirm note removal' });
   await expect(dialog).toContainText('1 grace note');
   await dialog.getByRole('button', { name: 'Make rest' }).click();
-  await expect(inspector).toContainText('Event 1');
+  await expect(inspector).toContainText('Beat 1');
   await expect(inspector).not.toContainText('Fret 0');
   await page.getByRole('button', { name: 'Undo' }).click();
-  await expect(inspector).toContainText('Event 2');
+  await expect(inspector).toContainText('Beat 2');
   await expect(inspector).toContainText('Fret 0');
 });
 

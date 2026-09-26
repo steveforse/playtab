@@ -4,20 +4,20 @@ import { defaultPlayerPreferences, Player, type ContextMenuRequest, type PlayerC
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { createBlankMusicXml, OPEN_G_TUNING, promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, graceEventPlacement, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, graceBeatPlacement, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlBeat,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type PickingHand, type GraceEventSpec, type GraceTransition, type GracePlacement, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type BeatLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type PickingHand, type GraceBeatSpec, type GraceTransition, type GracePlacement, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
-import { sourceEventCount, type IdentityCarry, type SourceIdentityMap } from './music/source-identity';
+import { sourceBeatCount, type IdentityCarry, type SourceIdentityMap } from './music/source-identity';
 import { readSourceDocument } from './music/xml-cache';
 
 function rangeDescription(passage: PlaybackEndpoints, whole: { first: number; last: number } | null) {
   if (whole) return whole.first === whole.last ? `Measure ${whole.first} selected` : `Measures ${whole.first}–${whole.last} selected`;
   const { start, end } = passage;
-  return `M${start.measure} E${start.event} – M${end.measure} E${end.event} selected`;
+  return `M${start.measure} B${start.beat} – M${end.measure} B${end.beat} selected`;
 }
 
 type LibraryItem = { id: number; title: string; revision?: number };
@@ -34,7 +34,7 @@ type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndin
 type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; destination: number; placement: GracePlacement; sides: Record<GracePlacement, GraceSide> };
 type BendTarget = { originalKey: string; selection: ScoreSelection; existing: NoteBend | 'none' | null; reason?: string };
 type AnchorTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; kind: AnchorKind; items: AnchorItem[] };
-type LyricTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; lyrics: EventLyric[] };
+type LyricTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; lyrics: BeatLyric[] };
 type StandaloneTarget = { originalKey: string; base: MusicXmlPreview };
 type SettingsTarget = { originalKey: string; base: MusicXmlPreview; info: ScoreSettingsInfo };
 type TempoTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; info: LocalTempoInfo };
@@ -66,7 +66,7 @@ import { ContextMenu, type MenuEntry } from './editor/ContextMenu';
 import { EditorToolbar } from './editor/EditorToolbar';
 import { DURATION_COMMANDS, RhythmTools } from './editor/sidebar/RhythmTools';
 import { TechniqueTools, TRANSITION_COMMANDS } from './editor/sidebar/TechniqueTools';
-import { InsertEventDialog, type InsertEventDraft } from './editor/dialogs/InsertEventDialog';
+import { InsertBeatDialog, type InsertBeatDraft } from './editor/dialogs/InsertBeatDialog';
 import { ConflictDialog, DiscardDialog, LeaveDialog, RemovalDialog, SaveCopyDialog } from './editor/dialogs/SessionDialogs';
 import { ANCHOR_NAMES, BEND_LABELS, capitalized, CHORD_QUALITIES, CHORD_STEPS, DEFAULT_CHORD, TRANSITION_NAMES } from './editor/labels';
 class ApiError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -79,14 +79,14 @@ function readImportedDocument(document: ImportedScoreDocument, sourceIdentity?: 
   return withPreviewTitle(readMusicXml(document.source, document.sourceName, document.sourceFormat,
     sourceIdentity ? { source: document.source, map: sourceIdentity } : undefined), document.title);
 }
-function structuralCarries(preview: MusicXmlPreview, selection: ScoreSelection, carryEvent = true): IdentityCarry[] {
+function structuralCarries(preview: MusicXmlPreview, selection: ScoreSelection, carryBeat = true): IdentityCarry[] {
   const measure = selection.measure - 1;
-  const address = `${measure}:${selection.voice}:${selection.event - 1}`;
+  const address = `${measure}:${selection.voice}:${selection.beat - 1}`;
   const measureId = selection.sourceMeasureId ?? preview.sourceIdentity?.measureIds[measure];
-  const eventId = selection.sourceEventId ?? preview.sourceEventIdByAddress?.get(address);
+  const beatId = selection.sourceBeatId ?? preview.sourceBeatIdByAddress?.get(address);
   return [
     ...(measureId ? [{ kind: 'measure' as const, id: measureId, address: String(measure) }] : []),
-    ...(carryEvent && eventId ? [{ kind: 'event' as const, id: eventId, address }] : []),
+    ...(carryBeat && beatId ? [{ kind: 'beat' as const, id: beatId, address }] : []),
   ];
 }
 function readdressMeasureCarries(preview: MusicXmlPreview, addressFor: (index: number) => number | null): IdentityCarry[] {
@@ -95,10 +95,10 @@ function readdressMeasureCarries(preview: MusicXmlPreview, addressFor: (index: n
     const next = addressFor(index);
     return next === null ? [] : [{ kind: 'measure', id, address: String(next) }];
   });
-  const events: IdentityCarry[] = [...(preview.sourceEventIdByAddress ?? new Map<string, string>())].flatMap(([address, id]) => {
+  const events: IdentityCarry[] = [...(preview.sourceBeatIdByAddress ?? new Map<string, string>())].flatMap(([address, id]) => {
     const separator = address.indexOf(':');
     const next = addressFor(Number(address.slice(0, separator)));
-    return next === null ? [] : [{ kind: 'event', id, address: `${next}${address.slice(separator)}` }];
+    return next === null ? [] : [{ kind: 'beat', id, address: `${next}${address.slice(separator)}` }];
   });
   const notes = sourceTabNoteRecords(readSourceDocument(preview.source));
   const noteCarries: IdentityCarry[] = notes.flatMap((record, index) => {
@@ -116,29 +116,29 @@ function deletedMeasureCarries(preview: MusicXmlPreview, deletedIndex: number): 
 }
 function refreshStructuralSelection(selection: ScoreSelection, preview: MusicXmlPreview) {
   selection.sourceMeasureId = preview.sourceIdentity?.measureIds[selection.measure - 1];
-  selection.sourceEventId = preview.sourceEventIdByAddress?.get(`${selection.measure - 1}:${selection.voice}:${selection.event - 1}`);
+  selection.sourceBeatId = preview.sourceBeatIdByAddress?.get(`${selection.measure - 1}:${selection.voice}:${selection.beat - 1}`);
 }
 function selectionAtPosition(current: ScoreSelection, score: Score, preview: MusicXmlPreview | null,
-  changes: Partial<Pick<ScoreSelection, 'measure' | 'event' | 'voice' | 'string'>>): ScoreSelection {
+  changes: Partial<Pick<ScoreSelection, 'measure' | 'beat' | 'voice' | 'string'>>): ScoreSelection {
   const measure = Math.max(1, Math.min(changes.measure ?? current.measure, preview?.score.masterBars.length ?? score.measures.length));
   const voice = changes.voice ?? current.voice;
   const importedBeats = preview?.score.tracks?.[0]?.staves?.[0]?.bars?.[measure - 1]?.voices?.[voice - 1]?.beats;
   const nativeBeats = preview ? undefined : score.measures[measure - 1]?.beats;
-  const event = Math.max(1, Math.min(changes.event ?? current.event, importedBeats?.length ?? nativeBeats?.length ?? 1));
+  const beatNumber = Math.max(1, Math.min(changes.beat ?? current.beat, importedBeats?.length ?? nativeBeats?.length ?? 1));
   const string = changes.string === undefined ? current.string : changes.string;
-  const importedBeat = importedBeats?.[event - 1];
-  const nativeBeat = nativeBeats?.[event - 1];
+  const importedBeat = importedBeats?.[beatNumber - 1];
+  const nativeBeat = nativeBeats?.[beatNumber - 1];
   const importedNote = importedBeat?.notes.find(item => string !== null && 6 - item.string === string);
   const nativeNote = nativeBeat?.notes.find(item => item.string === string);
   const kind = importedNote || nativeNote ? 'note' : importedBeat?.isRest || nativeBeat?.notes.length === 0 ? 'rest' : 'empty';
   const noteId = importedNote?.id ?? null;
-  return { ...current, measure, event, voice, string, kind, noteId, fret: importedNote?.fret ?? nativeNote?.fret ?? null,
+  return { ...current, measure, beat: beatNumber, voice, string, kind, noteId, fret: importedNote?.fret ?? nativeNote?.fret ?? null,
     graceIndex: importedBeat?.graceType ? importedBeat.graceIndex : null,
     graceGroupId: importedBeat?.graceGroup?.id ?? null,
     mappingReason: undefined,
     sourceId: noteId === null ? undefined : preview?.sourceIdByModelNoteId?.get(noteId),
     sourceMeasureId: preview?.sourceIdentity?.measureIds[measure - 1],
-    sourceEventId: preview?.sourceEventIdByAddress?.get(`${measure - 1}:${voice}:${event - 1}`),
+    sourceBeatId: preview?.sourceBeatIdByAddress?.get(`${measure - 1}:${voice}:${beatNumber - 1}`),
   };
 }
 async function apiRequest(path: string, options?: RequestInit) {
@@ -180,7 +180,7 @@ export function App() {
   // A fret draft belongs to the selection it was typed for. Keying it this
   // way means a new selection never inherits the previous note's draft, even
   // for the render before any effect runs.
-  const selectionFretKey = selection ? `${selection.measure}:${selection.event}:${selection.voice}:${selection.graceIndex ?? ''}:${selection.string}:${selection.noteId}:${selection.fret}` : '';
+  const selectionFretKey = selection ? `${selection.measure}:${selection.beat}:${selection.voice}:${selection.graceIndex ?? ''}:${selection.string}:${selection.noteId}:${selection.fret}` : '';
   const selectionFretText = selection?.fret === null || selection?.fret === undefined ? '' : String(selection.fret);
   const [fretEdit, setFretEdit] = useState<{ key: string; value: string; buffer: boolean } | null>(null);
   const fretDraft = fretEdit?.key === selectionFretKey ? fretEdit.value : selectionFretText;
@@ -328,14 +328,14 @@ export function App() {
   fretDraftRef.current = fretDraft;
   useEffect(() => {
     setMoveString(selection?.string ? String(selection.string) : '');
-  }, [selection?.noteId, selection?.measure, selection?.event, selection?.string, selection?.fret]);
+  }, [selection?.noteId, selection?.measure, selection?.beat, selection?.string, selection?.fret]);
   // Typing a digit on a selected string changes the fret at once. A second
   // digit typed quickly on the same position makes a two-digit fret (up to
   // 36); both digits form one undo step. Other keys are left to the caller.
   const typing = useRef<{ key: string; text: string; at: number; group: string } | null>(null);
   const typingTimer = useRef<number | undefined>(undefined);
   const [typedFret, setTypedFret] = useState<{ key: string; text: string } | null>(null);
-  const positionKey = (target: ScoreSelection) => `${target.measure}:${target.event}:${target.voice}:${target.string}`;
+  const positionKey = (target: ScoreSelection) => `${target.measure}:${target.beat}:${target.voice}:${target.string}`;
   function endTyping() {
     typing.current = null;
     window.clearTimeout(typingTimer.current);
@@ -452,7 +452,7 @@ export function App() {
         const state = musicXmlEditorState(preview.source, preview.score, preview.sourceIdentity);
         const note = selectionToEdit.sourceId
           ? state.notes.find(candidate => candidate.sourceIdentity?.id === selectionToEdit.sourceId)
-          : state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.event - 1
+          : state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.beat - 1
             && candidate.voice === selectionToEdit.voice - 1 && candidate.string === selectionToEdit.string);
         if (!note) {
           setError(selectionToEdit.sourceId ? 'The selected source note is no longer available. Select it again before editing.' : 'This imported position has no source note to edit yet.');
@@ -484,7 +484,7 @@ export function App() {
     }
     if (selectionToEdit.string === null) return false;
     const measureIndex = selectionToEdit.measure - 1;
-    const beatIndex = selectionToEdit.event - 1;
+    const beatIndex = selectionToEdit.beat - 1;
     const measure = score.measures[measureIndex];
     if (!measure?.beats[beatIndex]) return false;
     const next = {
@@ -518,17 +518,17 @@ export function App() {
         let nextSource: string;
         if (selectionToEdit.kind === 'note') {
           const state = musicXmlEditorState(promoted.source, promoted.score, promoted.sourceIdentity);
-          const note = state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.event - 1 && candidate.string === selectionToEdit.string);
+          const note = state.notes.find(candidate => candidate.measure === selectionToEdit.measure - 1 && candidate.beat === selectionToEdit.beat - 1 && candidate.string === selectionToEdit.string);
           if (!note) throw new Error('The selected note could not be matched after promotion.');
           note.fret = fret;
           nextSource = applyMusicXmlEdits(promoted.source, state, [note.index]);
         } else nextSource = addMusicXmlNote(promoted.source, promoted.score, {
-          measure: selectionToEdit.measure - 1, beat: selectionToEdit.event - 1,
+          measure: selectionToEdit.measure - 1, beat: selectionToEdit.beat - 1,
           voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
         });
         const nextPreview = withPreviewTitle(readMusicXml(nextSource, filename, 'musicxml',
           promoted.sourceIdentity ? { source: promoted.source, map: promoted.sourceIdentity } : undefined), score.title);
-        after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.event}:${after.voice}:${after.string}:${fret}`);
+        after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.beat}:${after.voice}:${after.string}:${fret}`);
         refreshStructuralSelection(after, nextPreview);
         remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Promote score and change fret to ${fret}`);
         setPreview(nextPreview); setSelection(after); setError('');
@@ -538,13 +538,13 @@ export function App() {
     if (preview && selectionToEdit.kind !== 'note') {
       try {
         const nextSource = addMusicXmlNote(preview.source, preview.score, {
-          measure: selectionToEdit.measure - 1, beat: selectionToEdit.event - 1,
+          measure: selectionToEdit.measure - 1, beat: selectionToEdit.beat - 1,
           voice: selectionToEdit.voice - 1, string: selectionToEdit.string, fret,
         });
         const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
           preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity,
             carries: structuralCarries(preview, selectionToEdit) } : undefined), preview.score.title);
-        after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.event}:${after.voice}:${after.string}:${fret}`);
+        after.sourceId = nextPreview.sourceIdByLocation?.get(`${after.measure}:${after.beat}:${after.voice}:${after.string}:${fret}`);
         refreshStructuralSelection(after, nextPreview);
         remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, `Add fret ${fret}`, group);
         setPreview(nextPreview);
@@ -563,11 +563,11 @@ export function App() {
   }
   function changeSelectedDuration(denominator: DurationDenominator, dotted: boolean) {
     if (!selection) return;
-    if (pendingFret) { setError('Apply the pending fret before changing this event.'); return; }
+    if (pendingFret) { setError('Apply the pending fret before changing this beat.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
       const nextSource = changeMusicXmlDuration(base.source, base.score,
-        { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 }, denominator, dotted);
+        { measure: selection.measure - 1, beat: selection.beat - 1, voice: selection.voice - 1 }, denominator, dotted);
       if (nextSource === base.source && preview) return;
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity,
@@ -580,51 +580,51 @@ export function App() {
   }
   function changeSelectedTriplet(remove: boolean) {
     if (!selection) return;
-    if (pendingFret) { setError('Apply the pending fret before changing this event.'); return; }
+    if (pendingFret) { setError('Apply the pending fret before changing this beat.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
-      const position = { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 };
+      const position = { measure: selection.measure - 1, beat: selection.beat - 1, voice: selection.voice - 1 };
       const nextSource = remove ? removeMusicXmlTriplet(base.source, base.score, position)
         : createMusicXmlTriplet(base.source, base.score, position);
-      const firstEvent = remove ? inspectMusicXmlTriplet(base.source, position).start ?? position.beat : position.beat;
-      const eventId = base.sourceEventIdByAddress?.get(`${position.measure}:${selection.voice}:${firstEvent}`)
-        ?? (firstEvent === position.beat ? selection.sourceEventId : undefined);
+      const firstBeat = remove ? inspectMusicXmlTriplet(base.source, position).start ?? position.beat : position.beat;
+      const beatId = base.sourceBeatIdByAddress?.get(`${position.measure}:${selection.voice}:${firstBeat}`)
+        ?? (firstBeat === position.beat ? selection.sourceBeatId : undefined);
       const carries: IdentityCarry[] = [...structuralCarries(base, selection, false),
-        ...(eventId ? [{ kind: 'event' as const, id: eventId, address: `${position.measure}:${selection.voice}:${firstEvent}` }] : [])];
+        ...(beatId ? [{ kind: 'beat' as const, id: beatId, address: `${position.measure}:${selection.voice}:${firstBeat}` }] : [])];
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries } : undefined), base.score.title);
-      const after = selectionAtPosition(selection, score, nextPreview, { event: firstEvent + 1 });
+      const after = selectionAtPosition(selection, score, nextPreview, { beat: firstBeat + 1 });
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
         sourceIdentity: nextPreview.sourceIdentity }, remove ? 'Remove triplet' : 'Create triplet');
       setPreview(nextPreview); setSelection(after); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function openInsertEvent(opener: HTMLElement) {
+  function openInsertBeat(opener: HTMLElement) {
     if (!selection) return;
-    if (pendingFret) { setError('Apply the pending fret before inserting an event.'); return; }
+    if (pendingFret) { setError('Apply the pending fret before inserting a beat.'); return; }
     insertOpener.current = opener;
     setError('');
     setInsertOpen(true);
   }
-  function confirmInsertEvent(insertDraft: InsertEventDraft) {
+  function confirmInsertBeat(insertDraft: InsertBeatDraft) {
     if (!selection) return;
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
-      const position = { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 };
-      const nextSource = insertMusicXmlEvent(base.source, base.score, { ...position, ...insertDraft });
-      const eventId = selection.sourceEventId ?? base.sourceEventIdByAddress?.get(`${position.measure}:${selection.voice}:${position.beat}`);
+      const position = { measure: selection.measure - 1, beat: selection.beat - 1, voice: selection.voice - 1 };
+      const nextSource = insertMusicXmlBeat(base.source, base.score, { ...position, ...insertDraft });
+      const beatId = selection.sourceBeatId ?? base.sourceBeatIdByAddress?.get(`${position.measure}:${selection.voice}:${position.beat}`);
       const carries: IdentityCarry[] = [
         ...structuralCarries(base, selection, false),
-        ...(eventId ? [{ kind: 'event' as const, id: eventId,
+        ...(beatId ? [{ kind: 'beat' as const, id: beatId,
           address: `${position.measure}:${selection.voice}:${position.beat + (insertDraft.placement === 'before' ? 1 : 0)}` }] : []),
       ];
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries } : undefined), base.score.title);
-      const insertedEvent = selection.event + (insertDraft.placement === 'after' ? 1 : 0);
-      const after = selectionAtPosition(selection, score, nextPreview, { event: insertedEvent,
+      const insertedBeat = selection.beat + (insertDraft.placement === 'after' ? 1 : 0);
+      const after = selectionAtPosition(selection, score, nextPreview, { beat: insertedBeat,
         string: insertDraft.kind === 'note' ? insertDraft.string! : selection.string });
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
-        sourceIdentity: nextPreview.sourceIdentity }, `Insert ${insertDraft.kind} ${insertDraft.placement} event`);
+        sourceIdentity: nextPreview.sourceIdentity }, `Insert ${insertDraft.kind} ${insertDraft.placement} beat`);
       setPreview(nextPreview); setSelection(after); setInsertOpen(false); setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
@@ -640,7 +640,7 @@ export function App() {
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries } : undefined), base.score.title);
       const insertedMeasure = selectedIndex + (placement === 'after' ? 2 : 1);
       const after = selectionAtPosition(selection, score, nextPreview,
-        { measure: insertedMeasure, event: 1 });
+        { measure: insertedMeasure, beat: 1 });
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
         sourceIdentity: nextPreview.sourceIdentity }, `Insert measure ${placement} selected`);
       setPreview(nextPreview); setSelection(after);
@@ -677,7 +677,7 @@ export function App() {
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity,
           carries: shiftedMeasureCarries(base, measureIndex + 1) } : undefined), base.score.title);
-      const after = selectionAtPosition(selection, score, nextPreview, { measure: measureIndex + 2, event: 1 });
+      const after = selectionAtPosition(selection, score, nextPreview, { measure: measureIndex + 2, beat: 1 });
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after,
         sourceIdentity: nextPreview.sourceIdentity }, `Duplicate measure ${measureIndex + 1}`);
       setPreview(nextPreview); setSelection(after); setPendingDuplication(null);
@@ -813,18 +813,18 @@ export function App() {
     if (pendingFret) { setError('Apply the pending fret before editing grace notes.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
-      const position = { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 };
+      const position = { measure: selection.measure - 1, beat: selection.beat - 1, voice: selection.voice - 1 };
       // A selected grace note opens the group it belongs to; an ordinary note
       // opens its existing group (before first), or a new one before it.
-      const selected = selection.graceIndex !== null ? graceEventPlacement(base.source, base.score, position) ?? 'before' : null;
+      const selected = selection.graceIndex !== null ? graceBeatPlacement(base.source, base.score, position) ?? 'before' : null;
       const opened = inspectMusicXmlGraceGroup(base.source, base.score, position, selected ?? 'before');
       const main = { ...position, beat: opened.destination };
       const side = (placement: GracePlacement): GraceSide => {
         try {
           const info = placement === (selected ?? 'before') ? opened : inspectMusicXmlGraceGroup(base.source, base.score, main, placement);
-          const existing = info.events.length > 0;
-          return { existing, first: info.first ?? info.destination - info.events.length, readOnly: info.readOnly, connections: info.connections,
-            initialEvents: existing ? info.events : [{ denominator: 16, notes: [{ string: selection.string!, fret: selection.fret!, transition: 'none' }] }] };
+          const existing = info.graceBeats.length > 0;
+          return { existing, first: info.first ?? info.destination - info.graceBeats.length, readOnly: info.readOnly, connections: info.connections,
+            initialBeats: existing ? info.graceBeats : [{ denominator: 16, notes: [{ string: selection.string!, fret: selection.fret!, transition: 'none' }] }] };
         } catch (failure) { return { unavailable: (failure as Error).message }; }
       };
       const sides = { before: side('before'), after: side('after') };
@@ -835,7 +835,7 @@ export function App() {
       setError('');
     } catch (failure) { setError((failure as Error).message); }
   }
-  function commitGraceSource(candidate: string, description: string, message: string, event: number, string: number | null): string | null {
+  function commitGraceSource(candidate: string, description: string, message: string, beatNumber: number, string: number | null): string | null {
     if (!graceTarget) return null;
     if (graceTarget.originalKey !== documentKey(currentDocument)) {
       setGraceTarget(null); setError('The score changed since this grace preview. Open it again.'); return null;
@@ -844,21 +844,21 @@ export function App() {
       const { base, selection: opened } = graceTarget;
       const nextPreview = withPreviewTitle(readMusicXml(candidate, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
-      const after = selectionAtPosition(opened, score, nextPreview, { event, string });
+      const after = selectionAtPosition(opened, score, nextPreview, { beat: beatNumber, string });
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, description);
       setPreview(nextPreview); setSelection(after); setGraceTarget(null); setError(''); setMessage(message);
       return null;
     } catch (failure) { return (failure as Error).message; }
   }
-  function confirmGrace(candidate: string, graceEvents: GraceEventSpec[], placement: GracePlacement): string | null {
+  function confirmGrace(candidate: string, graceBeats: GraceBeatSpec[], placement: GracePlacement): string | null {
     if (!graceTarget) return null;
     const { selection: opened } = graceTarget;
     const side = graceTarget.sides[placement];
     if ('unavailable' in side) return side.unavailable;
     const { first, existing } = side;
     const where = placement === 'after' ? 'after' : 'before';
-    return commitGraceSource(candidate, `${existing ? 'Edit' : 'Add'} grace group ${placement === 'after' ? 'after an event ' : ''}in measure ${opened.measure}`,
-      existing ? 'Grace group updated.' : `Grace group added ${where} the selected event.`, first + 1, graceEvents[0].notes[0].string);
+    return commitGraceSource(candidate, `${existing ? 'Edit' : 'Add'} grace group ${placement === 'after' ? 'after a beat ' : ''}in measure ${opened.measure}`,
+      existing ? 'Grace group updated.' : `Grace group added ${where} the selected beat.`, first + 1, graceBeats[0].notes[0].string);
   }
   function removeGraceGroup(placement: GracePlacement): string | null {
     if (!graceTarget) return null;
@@ -913,10 +913,10 @@ export function App() {
       bend ? shape : 'Remove bend', bend ? `${shape} applied.` : 'Bend removed.')) setBendTarget(null);
   }
   function anchorPosition(target: ScoreSelection) {
-    return { measure: target.measure - 1, beat: target.event - 1, voice: target.voice - 1 };
+    return { measure: target.measure - 1, beat: target.beat - 1, voice: target.voice - 1 };
   }
   function openAnchorDialog(kind: AnchorKind, opener: HTMLElement) {
-    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to anchor text to it.'); return; }
+    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary beat to anchor text to it.'); return; }
     if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
@@ -934,7 +934,7 @@ export function App() {
     const name = ANCHOR_NAMES[kind].item;
     const remove = value === null;
     const shown = value === null ? items[anchorChoice as number].text : typeof value === 'string' ? value.trim() : chordSpellingName(value);
-    const where = kind === 'section' ? `measure ${target.measure}` : `measure ${target.measure}, event ${target.event}`;
+    const where = kind === 'section' ? `measure ${target.measure}` : `measure ${target.measure}, beat ${target.beat}`;
     try {
       const nextSource = changeMusicXmlAnchor(base.source, base.score, anchorPosition(target), kind, anchorChoice === 'new' ? null : anchorChoice, value);
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
@@ -959,7 +959,7 @@ export function App() {
     setPreview(nextPreview); setSelection(after); setError(''); setMessage(message);
   }
   function openLyricDialog(opener: HTMLElement) {
-    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to edit its lyric.'); return; }
+    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary beat to edit its lyric.'); return; }
     if (pendingFret) { setError('Apply the pending fret before editing text.'); return; }
     try {
       const base = textBase();
@@ -976,7 +976,7 @@ export function App() {
     if (lyricTarget.originalKey !== documentKey(currentDocument)) { setLyricTarget(null); setError('The score changed since this lyric was opened. Open it again.'); return null; }
     try {
       const nextSource = setMusicXmlLyric(base.source, base.score, anchorPosition(target), verse, value);
-      const where = `measure ${target.measure}, event ${target.event}`;
+      const where = `measure ${target.measure}, beat ${target.beat}`;
       commitText(base, target, nextSource, `${remove ? 'Remove' : 'Set'} verse ${verse} lyric at ${where}`,
         remove ? `Verse ${verse} lyric removed from ${where}.` : `Verse ${verse} lyric “${value.text.trim()}” applied at ${where}.`);
       setLyricTarget(null);
@@ -1034,7 +1034,7 @@ export function App() {
     } catch (failure) { return (failure as Error).message; }
   }
   function openTempoDialog(opener: HTMLElement) {
-    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary event to set its tempo.'); return; }
+    if (!selection || selection.graceIndex !== null) { setError('Select an ordinary beat to set its tempo.'); return; }
     if (pendingFret) { setError('Apply the pending fret before changing the tempo.'); return; }
     try {
       const base = textBase();
@@ -1051,31 +1051,31 @@ export function App() {
     if (tempoTarget.originalKey !== documentKey(currentDocument)) { setTempoTarget(null); setError('The score changed since this tempo was opened. Open it again.'); return null; }
     try {
       const nextSource = setMusicXmlLocalTempo(base.source, base.score, anchorPosition(target), tempo);
-      const where = `measure ${target.measure}, event ${target.event}`;
+      const where = `measure ${target.measure}, beat ${target.beat}`;
       commitText(base, target, nextSource, remove ? `Remove local tempo at ${where}` : `Set tempo ${tempo} BPM at ${where}`,
         remove ? `Local tempo removed at ${where}; ${tempoTarget.info.inherited} BPM continues.` : `Tempo ${tempo} BPM set at ${where}.`);
       setTempoTarget(null);
       return null;
     } catch (failure) { return (failure as Error).message; }
   }
-  function measureEventCount(measure: number, voice: number) {
+  function measureBeatCount(measure: number, voice: number) {
     return preview ? preview.score.tracks?.[0]?.staves?.[0]?.bars?.[measure - 1]?.voices?.[voice - 1]?.beats?.length ?? 0
       : score.measures[measure - 1]?.beats.length ?? 0;
   }
   function selectWholeMeasure() {
     if (!selection) return;
-    const last = measureEventCount(selection.measure, selection.voice);
-    setPassage({ start: selectionAtPosition(selection, score, preview, { event: 1 }), end: selectionAtPosition(selection, score, preview, { event: Math.max(1, last) }) });
+    const last = measureBeatCount(selection.measure, selection.voice);
+    setPassage({ start: selectionAtPosition(selection, score, preview, { beat: 1 }), end: selectionAtPosition(selection, score, preview, { beat: Math.max(1, last) }) });
     setMessage(`Measure ${selection.measure} selected as a passage.`); setError('');
   }
   function wholeMeasurePassage() {
     if (!passage) return null;
     const { start, end } = passage;
-    return start.voice === end.voice && start.event === 1 && end.event === measureEventCount(end.measure, end.voice) ? { first: start.measure, last: end.measure } : null;
+    return start.voice === end.voice && start.beat === 1 && end.beat === measureBeatCount(end.measure, end.voice) ? { first: start.measure, last: end.measure } : null;
   }
   function openCutDialog(opener: HTMLElement) {
     const range = wholeMeasurePassage();
-    if (!range) { setError('Select whole measures to cut. Use Select measure, or set the range from a first event to a last event.'); return; }
+    if (!range) { setError('Select whole measures to cut. Use Select measure, or set the range from a first beat to a last beat.'); return; }
     if (pendingFret) { setError('Apply the pending fret before cutting.'); return; }
     try {
       const base = textBase();
@@ -1086,7 +1086,7 @@ export function App() {
     } catch (failure) { setError((failure as Error).message); }
   }
   // Clears the selected range to rests after the Cut-style confirmation:
-  // whole measures through the measure cut, partial ranges event by event.
+  // whole measures through the measure cut, partial ranges beat by beat.
   function openClearRange(opener: HTMLElement | null) {
     if (!passage) return;
     if (pendingFret) { setError('Apply the pending fret before clearing the range.'); return; }
@@ -1105,11 +1105,11 @@ export function App() {
       const dependencies = new Set<string>();
       for (let measure = start.measure; measure <= end.measure; measure++) {
         const count = current.score.tracks[0]?.staves[0]?.bars[measure - 1]?.voices[start.voice - 1]?.beats.length ?? 0;
-        const last = measure === end.measure ? end.event : count;
-        for (let event = measure === start.measure ? start.event : 1; event <= last; event++) {
-          const beat = current.score.tracks[0]?.staves[0]?.bars[measure - 1]?.voices[start.voice - 1]?.beats[event - 1];
+        const last = measure === end.measure ? end.beat : count;
+        for (let beatNumber = measure === start.measure ? start.beat : 1; beatNumber <= last; beatNumber++) {
+          const beat = current.score.tracks[0]?.staves[0]?.bars[measure - 1]?.voices[start.voice - 1]?.beats[beatNumber - 1];
           if (!beat || beat.isRest || beat.notes.length === 0 || beat.graceType) continue;
-          const result = removeMusicXmlNotes(current.source, current.score, { measure: measure - 1, beat: event - 1, voice: start.voice - 1 });
+          const result = removeMusicXmlNotes(current.source, current.score, { measure: measure - 1, beat: beatNumber - 1, voice: start.voice - 1 });
           if (!result) continue;
           notes += beat.notes.length;
           result.dependencies.forEach(item => dependencies.add(item));
@@ -1118,7 +1118,7 @@ export function App() {
       }
       if (!notes) { setMessage('The selected range already holds only rests.'); setError(''); return; }
       setCutTarget({ originalKey: documentKey(currentDocument), base, first: start.measure, last: end.measure, mode: 'clear',
-        label: `M${start.measure} E${start.event} – M${end.measure} E${end.event}`,
+        label: `M${start.measure} B${start.beat} – M${end.measure} B${end.beat}`,
         cut: { source: current.source, notes, labels: 0, lyrics: 0, spans: [...dependencies] } });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
@@ -1144,7 +1144,7 @@ export function App() {
     if (!passage) return;
     const { start, end } = passage;
     if (!wholeMeasurePassage()) {
-      setError('Select whole measures to copy. Use Select measure, or set the range from a first event to a last event.'); return;
+      setError('Select whole measures to copy. Use Select measure, or set the range from a first beat to a last beat.'); return;
     }
     try {
       const base = textBase();
@@ -1174,7 +1174,7 @@ export function App() {
       const count = clipboard.measures.length;
       const nextPreview = withPreviewTitle(readMusicXml(candidate, base.filename, base.sourceFormat,
         base.sourceIdentity ? { source: base.source, map: base.sourceIdentity, carries: replacing ? [] : shiftedMeasureCarries(base, measure - 1) } : undefined), base.score.title);
-      const first = selectionAtPosition({ ...(selection ?? passage!.start), measure, event: 1 }, score, nextPreview, { measure, event: 1 });
+      const first = selectionAtPosition({ ...(selection ?? passage!.start), measure, beat: 1 }, score, nextPreview, { measure, beat: 1 });
       const plural = `${count} measure${count === 1 ? '' : 's'}`;
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: first, sourceIdentity: nextPreview.sourceIdentity },
         replacing ? `Paste ${plural} over measure ${measure}` : `Paste ${plural} before measure ${measure}`);
@@ -1202,7 +1202,7 @@ export function App() {
         const created = withPreviewTitle(readMusicXml(source, `${title.slice(0, 148)}.musicxml`, 'musicxml'), title);
         loadPreview(created, [], null, null, source);
         setEditMode(true);
-        setSelection(selectionAtPosition({ track: 1, staff: 1, measure: 1, event: 1, voice: 1, string: 1, kind: 'empty', noteId: null, fret: null,
+        setSelection(selectionAtPosition({ track: 1, staff: 1, measure: 1, beat: 1, voice: 1, string: 1, kind: 'empty', noteId: null, fret: null,
           graceIndex: null, graceGroupId: null }, demo, created, {}));
         setMessage(`New score “${title}” created. It is not saved until you choose Save to library.`);
       } catch (failure) { setError((failure as Error).message); }
@@ -1323,16 +1323,16 @@ export function App() {
     if (!preview) return;
     if (selectionToDelete.graceIndex !== null) { commitGraceRemoval(nextSource, selectionToDelete, mode); return; }
     try {
-      const beat = preview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats[selectionToDelete.event - 1];
+      const beat = preview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats[selectionToDelete.beat - 1];
       const lastMember = mode === 'rest' || beat?.notes.length === 1;
-      const carryEvent = sourceEventCount(preview.source, selectionToDelete.measure - 1, selectionToDelete.voice)
-        === sourceEventCount(nextSource, selectionToDelete.measure - 1, selectionToDelete.voice);
+      const carryBeat = sourceBeatCount(preview.source, selectionToDelete.measure - 1, selectionToDelete.voice)
+        === sourceBeatCount(nextSource, selectionToDelete.measure - 1, selectionToDelete.voice);
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
         preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity,
-          carries: structuralCarries(preview, selectionToDelete, carryEvent) } : undefined), preview.score.title);
+          carries: structuralCarries(preview, selectionToDelete, carryBeat) } : undefined), preview.score.title);
       const nextBeats = nextPreview.score.tracks[0]?.staves[0]?.bars[selectionToDelete.measure - 1]?.voices[selectionToDelete.voice - 1]?.beats ?? [];
-      const matchingEvent = beat ? nextBeats.findIndex(candidate => !candidate.graceType && candidate.playbackStart === beat.playbackStart) : -1;
-      const after: ScoreSelection = { ...selectionToDelete, event: matchingEvent < 0 ? selectionToDelete.event : matchingEvent + 1,
+      const matchingBeat = beat ? nextBeats.findIndex(candidate => !candidate.graceType && candidate.playbackStart === beat.playbackStart) : -1;
+      const after: ScoreSelection = { ...selectionToDelete, beat: matchingBeat < 0 ? selectionToDelete.beat : matchingBeat + 1,
         kind: lastMember ? 'rest' : 'empty', noteId: null, fret: null, sourceId: undefined };
       refreshStructuralSelection(after, nextPreview);
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, mode === 'rest' ? 'Make rest' : 'Remove note');
@@ -1345,18 +1345,18 @@ export function App() {
   function commitGraceRemoval(nextSource: string, selectionToDelete: ScoreSelection, mode: RemovalMode) {
     if (!preview) return;
     try {
-      const carryEvent = sourceEventCount(preview.source, selectionToDelete.measure - 1, selectionToDelete.voice)
-        === sourceEventCount(nextSource, selectionToDelete.measure - 1, selectionToDelete.voice);
+      const carryBeat = sourceBeatCount(preview.source, selectionToDelete.measure - 1, selectionToDelete.voice)
+        === sourceBeatCount(nextSource, selectionToDelete.measure - 1, selectionToDelete.voice);
       const nextPreview = withPreviewTitle(readMusicXml(nextSource, preview.filename, preview.sourceFormat,
         preview.sourceIdentity ? { source: preview.source, map: preview.sourceIdentity,
-          carries: structuralCarries(preview, selectionToDelete, carryEvent) } : undefined), preview.score.title);
-      // A removed grace event hands its index to the next grace event or to
+          carries: structuralCarries(preview, selectionToDelete, carryBeat) } : undefined), preview.score.title);
+      // A removed grace note hands its index to the next grace note or to
       // the ordinary destination, so the selection stays beside the edit.
       const after = selectionAtPosition(selectionToDelete, score, nextPreview, {});
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity },
         mode === 'grace' ? 'Remove grace' : 'Remove grace note');
       setPreview(nextPreview); setSelection(after); setError('');
-      setMessage(mode === 'grace' ? 'Grace event removed.' : 'Grace note removed.');
+      setMessage(mode === 'grace' ? 'Grace note removed.' : 'Grace note removed.');
       documentRefocus();
     } catch (failure) { setError((failure as Error).message); }
   }
@@ -1365,7 +1365,7 @@ export function App() {
     if (preview && selectionToDelete.graceIndex !== null) {
       try {
         const result = removeMusicXmlGrace(preview.source, preview.score, {
-          measure: selectionToDelete.measure - 1, beat: selectionToDelete.event - 1,
+          measure: selectionToDelete.measure - 1, beat: selectionToDelete.beat - 1,
           voice: selectionToDelete.voice - 1, string: mode === 'grace' ? undefined : selectionToDelete.string,
         });
         if (result.dependencies.length) {
@@ -1379,7 +1379,7 @@ export function App() {
     if (preview) {
       try {
         const result = removeMusicXmlNotes(preview.source, preview.score, {
-          measure: selectionToDelete.measure - 1, beat: selectionToDelete.event - 1,
+          measure: selectionToDelete.measure - 1, beat: selectionToDelete.beat - 1,
           voice: selectionToDelete.voice - 1, string: mode === 'note' ? selectionToDelete.string : undefined,
         });
         if (!result) return;
@@ -1390,7 +1390,7 @@ export function App() {
       } catch (failure) { setError((failure as Error).message); }
       return;
     }
-    const beat = score.measures[selectionToDelete.measure - 1]?.beats[selectionToDelete.event - 1];
+    const beat = score.measures[selectionToDelete.measure - 1]?.beats[selectionToDelete.beat - 1];
     if (!beat?.notes.some(note => note.string === selectionToDelete.string)) return;
     const lastMember = mode === 'rest' || beat.notes.length === 1;
     const after: ScoreSelection = { ...selectionToDelete, kind: lastMember ? 'rest' : 'empty', noteId: null, fret: null };
@@ -1409,7 +1409,7 @@ export function App() {
     if (!pending) return;
     setPendingRemoval(null);
     if (!preview || preview.source !== pending.beforeSource) {
-      setError('The score changed while removal was pending. Select the event again.');
+      setError('The score changed while removal was pending. Select the beat again.');
       return;
     }
     commitImportedRemoval(pending.afterSource, pending.selection, pending.mode);
@@ -1460,7 +1460,7 @@ export function App() {
     }
     return true;
   }
-  function navigateInspector(changes: Partial<Pick<ScoreSelection, 'measure' | 'event' | 'voice' | 'string'>>) {
+  function navigateInspector(changes: Partial<Pick<ScoreSelection, 'measure' | 'beat' | 'voice' | 'string'>>) {
     if (!commitPendingFret()) return;
     setSelection(current => current ? selectionAtPosition(current, score, preview, changes) : current);
   }
@@ -1598,22 +1598,22 @@ export function App() {
   }
   // Read-only facts about the selected location: exact offset from the bar
   // start, sounding pitch, grace-group navigation, and string-move outcome.
-  const { selectedBeats, selectedDetails, moveOutcome, selectedEventCount, selectedRhythm, selectedTriplet, selectedTupletLocked,
+  const { selectedBeats, selectedDetails, moveOutcome, selectedBeatCount, selectedRhythm, selectedTriplet, selectedTupletLocked,
     selectedTransitions, selectedTie, selectedTechniques, selectedHasGrace, selectedHasAfterGrace, selectedGracePlacement } = inspectSelection(selection, preview, score, moveString, moveMode);
   const measureCount = preview?.score.masterBars.length ?? score.measures.length;
   const onSelection = (run: (current: ScoreSelection) => void) => (_opener: HTMLElement) => { if (selection) run(selection); };
   const noteSelected = selection?.kind === 'note';
   const graceReason = selection?.graceIndex !== null && selection ? 'Not available on a grace note' : undefined;
-  const tupletReason = !selectedRhythm ? 'Select an event first' : selectedTupletLocked ? selectedTriplet?.reason ?? 'Change the triplet as a whole' : undefined;
+  const tupletReason = !selectedRhythm ? 'Select a beat first' : selectedTupletLocked ? selectedTriplet?.reason ?? 'Change the triplet as a whole' : undefined;
   const wholeRange = wholeMeasurePassage();
   const rangeReason = !passage ? 'Select a range first' : !wholeRange ? 'Select whole measures first' : undefined;
   const playReason = playerControls.current?.canPlay ? undefined : 'Playback is not ready yet';
   // The status bar summarises the selection in the compact form other
-  // notation editors use, e.g. "M3 E2 S4 · fret 5 · G3 · 1/8".
+  // notation editors use, e.g. "M3 B2 S4 · fret 5 · G3 · 1/8".
   const durationText = selectedRhythm?.denominator
     ? `${selectedRhythm.denominator === 1 ? 'whole' : `1/${selectedRhythm.denominator}`}${'.'.repeat(selectedRhythm.dots)}${selectedRhythm.rest ? ' rest' : ''}` : null;
   const statusSelection = passage ? rangeDescription(passage, wholeRange) : selection
-    ? [`M${selection.measure} E${selection.event}${selection.string !== null ? ` S${selection.string}` : ''}`,
+    ? [`M${selection.measure} B${selection.beat}${selection.string !== null ? ` S${selection.string}` : ''}`,
       selection.fret !== null ? `fret ${selection.fret}` : null, selectedDetails?.pitchValue != null ? selectedDetails.pitch : null, durationText]
       .filter(Boolean).join(' · ')
     : 'Nothing selected';
@@ -1647,8 +1647,8 @@ export function App() {
     'split-rest': { label: 'Split rest', className: 'editor-split-rest',
       disabled: !selectedRhythm?.rest || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0 || selectedTupletLocked,
       run: () => selectedRhythm && changeSelectedDuration((selectedRhythm.denominator! * 2) as DurationDenominator, false) },
-    'insert-event': { label: 'Insert event…', className: 'editor-insert-event', disabled: !selection, run: opener => openInsertEvent(opener) },
-    'set-tempo': { label: 'Set tempo here…', className: 'editor-insert-event', disabled: !selection || selection.graceIndex !== null, reason: graceReason, run: opener => openTempoDialog(opener) },
+    'insert-beat': { label: 'Insert beat…', className: 'editor-insert-beat', disabled: !selection, run: opener => openInsertBeat(opener) },
+    'set-tempo': { label: 'Set tempo here…', className: 'editor-insert-beat', disabled: !selection || selection.graceIndex !== null, reason: graceReason, run: opener => openTempoDialog(opener) },
     triplet: { label: 'Triplet', className: 'editor-triplet-button',
       disabled: !selectedRhythm || selectedTupletLocked || selectedRhythm.denominator === null || selectedRhythm.denominator === 64 || selectedRhythm.dots !== 0,
       run: () => changeSelectedTriplet(false) },
@@ -1670,7 +1670,7 @@ export function App() {
     'range-start': { label: 'Set range start', disabled: !selection, run: onSelection(current => setPassage({ start: current, end: current })) },
     'range-end': { label: 'Set range end', disabled: !passage || !selection, run: onSelection(current => {
       if (!passage) return;
-      const first = passage.start.measure < current.measure || passage.start.measure === current.measure && passage.start.event <= current.event;
+      const first = passage.start.measure < current.measure || passage.start.measure === current.measure && passage.start.beat <= current.beat;
       setPassage(first ? { start: passage.start, end: current } : { start: current, end: passage.start });
     }) },
     'clear-passage': { label: 'Clear passage', disabled: !passage, run: () => setPassage(null) },
@@ -1702,7 +1702,7 @@ export function App() {
       ? ['edit-fret', 'remove-note', 'make-rest', '-', durationEntries,
         { label: 'Techniques', items: ['tie', 'hammer-on', 'pull-off', 'slide', 'bend', 'grace', 'remove-grace', 'remove-tie'] }, textEntries,
         '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection']
-      : ['edit-fret', 'insert-event', '-', durationEntries, textEntries, '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection'];
+      : ['edit-fret', 'insert-beat', '-', durationEntries, textEntries, '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection'];
   const scoreTitle = preview?.score.title ?? score.title;
   const editorTools = <section className="editor-sidebar" aria-label="Edit tools">
         <div className="editor-selection" aria-label="Selection inspector">
@@ -1718,7 +1718,7 @@ export function App() {
             <p className="properties-hint">Select a note or empty string position to begin editing.</p>
             <p className="properties-hint">Click above the staff to select a measure; Shift-click extends.</p>
           </div> : <>
-            <SelectionInspector selection={selection} details={selectedDetails} measureCount={measureCount} eventCount={selectedEventCount}
+            <SelectionInspector selection={selection} details={selectedDetails} measureCount={measureCount} beatCount={selectedBeatCount}
               onNavigate={navigateInspector} fretDraft={fretDraft} onFretDraft={setFretDraft}
               moveString={moveString} onMoveString={setMoveString} moveMode={moveMode} onMoveMode={setMoveMode} moveOutcome={moveOutcome} commands={commands} />
             {selectedRhythm && <RhythmTools rhythm={selectedRhythm} triplet={selectedTriplet} tupletLocked={selectedTupletLocked} commands={commands} />}
@@ -1790,7 +1790,7 @@ export function App() {
             const addressed = next ? { ...next,
               sourceId: next.noteId === null ? undefined : preview?.sourceIdByModelNoteId?.get(next.noteId),
               sourceMeasureId: preview?.sourceIdentity?.measureIds[next.measure - 1],
-              sourceEventId: preview?.sourceEventIdByAddress?.get(`${next.measure - 1}:${next.voice}:${next.event - 1}`),
+              sourceBeatId: preview?.sourceBeatIdByAddress?.get(`${next.measure - 1}:${next.voice}:${next.beat - 1}`),
             } : null;
             // Moving to another location commits a valid buffered fret once;
             // an invalid one keeps the current selection and its error.
@@ -1844,7 +1844,7 @@ export function App() {
     <DuplicateMeasureDialog pending={pendingDuplication} onConfirm={confirmDuplicateMeasure} onClose={() => setPendingDuplication(null)} returnFocus={duplicateOpener} />
     <ContextMenu at={editMode ? contextMenu : null} entries={contextEntries} commands={commands} label="Score actions"
       onClose={() => { setContextMenu(null); documentRefocus(); }} />
-    <InsertEventDialog open={insertOpen} initialString={selection?.string ?? 1} error={error} onInsert={confirmInsertEvent}
+    <InsertBeatDialog open={insertOpen} initialString={selection?.string ?? 1} error={error} onInsert={confirmInsertBeat}
       onClose={() => setInsertOpen(false)} returnFocus={insertOpener} />
     <RemovalDialog pending={pendingRemoval} onConfirm={confirmRemoval} onClose={() => setPendingRemoval(null)} returnFocus={removalOpener} onFocusFallback={documentRefocus} />
     <SaveCopyDialog open={copyOpen} initialTitle={copyTitle} saving={saving} onClose={() => setCopyOpen(false)} onSave={title => {

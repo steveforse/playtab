@@ -38,13 +38,13 @@ test('UI-05 Delete clears a partial range to rests as one undo step', async ({ p
   await page.keyboard.press('Shift+ArrowRight');
   await page.keyboard.press('Delete');
   const dialog = page.getByRole('dialog', { name: 'Clear range' });
-  await expect(dialog).toContainText('Clear M1 E1 – M1 E3?');
+  await expect(dialog).toContainText('Clear M1 B1 – M1 B3?');
   await expect(dialog).toContainText('3 notes');
   await dialog.getByRole('button', { name: 'Clear' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Cleared M1 E1 – M1 E3; it now holds rests.' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Cleared M1 B1 – M1 B3; it now holds rests.' })).toBeVisible();
   await expect(page.locator('.editor-range-summary')).toHaveCount(0);
   await expect(notation.locator('svg text').filter({ hasText: /^[0-9]+$/ })).toHaveCount(before - 3);
-  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toHaveAttribute('title', /Undo: Clear M1 E1 – M1 E3/);
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toHaveAttribute('title', /Undo: Clear M1 B1 – M1 B3/);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(notation.locator('svg text').filter({ hasText: /^[0-9]+$/ })).toHaveCount(before);
 });

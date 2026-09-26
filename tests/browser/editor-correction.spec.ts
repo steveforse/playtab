@@ -73,13 +73,13 @@ test('inspector navigation edits the newly selected imported note, not the previ
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.getByLabel('Selection inspector')).toContainText('String 1');
   await page.getByLabel('Fret', { exact: true }).fill('37');
-  await page.getByLabel('Selection event').selectOption('2');
-  await expect(page.getByLabel('Selection inspector')).toContainText('Event 1');
+  await page.getByLabel('Selection beat').selectOption('2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Beat 1');
   await expect(page.getByRole('alert')).toContainText('0 to 36');
   await page.getByLabel('Fret', { exact: true }).fill('5');
-  await page.getByLabel('Selection event').selectOption('2');
+  await page.getByLabel('Selection beat').selectOption('2');
   await page.getByLabel('Selection string').selectOption('3');
-  await expect(page.getByLabel('Selection inspector')).toContainText('Event 2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Beat 2');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
   await page.getByLabel('Fret', { exact: true }).fill('7');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
@@ -177,16 +177,16 @@ test('selects and fills any string of a rest by pointer', async ({ page }) => {
   const strings = new Set<string>();
   for (let y = box.y; y < box.y + box.height && strings.size < 5; y += 4) {
     await page.mouse.click(box.x + 200, y);
-    const match = (await status.textContent())?.match(/^M1 E1 S(\d) · whole rest$/);
+    const match = (await status.textContent())?.match(/^M1 B1 S(\d) · whole rest$/);
     if (match) strings.add(match[1]);
   }
   expect([...strings].sort()).toEqual(['1', '2', '3', '4', '5']);
   await page.mouse.click(box.x + 200, box.y + 1);
   for (let y = box.y; y < box.y + box.height; y += 4) {
     await page.mouse.click(box.x + 200, y);
-    if ((await status.textContent())?.startsWith('M1 E1 S3')) break;
+    if ((await status.textContent())?.startsWith('M1 B1 S3')) break;
   }
   await page.keyboard.press('5');
-  await expect(status).toContainText('M1 E1 S3 · fret 5');
+  await expect(status).toContainText('M1 B1 S3 · fret 5');
   await expect(notation.locator('svg text').filter({ hasText: /^5$/ })).toHaveCount(1);
 });
