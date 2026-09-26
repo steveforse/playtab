@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import fs from 'node:fs';
 import { readMusicXml } from '../../app/frontend/music/musicxml';
-import { addMusicXmlNote, changeMusicXmlDuration, createMusicXmlTriplet, insertMusicXmlEvent, inspectMusicXmlDuration, inspectMusicXmlTriplet,
+import { addMusicXmlNote, changeMusicXmlDuration, createMusicXmlTriplet, insertMusicXmlBeat, inspectMusicXmlDuration, inspectMusicXmlTriplet,
   musicXmlEditorState, removeMusicXmlTriplet } from '../../app/frontend/music/musicxml-editor';
 
 vi.stubGlobal('DOMParser', DOMParser);
@@ -34,7 +34,7 @@ describe('ED-10 imported duration commands', () => {
     expect(tab(split).slice(2).every(beat => beat.isRest)).toBe(true);
   });
 
-  it('rejects lengthening into the next sounding event atomically', () => {
+  it('rejects lengthening into the next sounding beat atomically', () => {
     const original = readMusicXml(paired, 'paired.musicxml');
     expect(() => changeMusicXmlDuration(paired, original.score, { measure: 0, beat: 0, voice: 1 }, 2))
       .toThrow('Not enough rest space in this measure');
@@ -69,10 +69,10 @@ describe('ED-10 imported duration commands', () => {
   });
 });
 
-describe('ED-10 insert event', () => {
+describe('ED-10 insert beat', () => {
   it('inserts a paired note after the selection and consumes only trailing rest time', () => {
     const original = readMusicXml(paired, 'paired.musicxml');
-    const inserted = insertMusicXmlEvent(paired, original.score, {
+    const inserted = insertMusicXmlBeat(paired, original.score, {
       measure: 0, beat: 0, voice: 1, placement: 'after', kind: 'note', denominator: 8,
       dotted: false, string: 2, fret: 3,
     });
@@ -84,16 +84,16 @@ describe('ED-10 insert event', () => {
     expect(inserted).toContain('<backup><duration>8</duration></backup>');
   });
 
-  it('inserts before the selected event and rejects insertion past the trailing rest', () => {
+  it('inserts before the selected beat and rejects insertion past the trailing rest', () => {
     const original = readMusicXml(paired, 'paired.musicxml');
-    const inserted = insertMusicXmlEvent(paired, original.score, {
+    const inserted = insertMusicXmlBeat(paired, original.score, {
       measure: 0, beat: 0, voice: 1, placement: 'before', kind: 'rest', denominator: 4,
       dotted: false,
     });
     expect(tab(inserted)[0].isRest).toBe(true);
     expect(tab(inserted)[1].notes).toHaveLength(2);
     expect(tab(inserted)[1].playbackStart).toBe(960);
-    expect(() => insertMusicXmlEvent(paired, original.score, {
+    expect(() => insertMusicXmlBeat(paired, original.score, {
       measure: 0, beat: 2, voice: 1, placement: 'after', kind: 'rest', denominator: 4, dotted: false,
     })).toThrow('Not enough rest space in this measure');
   });
@@ -102,7 +102,7 @@ describe('ED-10 insert event', () => {
     const protectedSource = paired.replaceAll('<type>quarter</type><staff>2</staff><notations><technical><string>3</string><fret>0</fret></technical></notations></note>',
       '<type>quarter</type><staff>2</staff><notations><technical><string>3</string><fret>0</fret></technical></notations><lyric><text>word</text></lyric></note>');
     const original = readMusicXml(protectedSource, 'paired.musicxml');
-    expect(() => insertMusicXmlEvent(protectedSource, original.score, {
+    expect(() => insertMusicXmlBeat(protectedSource, original.score, {
       measure: 0, beat: 0, voice: 1, placement: 'after', kind: 'rest', denominator: 8, dotted: false,
     })).toThrow('protected span or annotation');
     expect(original.source).toBe(protectedSource);
@@ -120,7 +120,7 @@ describe('ED-10 insert event', () => {
     const original = readMusicXml(allRests, 'all-rest.musicxml');
     const split = changeMusicXmlDuration(allRests, original.score, { measure: 0, beat: 0, voice: 1 }, 8);
     expect(readMusicXml(split, 'all-rest.musicxml').score.tracks[0].staves[0].bars[0].voices[1].beats).toHaveLength(3);
-    const inserted = insertMusicXmlEvent(allRests, original.score, {
+    const inserted = insertMusicXmlBeat(allRests, original.score, {
       measure: 0, beat: 0, voice: 1, placement: 'after', kind: 'rest', denominator: 8, dotted: false,
     });
     expect(readMusicXml(inserted, 'all-rest.musicxml').score.tracks[0].staves[0].bars[0].voices[1].beats).toHaveLength(4);
@@ -129,7 +129,7 @@ describe('ED-10 insert event', () => {
   it('keeps a separate voice and the next measure at their original onsets', () => {
     const source = fs.readFileSync('tests/fixtures/editor-rich.musicxml', 'utf8');
     const original = readMusicXml(source, 'voices.musicxml');
-    const changed = insertMusicXmlEvent(source, original.score, {
+    const changed = insertMusicXmlBeat(source, original.score, {
       measure: 0, beat: 0, voice: 3, placement: 'after', kind: 'rest', denominator: 8, dotted: false,
     });
     const after = readMusicXml(changed, 'voices.musicxml');
@@ -143,9 +143,9 @@ describe('ED-10 insert event', () => {
     const original = readMusicXml(paired, 'paired.musicxml');
     const base = { measure: 0, beat: 0, voice: 1, placement: 'after' as const,
       kind: 'note' as const, denominator: 8 as const, dotted: false, string: 2, fret: 3 };
-    expect(() => insertMusicXmlEvent(paired, original.score, { ...base, fret: 37 })).toThrow('valid string and fret');
-    expect(() => insertMusicXmlEvent(paired, original.score, { ...base, denominator: 3 as never })).toThrow('Unsupported note duration');
-    expect(() => insertMusicXmlEvent(paired, original.score, { ...base, placement: 'middle' as never })).toThrow('Invalid event insertion choice');
+    expect(() => insertMusicXmlBeat(paired, original.score, { ...base, fret: 37 })).toThrow('valid string and fret');
+    expect(() => insertMusicXmlBeat(paired, original.score, { ...base, denominator: 3 as never })).toThrow('Unsupported note duration');
+    expect(() => insertMusicXmlBeat(paired, original.score, { ...base, placement: 'middle' as never })).toThrow('Invalid beat insertion choice');
   });
 });
 

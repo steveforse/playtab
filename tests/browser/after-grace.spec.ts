@@ -34,9 +34,9 @@ test('edits, removes and adds a grace group after the last chord of a measure', 
   const dialog = page.getByRole('dialog', { name: 'Edit grace group after' });
   await expect(dialog.getByLabel('Grace position')).toHaveValue('after');
   await expect(dialog).toContainText('Grace notes play at the end of it');
-  await expect(dialog.getByLabel('Grace event 1 transition 1')).toHaveValue('slide');
-  await expect(dialog.getByLabel('Grace event 1 transition 2')).toHaveValue('slide');
-  await dialog.getByLabel('Grace event 1 fret 1').fill('4');
+  await expect(dialog.getByLabel('Grace note 1 transition 1')).toHaveValue('slide');
+  await expect(dialog.getByLabel('Grace note 1 transition 2')).toHaveValue('slide');
+  await dialog.getByLabel('Grace note 1 fret 1').fill('4');
   await dialog.getByRole('button', { name: 'Apply grace group' }).click();
   await expect(page.getByRole('status', { name: 'Editor status' })).toContainText('Grace group updated.');
   const grace = (await text(/^4$/).boundingBox())!;
@@ -55,11 +55,11 @@ test('edits, removes and adds a grace group after the last chord of a measure', 
   await expect(page.getByRole('dialog', { name: 'Add grace group' })).toBeVisible();
   await page.getByLabel('Grace position').selectOption('after');
   const add = page.getByRole('dialog', { name: 'Add grace group after' });
-  await add.getByLabel('Grace event 1 fret 1').fill('2');
-  await add.getByLabel('Grace event 1 transition 1').selectOption('slide');
+  await add.getByLabel('Grace note 1 fret 1').fill('2');
+  await add.getByLabel('Grace note 1 transition 1').selectOption('slide');
   await add.getByRole('button', { name: 'Apply grace group' }).click();
-  await expect(page.getByRole('status', { name: 'Editor status' })).toContainText('Grace group added after the selected event.');
-  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toHaveAttribute('title', /Add grace group after an event in measure 1/);
+  await expect(page.getByRole('status', { name: 'Editor status' })).toContainText('Grace group added after the selected beat.');
+  await expect(page.getByRole('button', { name: 'Undo', exact: true })).toHaveAttribute('title', /Add grace group after a beat in measure 1/);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toHaveAttribute('title', /Remove grace group/);
 });

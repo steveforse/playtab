@@ -26,10 +26,10 @@ test('ED-10 splits a paired rest while keeping earlier onsets', async ({ page })
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await firstFret.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByRole('combobox', { name: 'Selection event' }).selectOption('3');
+  await page.getByRole('combobox', { name: 'Selection beat' }).selectOption('3');
   await expect(page.getByRole('button', { name: 'Split rest' })).toBeEnabled();
   await page.getByRole('button', { name: 'Split rest' }).click();
-  await expect(page.getByRole('combobox', { name: 'Selection event' }).locator('option')).toHaveCount(4);
+  await expect(page.getByRole('combobox', { name: 'Selection beat' }).locator('option')).toHaveCount(4);
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
@@ -43,16 +43,16 @@ test('ED-10 inserts a paired note after the selection and undoes it', async ({ p
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
   const box = (await firstFret.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await page.getByRole('button', { name: 'Insert event…' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Insert event' });
+  await page.getByRole('button', { name: 'Insert beat…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Insert beat' });
   await dialog.getByLabel('Type').selectOption('note');
   await dialog.getByLabel('Duration').selectOption('8');
   await dialog.getByLabel('String').selectOption('2');
   await dialog.getByLabel('Fret', { exact: true }).fill('3');
-  await dialog.screenshot({ path: testInfo.outputPath('insert-event-dialog.png') });
+  await dialog.screenshot({ path: testInfo.outputPath('insert-beat-dialog.png') });
   await dialog.getByRole('button', { name: 'Insert', exact: true }).click();
   await expect(dialog).not.toBeVisible();
-  await expect(page.getByLabel('Selection inspector')).toContainText('Event 2');
+  await expect(page.getByLabel('Selection inspector')).toContainText('Beat 2');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 3');
   await expect(notation.locator('svg text').filter({ hasText: /^3$/ })).toHaveCount(1);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();

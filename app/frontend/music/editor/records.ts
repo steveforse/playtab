@@ -14,7 +14,7 @@ export function computeTabNoteRecords(document: Document) {
   const part = scorePart(document);
   if (!part) return [];
   return directMeasures(part).flatMap((measure, measureIndex) => {
-    const eventByVoice = new Map<string, number>();
+    const beatByVoice = new Map<string, number>();
     const memberByVoice = new Map<string, number>();
     const graceGroupByVoice = new Map<string, number>();
     const graceIndexByVoice = new Map<string, number>();
@@ -26,7 +26,7 @@ export function computeTabNoteRecords(document: Document) {
         const chord = Boolean(child(note, 'chord'));
         const grace = Boolean(child(note, 'grace')) || (chord && graceActiveByVoice.get(voice) === true);
         if (!chord) {
-          eventByVoice.set(voice, (eventByVoice.get(voice) ?? -1) + 1);
+          beatByVoice.set(voice, (beatByVoice.get(voice) ?? -1) + 1);
           memberByVoice.set(voice, 0);
           if (grace) {
             if (!graceActiveByVoice.get(voice)) graceGroupByVoice.set(voice, (graceGroupByVoice.get(voice) ?? -1) + 1);
@@ -36,14 +36,14 @@ export function computeTabNoteRecords(document: Document) {
         } else memberByVoice.set(voice, (memberByVoice.get(voice) ?? 0) + 1);
         const technical = child(child(note, 'notations') ?? note, 'technical');
         if (!technical || !child(technical, 'string')) return [];
-        const event = eventByVoice.get(voice) ?? 0;
+        const beatInVoice = beatByVoice.get(voice) ?? 0;
         const string = Number(text(child(technical, 'string')));
         const chordMember = memberByVoice.get(voice) ?? 0;
         const graceGroup = grace ? graceGroupByVoice.get(voice) ?? 0 : null;
         const graceIndex = grace ? graceIndexByVoice.get(voice) ?? 0 : null;
-        return [{ note, measure: measureIndex, beat: eventByVoice.get(voice) ?? 0,
+        return [{ note, measure: measureIndex, beat: beatByVoice.get(voice) ?? 0,
           voice, string, fret: Number(text(child(technical, 'fret'))), grace, graceGroup, graceIndex, chordMember,
-          id: `${measureIndex}:${voice}:${event}:${graceGroup ?? 'main'}:${graceIndex ?? 'main'}:${string}` }];
+          id: `${measureIndex}:${voice}:${beatInVoice}:${graceGroup ?? 'main'}:${graceIndex ?? 'main'}:${string}` }];
       });
   });
 }

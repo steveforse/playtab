@@ -8,11 +8,11 @@ export function scoreHasRepeats(score: model.Score): boolean {
   return score.masterBars.some(bar => bar.isRepeatStart || bar.repeatCount > 0 || bar.alternateEndings > 0);
 }
 
-function eventSpan(score: model.Score, selection: ScoreSelection): { beat: model.Beat; start: number } | null {
+function beatSpan(score: model.Score, selection: ScoreSelection): { beat: model.Beat; start: number } | null {
   const beats = score.tracks[selection.track - 1]?.staves[selection.staff - 1]?.bars[selection.measure - 1]?.voices[selection.voice - 1]?.beats;
-  const selected = beats?.[selection.event - 1];
+  const selected = beats?.[selection.beat - 1];
   if (!selected) return null;
-  const beat = selected.graceType ? beats?.slice(selection.event).find(candidate => !candidate.graceType) : selected;
+  const beat = selected.graceType ? beats?.slice(selection.beat).find(candidate => !candidate.graceType) : selected;
   if (!beat) return null;
   let start = beat.playbackStart;
   if (selected.graceType) {
@@ -24,8 +24,8 @@ function eventSpan(score: model.Score, selection: ScoreSelection): { beat: model
 }
 
 export function writtenPlaybackRange(score: model.Score, endpoints: PlaybackEndpoints): TickRange | null {
-  const first = eventSpan(score, endpoints.start);
-  const last = eventSpan(score, endpoints.end);
+  const first = beatSpan(score, endpoints.start);
+  const last = beatSpan(score, endpoints.end);
   if (!first || !last) return null;
   const startTick = score.masterBars[first.beat.voice.bar.index]?.start + first.start;
   const endTick = score.masterBars[last.beat.voice.bar.index]?.start + last.beat.playbackStart + last.beat.playbackDuration;

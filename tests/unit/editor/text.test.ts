@@ -10,7 +10,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlEvent,
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlBeat,
   type ChordSpelling } from '../../../app/frontend/music/musicxml-editor';
 
 import './support';
@@ -23,7 +23,7 @@ describe('ED-18 timed and standalone lyrics', () => {
   const lyricXml = (source: string) => Array.from(new DOMParser().parseFromString(source, 'application/xml').getElementsByTagName('lyric'))
     .map(lyric => `${lyric.getAttribute('number') || '-'}:${lyric.getElementsByTagName('syllabic')[0]?.textContent}:${lyric.getElementsByTagName('text')[0]?.textContent}`);
 
-  it('edits one verse on the selected event in both staves and leaves other verses alone', () => {
+  it('edits one verse on the selected beat in both staves and leaves other verses alone', () => {
     expect(inspectMusicXmlLyrics(rich, score(), m1e2)).toEqual([{ verse: 1, text: 'Low', syllabic: 'single' }]);
     const second = setMusicXmlLyric(rich, score(), m1e2, 2, { text: ' High ', syllabic: 'begin' });
     expect(lyricXml(second)).toEqual(['-:single:Low', '2:begin:High', '-:single:Low', '2:begin:High']);
@@ -46,7 +46,7 @@ describe('ED-18 timed and standalone lyrics', () => {
     expect(() => setMusicXmlLyric(rich, score(), m1e2, 1, { text: 'x'.repeat(161), syllabic: 'single' })).toThrow('1–160 characters');
     expect(() => setMusicXmlLyric(rich, score(), m1e2, 9, { text: 'x', syllabic: 'single' })).toThrow('verse from 1 to 8');
     expect(() => setMusicXmlLyric(rich, score(), m1e2, 1, { text: 'x', syllabic: 'both' as 'single' })).toThrow('Single, Begin, Middle, or End');
-    expect(() => inspectMusicXmlLyrics(rich, score(), { measure: 0, beat: 0, voice: 1 })).toThrow('Select an ordinary event');
+    expect(() => inspectMusicXmlLyrics(rich, score(), { measure: 0, beat: 0, voice: 1 })).toThrow('Select an ordinary beat');
   });
 
   it('keeps unfamiliar lyric settings read-only', () => {
@@ -54,7 +54,7 @@ describe('ED-18 timed and standalone lyrics', () => {
       ['<lyric><syllabic>single</syllabic><text>Low</text><extend/></lyric>', 'Verse 1 has an extension line; it is kept as written.'],
       ['<lyric><syllabic>single</syllabic><text>Low</text><elision/><text>er</text></lyric>', 'Verse 1 has a elision setting; it is kept as written.'],
       ['<lyric default-y="-80"><syllabic>single</syllabic><text>Low</text></lyric>', 'Verse 1 has lyric styling; it is kept as written.'],
-      ['<lyric><syllabic>single</syllabic><text>Low</text></lyric><lyric number="1"><text>Again</text></lyric>', 'Verse 1 has more than one lyric on this event; it is kept as written.'],
+      ['<lyric><syllabic>single</syllabic><text>Low</text></lyric><lyric number="1"><text>Again</text></lyric>', 'Verse 1 has more than one lyric on this beat; it is kept as written.'],
       ['<lyric number="chorus"><syllabic>single</syllabic><text>Low</text></lyric>', 'The lyric verse “chorus” is kept as written.'],
     ];
     for (const [lyric, reason] of variants) {
@@ -67,7 +67,7 @@ describe('ED-18 timed and standalone lyrics', () => {
     expect(inspectMusicXmlLyrics(layout, score(layout), m1e2)[0].reason).toContain('lyric layout');
   });
 
-  it('keeps an event lyric when its first chord note is removed', () => {
+  it('keeps a beat lyric when its first chord note is removed', () => {
     const chord = addMusicXmlNote(rich, score(), { measure: 0, beat: 1, voice: 1, string: 5, fret: 0 });
     const removed = removeMusicXmlNotes(chord, score(chord), { measure: 0, beat: 1, voice: 1, string: 4 })!;
     expect(removed.source.match(/<text>Low<\/text>/g)).toHaveLength(2);
@@ -175,7 +175,7 @@ describe('ED-18 anchored chords, sections and annotations', () => {
     }
   });
 
-  it('validates limits before mutation and keeps anchors when an event is emptied', () => {
+  it('validates limits before mutation and keeps anchors when a beat is emptied', () => {
     expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'words', null, 'x'.repeat(161))).toThrow('Text must be 1–160 characters.');
     expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'section', null, '   ')).toThrow('Text must be 1–160 characters.');
     expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'chord', null, { ...cMinor, step: 'H' as 'C' })).toThrow('Choose a chord root');
@@ -183,7 +183,7 @@ describe('ED-18 anchored chords, sections and annotations', () => {
     expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'chord', null, 'Cm')).toThrow('matching value');
     expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'words', null, null)).toThrow('Choose an existing item');
     expect(() => changeMusicXmlAnchor(rich, score(), m2e3, 'words', 3, 'Late')).toThrow('no longer at this position');
-    expect(() => inspectMusicXmlAnchor(rich, score(), { measure: 0, beat: 0, voice: 1 })).toThrow('Select an ordinary event');
+    expect(() => inspectMusicXmlAnchor(rich, score(), { measure: 0, beat: 0, voice: 1 })).toThrow('Select an ordinary beat');
     const chord = changeMusicXmlAnchor(rich, score(), { measure: 1, beat: 1, voice: 1 }, 'chord', null, cMinor);
     const emptied = removeMusicXmlNotes(chord, readMusicXml(chord, 'rich.musicxml').score, { measure: 1, beat: 1, voice: 1 })!;
     expect(measureXml(emptied.source, 1).getElementsByTagName('harmony')).toHaveLength(2);

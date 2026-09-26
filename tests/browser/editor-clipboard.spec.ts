@@ -83,7 +83,7 @@ test('ED-20 cuts a measure to rests and pastes it over another selected measure'
   await page.locator('summary', { hasText: /^Select passage$/ }).click();
   await page.getByRole('button', { name: 'Set range start' }).click();
   await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('2');
-  await page.getByRole('combobox', { name: 'Selection event' }).selectOption('3');
+  await page.getByRole('combobox', { name: 'Selection beat' }).selectOption('3');
   await page.getByRole('button', { name: 'Set range end' }).click();
   await page.getByRole('button', { name: 'Cut passage…' }).click();
   await expect(page.getByRole('alert')).toContainText('Cutting these measures is blocked by a protected keep attachment');

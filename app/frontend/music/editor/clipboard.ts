@@ -200,7 +200,7 @@ export function convertPastedTuning(document: Document, pastedSet: Set<Element>,
       const midi = pitchMidi(child(record.note, 'pitch')) ?? clipboard.tuning[index] + record.fret;
       const fret = midi - destinationTuning[index];
       if (fret < 0 || fret > 36) {
-        throw new Error(`Copied measure ${record.measure - measureIndex + 1}, event ${record.beat + 1}, string ${record.string}: keeping its pitch would need fret ${fret}, outside 0–36. Nothing was pasted.`);
+        throw new Error(`Copied measure ${record.measure - measureIndex + 1}, beat ${record.beat + 1}, string ${record.string}: keeping its pitch would need fret ${fret}, outside 0–36. Nothing was pasted.`);
       }
       changes.push(() => setText(noteTechnical(record.note)!, 'fret', String(fret)));
     }

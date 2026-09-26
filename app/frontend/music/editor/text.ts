@@ -76,23 +76,23 @@ export function anchorGroups(part: Element, measureIndex: number, onset: Rationa
   };
 }
 
-export function anchorEvent(document: Document, score: model.Score, position: RhythmPosition) {
+export function anchorBeat(document: Document, score: model.Score, position: RhythmPosition) {
   const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
-  if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary event to anchor text to it.');
+  if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary beat to anchor text to it.');
   const tabStaff = sourceTabStaff(document);
   const lanes = rhythmLanes(document, measure, tabStaff, String(position.voice + 1), position.beat);
   const anchors = lanes.map(lane => ({ staff: lane.staff, note: lane.groups[position.beat].find(note => !child(note, 'grace')) }));
-  if (anchors.some(anchor => !anchor.note)) throw new Error('The selected event cannot be anchored safely.');
+  if (anchors.some(anchor => !anchor.note)) throw new Error('The selected beat cannot be anchored safely.');
   const onset = measureTimeline(part, position.measure).onsets.get(anchors[0].note!);
-  if (!onset) throw new Error('The selected event cannot be anchored safely.');
+  if (!onset) throw new Error('The selected beat cannot be anchored safely.');
   return { part, measure, tabStaff, anchors: anchors as { staff: number; note: Element }[], onset };
 }
 
 export function inspectMusicXmlAnchor(source: string, score: model.Score, position: RhythmPosition): AnchorInfo {
   const document = readDocument(source);
-  const { part, onset } = anchorEvent(document, score, position);
+  const { part, onset } = anchorBeat(document, score, position);
   const groups = anchorGroups(part, position.measure, onset);
   return {
     chords: groups.chords.map(items => readChord(items[0].element)),
@@ -141,7 +141,7 @@ export function removeAnchored(element: Element) {
 }
 
 // Adds (index null), replaces, or removes (value null) one anchored item.
-// Chords and annotations anchor at the selected event's onset on every
+// Chords and annotations anchor at the selected beat's onset on every
 // staff lane; sections are rehearsal marks at the measure start.
 export function changeMusicXmlAnchor(source: string, score: model.Score, position: RhythmPosition, kind: AnchorKind,
   index: number | null, value: ChordSpelling | string | null): string {
@@ -154,7 +154,7 @@ export function changeMusicXmlAnchor(source: string, score: model.Score, positio
   if (value !== null && (kind === 'chord') === (typeof value === 'string')) throw new Error('This anchored item needs a matching value.');
   if (index === null && value === null) throw new Error('Choose an existing item to remove.');
   const document = parseDocument(source);
-  const { part, measure, anchors, onset } = anchorEvent(document, score, position);
+  const { part, measure, anchors, onset } = anchorBeat(document, score, position);
   const groups = anchorGroups(part, position.measure, onset);
   const list = kind === 'chord' ? groups.chords : kind === 'words' ? groups.words : groups.sections;
   if (index !== null) {
@@ -188,7 +188,7 @@ export function changeMusicXmlAnchor(source: string, score: model.Score, positio
 
 export type LyricSyllabic = 'single' | 'begin' | 'middle' | 'end';
 
-export type EventLyric = { verse: number; text: string; syllabic: LyricSyllabic; reason?: string };
+export type BeatLyric = { verse: number; text: string; syllabic: LyricSyllabic; reason?: string };
 
 export const LYRIC_VERSES = 8;
 
@@ -196,20 +196,20 @@ export const STANDALONE_LYRICS_LIMIT = 20_000;
 
 export const SYLLABIC: LyricSyllabic[] = ['single', 'begin', 'middle', 'end'];
 
-// Timed lyrics live on the first note of an event, once per staff lane.
-export function lyricEvent(document: Document, score: model.Score, position: RhythmPosition) {
+// Timed lyrics live on the first note of a beat, once per staff lane.
+export function lyricBeat(document: Document, score: model.Score, position: RhythmPosition) {
   const part = scorePart(document);
   const measure = part && directMeasures(part)[position.measure];
   const rendered = score.tracks?.[0]?.staves?.[0]?.bars?.[position.measure]?.voices?.[position.voice]?.beats?.[position.beat];
-  if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary event to edit its lyric.');
+  if (!measure || !rendered || rendered.graceType) throw new Error('Select an ordinary beat to edit its lyric.');
   const lanes = rhythmLanes(document, measure, sourceTabStaff(document), String(position.voice + 1), position.beat);
   return lanes.map(lane => lane.groups[position.beat]);
 }
 
-export function readLyrics(group: Element[]): EventLyric[] {
+export function readLyrics(group: Element[]): BeatLyric[] {
   const lyrics = group.flatMap(note => children(note).filter(item => item.localName === 'lyric'));
   const byVerse = new Map<number, Element[]>();
-  const unnumbered: EventLyric[] = [];
+  const unnumbered: BeatLyric[] = [];
   for (const lyric of lyrics) {
     const number = lyric.getAttribute('number') ?? '1';
     const verse = /^[1-8]$/.test(number) ? Number(number) : NaN;
@@ -224,7 +224,7 @@ export function readLyrics(group: Element[]): EventLyric[] {
     const syllabic = (text(child(lyric, 'syllabic')) || 'single') as LyricSyllabic;
     const value = descendants(lyric, 'text').map(text).join('');
     const extra = children(lyric).find(item => !['syllabic', 'text'].includes(item.localName));
-    const reason = entries.length > 1 ? `Verse ${verse} has more than one lyric on this event; it is kept as written.`
+    const reason = entries.length > 1 ? `Verse ${verse} has more than one lyric on this beat; it is kept as written.`
       : extra ? `Verse ${verse} has ${extra.localName === 'extend' ? 'an extension line' : `a ${extra.localName} setting`}; it is kept as written.`
         : descendants(lyric, 'text').length !== 1 || !SYLLABIC.includes(syllabic) ? `Verse ${verse} uses a lyric layout this dialog cannot rewrite; it is kept as written.`
           : Array.from(lyric.attributes).some(attribute => attribute.name !== 'number') ? `Verse ${verse} has lyric styling; it is kept as written.` : undefined;
@@ -233,12 +233,12 @@ export function readLyrics(group: Element[]): EventLyric[] {
   return [...numbered, ...unnumbered];
 }
 
-export function inspectMusicXmlLyrics(source: string, score: model.Score, position: RhythmPosition): EventLyric[] {
-  return readLyrics(lyricEvent(readDocument(source), score, position)[0]);
+export function inspectMusicXmlLyrics(source: string, score: model.Score, position: RhythmPosition): BeatLyric[] {
+  return readLyrics(lyricBeat(readDocument(source), score, position)[0]);
 }
 
-// Sets (or removes, with null) one verse on the selected event in every
-// staff lane. Other verses, events and the standalone text are untouched.
+// Sets (or removes, with null) one verse on the selected beat in every
+// staff lane. Other verses, beats and the standalone text are untouched.
 export function setMusicXmlLyric(source: string, score: model.Score, position: RhythmPosition, verse: number,
   value: { text: string; syllabic: LyricSyllabic } | null): string {
   if (!Number.isInteger(verse) || verse < 1 || verse > LYRIC_VERSES) throw new Error(`Choose a verse from 1 to ${LYRIC_VERSES}.`);
@@ -247,7 +247,7 @@ export function setMusicXmlLyric(source: string, score: model.Score, position: R
   }
   if (value && !SYLLABIC.includes(value.syllabic)) throw new Error('Choose Single, Begin, Middle, or End.');
   const document = parseDocument(source);
-  const groups = lyricEvent(document, score, position);
+  const groups = lyricBeat(document, score, position);
   const current = readLyrics(groups[0]).find(lyric => lyric.verse === verse);
   if (current?.reason && value) throw new Error(current.reason);
   if (!current && !value) return source;

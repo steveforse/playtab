@@ -20,10 +20,10 @@ test('ED-16 adds a grace chord before a note and saves it without changing the n
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('button', { name: 'Add grace…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add grace group' });
-  await expect(dialog).toContainText('Destination: measure 1, event 1');
-  await dialog.getByLabel('Grace event 1 fret 1', { exact: true }).fill('2');
-  await dialog.getByRole('button', { name: 'Add string to grace event 1' }).click();
-  await dialog.getByLabel('Grace event 1 string 2', { exact: true }).selectOption('3');
+  await expect(dialog).toContainText('Destination: measure 1, beat 1');
+  await dialog.getByLabel('Grace note 1 fret 1', { exact: true }).fill('2');
+  await dialog.getByRole('button', { name: 'Add string to grace note 1' }).click();
+  await dialog.getByLabel('Grace note 1 string 2', { exact: true }).selectOption('3');
   await dialog.screenshot({ path: testInfo.outputPath('add-grace-dialog.png') });
   await dialog.getByRole('button', { name: 'Apply grace group' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Grace group added' })).toBeVisible();
@@ -40,7 +40,7 @@ test('ED-16 adds a grace chord before a note and saves it without changing the n
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Selection event' }).selectOption('2');
+  await page.getByRole('combobox', { name: 'Selection beat' }).selectOption('2');
   await page.getByLabel('Fret', { exact: true }).fill('5');
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   await page.getByRole('button', { name: 'Save changes' }).click();
@@ -72,9 +72,9 @@ test('ED-16 edits and removes grace notes without disturbing the destination', a
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('button', { name: 'Add grace…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add grace group' });
-  await dialog.getByLabel('Grace event 1 fret 1', { exact: true }).fill('2');
-  await dialog.getByRole('button', { name: 'Add string to grace event 1' }).click();
-  await dialog.getByLabel('Grace event 1 string 2', { exact: true }).selectOption('3');
+  await dialog.getByLabel('Grace note 1 fret 1', { exact: true }).fill('2');
+  await dialog.getByRole('button', { name: 'Add string to grace note 1' }).click();
+  await dialog.getByLabel('Grace note 1 string 2', { exact: true }).selectOption('3');
   await dialog.getByRole('button', { name: 'Apply grace group' }).click();
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 2');
   await expect(page.getByRole('button', { name: 'Make rest' })).toHaveCount(0);
@@ -95,7 +95,7 @@ test('ED-16 edits and removes grace notes without disturbing the destination', a
 
   await page.getByLabel('Selection string').selectOption('3');
   await page.getByRole('button', { name: 'Remove grace' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Grace event removed.' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Grace note removed.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Remove grace' })).toHaveCount(0);
   await page.getByLabel('Selection string').selectOption('4');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
@@ -127,14 +127,14 @@ test('ED-16 edits a grace group with a pull-off into the main note and reopens i
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('button', { name: 'Add grace…' }).click();
   let dialog = page.getByRole('dialog', { name: 'Add grace group' });
-  await dialog.getByLabel('Grace event 1 fret 1', { exact: true }).fill('5');
-  await dialog.getByLabel('Grace event 1 transition 1', { exact: true }).selectOption('slide');
-  await dialog.getByRole('button', { name: 'Add grace event' }).click();
-  await dialog.getByLabel('Grace event 2 fret 1', { exact: true }).fill('2');
-  await dialog.getByLabel('Grace event 2 transition 1', { exact: true }).selectOption('hammer-on');
-  await expect(dialog.getByRole('alert')).toContainText('Grace event 2, string 4: a hammer-on needs a higher fret on its next note (fret 0).');
+  await dialog.getByLabel('Grace note 1 fret 1', { exact: true }).fill('5');
+  await dialog.getByLabel('Grace note 1 transition 1', { exact: true }).selectOption('slide');
+  await dialog.getByRole('button', { name: 'Add grace note' }).click();
+  await dialog.getByLabel('Grace note 2 fret 1', { exact: true }).fill('2');
+  await dialog.getByLabel('Grace note 2 transition 1', { exact: true }).selectOption('hammer-on');
+  await expect(dialog.getByRole('alert')).toContainText('Grace note 2, string 4: a hammer-on needs a higher fret on its next note (fret 0).');
   await expect(dialog.getByRole('button', { name: 'Apply grace group' })).toBeDisabled();
-  await dialog.getByLabel('Grace event 2 transition 1', { exact: true }).selectOption('pull-off');
+  await dialog.getByLabel('Grace note 2 transition 1', { exact: true }).selectOption('pull-off');
   await expect(dialog.getByRole('alert')).toHaveCount(0);
   await dialog.screenshot({ path: testInfo.outputPath('grace-transition-dialog.png') });
   await dialog.getByRole('button', { name: 'Apply grace group' }).click();
@@ -153,9 +153,9 @@ test('ED-16 edits a grace group with a pull-off into the main note and reopens i
 
   await page.getByRole('button', { name: 'Edit grace…' }).click();
   dialog = page.getByRole('dialog', { name: 'Edit grace group' });
-  await expect(dialog.getByLabel('Grace event 1 transition 1', { exact: true })).toHaveValue('slide');
-  await expect(dialog.getByLabel('Grace event 2 transition 1', { exact: true })).toHaveValue('pull-off');
-  await dialog.getByRole('button', { name: 'Remove grace event 1' }).click();
+  await expect(dialog.getByLabel('Grace note 1 transition 1', { exact: true })).toHaveValue('slide');
+  await expect(dialog.getByLabel('Grace note 2 transition 1', { exact: true })).toHaveValue('pull-off');
+  await dialog.getByRole('button', { name: 'Remove grace note 1' }).click();
   await dialog.getByRole('button', { name: 'Apply grace group' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Grace group updated.' })).toBeVisible();
   await page.getByRole('button', { name: 'Save changes' }).click();
@@ -185,12 +185,12 @@ test('ED-16 keeps an imported grace group read-only until it is removed whole', 
   const box = (await lowNote.boundingBox())!;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('combobox', { name: 'Selection voice' }).selectOption('2');
-  await page.getByRole('combobox', { name: 'Selection event' }).selectOption('1');
+  await page.getByRole('combobox', { name: 'Selection beat' }).selectOption('1');
   await page.getByRole('combobox', { name: 'Selection string' }).selectOption('4');
   await expect(page.getByLabel('Selection inspector')).toContainText('Fret 0');
   await page.getByRole('button', { name: 'Edit grace…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit grace group' });
-  await expect(dialog.getByRole('note')).toContainText('Grace event 1, string 4 has the marking “TEF grace effect 5”.');
+  await expect(dialog.getByRole('note')).toContainText('Grace note 1, string 4 has the marking “TEF grace effect 5”.');
   await expect(dialog.getByRole('button', { name: 'Apply grace group' })).toHaveCount(0);
   await dialog.screenshot({ path: testInfo.outputPath('grace-read-only-dialog.png') });
   await dialog.getByRole('button', { name: 'Cancel' }).click();

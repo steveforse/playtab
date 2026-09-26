@@ -70,12 +70,12 @@ export function connectMusicXmlTie(source: string, score: model.Score, origin: T
   const toIndex = sameLane.indexOf(to);
   if (toIndex <= fromIndex) throw new Error('Tie destination must follow the selected origin.');
   const part = scorePart(document)!;
-  const voiceEvents = directMeasures(part).flatMap(measure => sourceBeatGroups(measure, sourceTabStaff(document), from.voice)
+  const voiceBeats = directMeasures(part).flatMap(measure => sourceBeatGroups(measure, sourceTabStaff(document), from.voice)
     .filter(group => !child(group[0], 'grace')));
-  const originEvent = voiceEvents.findIndex(group => group.includes(from.note));
-  const destinationEvent = voiceEvents.findIndex(group => group.includes(to.note));
-  if (toIndex !== fromIndex + 1 || destinationEvent !== originEvent + 1) {
-    throw new Error('Another event or rest occurs before this tie destination.');
+  const originBeat = voiceBeats.findIndex(group => group.includes(from.note));
+  const destinationBeat = voiceBeats.findIndex(group => group.includes(to.note));
+  if (toIndex !== fromIndex + 1 || destinationBeat !== originBeat + 1) {
+    throw new Error('Another beat or rest occurs before this tie destination.');
   }
   if (!samePitch(from.note, to.note)) throw new Error('Tie endpoints must have the same pitch.');
   const linked = linkedStaffNotes(document);
@@ -281,7 +281,7 @@ export function setMusicXmlBend(source: string, score: model.Score, position: Ti
 
 export type TransitionKind = 'tie' | 'hammer-on' | 'pull-off' | 'slide';
 
-export type NoteTransition = { kind: TransitionKind; direction: 'outgoing' | 'incoming'; other: { measure: number; event: number; fret: number } | null };
+export type NoteTransition = { kind: TransitionKind; direction: 'outgoing' | 'incoming'; other: { measure: number; beat: number; fret: number } | null };
 
 export const TRANSITION_KINDS: TransitionKind[] = ['tie', 'hammer-on', 'pull-off', 'slide'];
 
@@ -308,7 +308,7 @@ export function inspectMusicXmlTransitions(source: string, score: model.Score, p
   return TRANSITION_KINDS.flatMap(kind => (['outgoing', 'incoming'] as const).flatMap(direction => {
     if (!kindMarkers(record.note, kind, direction === 'outgoing' ? 'start' : 'stop').length) return [];
     const other = lane[index + (direction === 'outgoing' ? 1 : -1)];
-    return [{ kind, direction, other: other ? { measure: other.measure + 1, event: other.beat + 1, fret: other.fret } : null }];
+    return [{ kind, direction, other: other ? { measure: other.measure + 1, beat: other.beat + 1, fret: other.fret } : null }];
   }));
 }
 

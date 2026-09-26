@@ -12,7 +12,7 @@ const addresses = (source: string) => sourceTabNoteRecords(new DOMParser().parse
 const idAt = (source: string, ids: string[], address: string) => ids[addresses(source).indexOf(address)];
 
 describe('imported score session identities', () => {
-  it('retains measure and event IDs across an inserted measure without reusing the new occupants IDs', () => {
+  it('retains measure and beat IDs across an inserted measure without reusing the new occupants IDs', () => {
     const note = (step: string, fret: number) => `<note><pitch><step>${step}</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><technical><string>4</string><fret>${fret}</fret></technical></notations></note>`;
     const measure = (number: number, body: string) => `<measure number="${number}">${body}</measure>`;
     const header = '<score-partwise><part id="P1">';
@@ -22,52 +22,52 @@ describe('imported score session identities', () => {
     const original = createSourceIdentityMap(source);
     const shifted = reconcileSourceIdentityMap(source, original, inserted);
     expect(shifted.measureIds.slice(1)).toEqual(original.measureIds);
-    expect(shifted.eventIds.slice(1)).toEqual(original.eventIds);
+    expect(shifted.beatIds.slice(1)).toEqual(original.beatIds);
     expect(shifted.noteIds).toEqual(original.noteIds);
     expect(shifted.measureIds[0]).not.toBe(original.measureIds[0]);
-    expect(shifted.eventIds[0]).not.toBe(original.eventIds[0]);
+    expect(shifted.beatIds[0]).not.toBe(original.beatIds[0]);
   });
 
-  it('carries a rest event identity explicitly when it becomes a note', () => {
+  it('carries a rest beat identity explicitly when it becomes a note', () => {
     const rest = '<note><rest/><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>';
     const note = '<note><pitch><step>C</step><octave>3</octave></pitch><duration>1</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><technical><string>4</string><fret>0</fret></technical></notations></note>';
     const source = `<score-partwise><part id="P1"><measure number="1">${rest}</measure></part></score-partwise>`;
     const after = source.replace(rest, note);
     const before = createSourceIdentityMap(source);
     const withoutCarry = reconcileSourceIdentityMap(source, before, after);
-    expect(withoutCarry.eventIds[0]).not.toBe(before.eventIds[0]);
+    expect(withoutCarry.beatIds[0]).not.toBe(before.beatIds[0]);
     const carried = reconcileSourceIdentityMap(source, before, after, [
       { kind: 'measure', id: before.measureIds[0], address: '0' },
-      { kind: 'event', id: before.eventIds[0], address: '0:1:0' },
+      { kind: 'beat', id: before.beatIds[0], address: '0:1:0' },
     ]);
     expect(carried.measureIds[0]).toBe(before.measureIds[0]);
-    expect(carried.eventIds[0]).toBe(before.eventIds[0]);
+    expect(carried.beatIds[0]).toBe(before.beatIds[0]);
   });
 
-  it('keeps the selected imported rest event ID when a note is added', () => {
+  it('keeps the selected imported rest beat ID when a note is added', () => {
     const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
     const before = readMusicXml(source, 'paired.xml');
-    const originalEventId = before.sourceEventIdByAddress?.get('0:2:2');
+    const originalEventId = before.sourceBeatIdByAddress?.get('0:2:2');
     expect(originalEventId).toBeTruthy();
     const added = addMusicXmlNote(source, before.score, { measure: 0, beat: 2, voice: 1, string: 4, fret: 0 });
     const after = readMusicXml(added, 'paired.xml', 'musicxml', { source, map: before.sourceIdentity!, carries: [
       { kind: 'measure', id: before.sourceIdentity!.measureIds[0], address: '0' },
-      { kind: 'event', id: originalEventId!, address: '0:2:2' },
+      { kind: 'beat', id: originalEventId!, address: '0:2:2' },
     ] });
-    expect(after.sourceEventIdByAddress?.get('0:2:2')).toBe(originalEventId);
+    expect(after.sourceBeatIdByAddress?.get('0:2:2')).toBe(originalEventId);
     expect(after.sourceIdentity?.measureIds[0]).toBe(before.sourceIdentity?.measureIds[0]);
   });
 
-  it('keeps an event ID when removing its last note turns it into a rest', () => {
+  it('keeps a beat ID when removing its last note turns it into a rest', () => {
     const source = fs.readFileSync('tests/fixtures/paired-staff.musicxml', 'utf8');
     const before = readMusicXml(source, 'paired.xml');
-    const originalEventId = before.sourceEventIdByAddress?.get('0:2:1');
+    const originalEventId = before.sourceBeatIdByAddress?.get('0:2:1');
     const removed = removeMusicXmlNotes(source, before.score, { measure: 0, beat: 1, voice: 1, string: 3 })!.source;
     const after = readMusicXml(removed, 'paired.xml', 'musicxml', { source, map: before.sourceIdentity!, carries: [
       { kind: 'measure', id: before.sourceIdentity!.measureIds[0], address: '0' },
-      { kind: 'event', id: originalEventId!, address: '0:2:1' },
+      { kind: 'beat', id: originalEventId!, address: '0:2:1' },
     ] });
-    expect(after.sourceEventIdByAddress?.get('0:2:1')).toBe(originalEventId);
+    expect(after.sourceBeatIdByAddress?.get('0:2:1')).toBe(originalEventId);
     expect(after.sourceIdentity?.measureIds[0]).toBe(before.sourceIdentity?.measureIds[0]);
   });
 
@@ -80,7 +80,7 @@ describe('imported score session identities', () => {
     const inserted = addMusicXmlNote(source, preview.score, { measure: 0, beat: 0, voice: 1, string: 2, fret: 1 });
     const afterInsertion = reconcileSourceIdentityMap(source, original, inserted, [
       { kind: 'measure', id: original.measureIds[0], address: '0' },
-      { kind: 'event', id: original.eventIds[0], address: '0:2:0' },
+      { kind: 'beat', id: original.beatIds[0], address: '0:2:0' },
     ]);
     expect(idAt(inserted, afterInsertion.noteIds, address)).toBe(originalId);
     expect(new Set(afterInsertion.noteIds).size).toBe(afterInsertion.noteIds.length);
@@ -91,7 +91,7 @@ describe('imported score session identities', () => {
     expect(idAt(removed, afterRemoval.noteIds, address)).toBe(originalId);
   });
 
-  it('carries unique unchanged notes across event insertion and does not rebind indistinguishable repeats', () => {
+  it('carries unique unchanged notes across beat insertion and does not rebind indistinguishable repeats', () => {
     const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
     const original = createSourceIdentityMap(source);
     const inserted = source.replace('    <note><pitch><step>C</step><octave>3</octave></pitch>',
@@ -123,7 +123,7 @@ describe('imported score session identities', () => {
     const replaced = source.replace('<step>C</step>', '<step>D</step>').replace('<fret>0</fret>', '<fret>2</fret>');
     const after = reconcileSourceIdentityMap(source, before, replaced);
     expect(after.noteIds[0]).not.toBe(before.noteIds[0]);
-    expect(after.eventIds[0]).not.toBe(before.eventIds[0]);
+    expect(after.beatIds[0]).not.toBe(before.beatIds[0]);
     expect(after.measureIds[0]).not.toBe(before.measureIds[0]);
     const carried = reconcileSourceIdentityMap(source, before, replaced, [{ id: before.noteIds[0], address: addresses(replaced)[0] }]);
     expect(carried.noteIds[0]).toBe(before.noteIds[0]);
@@ -137,11 +137,11 @@ describe('imported score session identities', () => {
     const added = addMusicXmlNote(source, first.score, { measure: 0, beat: 0, voice: 1, string: 2, fret: 1 });
     const second = readMusicXml(added, 'paired.xml', 'musicxml', { source, map: first.sourceIdentity!, carries: [
       { kind: 'measure', id: first.sourceIdentity!.measureIds[0], address: '0' },
-      { kind: 'event', id: first.sourceEventIdByAddress!.get('0:2:0')!, address: '0:2:0' },
+      { kind: 'beat', id: first.sourceBeatIdByAddress!.get('0:2:0')!, address: '0:2:0' },
     ] });
     const survivor = musicXmlEditorState(added, second.score, second.sourceIdentity).notes.find(note => note.beat === 0 && note.string === 3)!;
     expect(survivor.sourceIdentity?.id).toBe(original.sourceIdentity?.id);
-    expect(second.sourceLocationById?.get(original.sourceIdentity!.id)).toMatchObject({ measure: 1, event: 1, string: 3 });
+    expect(second.sourceLocationById?.get(original.sourceIdentity!.id)).toMatchObject({ measure: 1, beat: 1, string: 3 });
     const restored = readMusicXml(source, 'paired.xml', 'musicxml', { source, map: first.sourceIdentity! });
     expect(musicXmlEditorState(source, restored.score, restored.sourceIdentity).notes.find(note => note.beat === 0 && note.string === 3)?.sourceIdentity?.id)
       .toBe(original.sourceIdentity?.id);
@@ -157,7 +157,7 @@ describe('imported score session identities', () => {
     const address = `${selected.sourceIdentity!.address!.slice(0, selected.sourceIdentity!.address!.lastIndexOf(':') + 1)}2`;
     const second = readMusicXml(moved, 'paired.xml', 'musicxml', { source, map: first.sourceIdentity!, carries: [{ id: selected.sourceIdentity!.id, address }] });
     expect(second.sourceIdentity?.measureIds).toEqual(first.sourceIdentity?.measureIds);
-    expect(second.sourceIdentity?.eventIds).toEqual(first.sourceIdentity?.eventIds);
+    expect(second.sourceIdentity?.beatIds).toEqual(first.sourceIdentity?.beatIds);
     const nextState = musicXmlEditorState(moved, second.score, second.sourceIdentity);
     const relocated = nextState.notes.find(note => note.sourceIdentity?.id === selected.sourceIdentity?.id)!;
     expect(relocated.string).toBe(2);
@@ -166,7 +166,7 @@ describe('imported score session identities', () => {
     expect(corrected.score.tracks[0].staves[0].bars[0].voices[1].beats[0].notes.some(note => 6 - note.string === 2 && note.fret === 7)).toBe(true);
   });
 
-  it('targets the same note ID after a preceding event changes its ordinal position', () => {
+  it('targets the same note ID after a preceding beat changes its ordinal position', () => {
     const source = fs.readFileSync('tests/fixtures/techniques.musicxml', 'utf8');
     const first = readMusicXml(source, 'techniques.xml');
     const selected = musicXmlEditorState(source, first.score, first.sourceIdentity).notes.find(note => note.beat === 0)!;

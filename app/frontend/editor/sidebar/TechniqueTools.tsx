@@ -19,8 +19,8 @@ export function TechniqueTools({ selection, techniques, onHand, transitions, onR
     {(transitions.length > 0 || !tie.hidden) && <div className="properties-chips" aria-label="Connections">
       {!tie.hidden && <span className="properties-chip">Tie<button type="button" aria-label="Remove tie" title="Remove tie" onClick={event => tie.run(event.currentTarget)}><Icon name="clear" size={12} /></button></span>}
       {transitions.map(item => {
-        const name = `Remove ${TRANSITION_NAMES[item.kind]} ${item.direction === 'outgoing' ? 'to' : 'from'} ${item.other ? `m${item.other.measure} e${item.other.event}` : 'its other note'}`;
-        return <span key={`${item.kind}:${item.direction}`} className="properties-chip">{capitalized(TRANSITION_NAMES[item.kind])} {item.direction === 'outgoing' ? '→' : '←'} {item.other ? `m${item.other.measure} e${item.other.event}` : 'other note'}
+        const name = `Remove ${TRANSITION_NAMES[item.kind]} ${item.direction === 'outgoing' ? 'to' : 'from'} ${item.other ? `m${item.other.measure} e${item.other.beat}` : 'its other note'}`;
+        return <span key={`${item.kind}:${item.direction}`} className="properties-chip">{capitalized(TRANSITION_NAMES[item.kind])} {item.direction === 'outgoing' ? '→' : '←'} {item.other ? `m${item.other.measure} e${item.other.beat}` : 'other note'}
           <button type="button" aria-label={name} title={name} onClick={() => onRemoveTransition(item)}><Icon name="clear" size={12} /></button></span>;
       })}
     </div>}
@@ -38,7 +38,7 @@ export function TechniqueTools({ selection, techniques, onHand, transitions, onR
       {techniques.frettingReason && <p className="editor-rhythm-reason">{techniques.frettingReason}</p>}
     </div>}
     {pendingTransition && <div className="editor-tie-pending" role="status">
-      <p>{pendingTransition.kind === 'tie' ? 'Origin' : `${capitalized(TRANSITION_NAMES[pendingTransition.kind])} origin`}: measure {pendingTransition.origin.measure}, event {pendingTransition.origin.event}, string {pendingTransition.origin.string}, fret {pendingTransition.origin.fret}. Select the destination note.</p>
+      <p>{pendingTransition.kind === 'tie' ? 'Origin' : `${capitalized(TRANSITION_NAMES[pendingTransition.kind])} origin`}: measure {pendingTransition.origin.measure}, beat {pendingTransition.origin.beat}, string {pendingTransition.origin.string}, fret {pendingTransition.origin.fret}. Select the destination note.</p>
       <button type="button" disabled={selection.kind !== 'note'} onClick={onCompleteTransition}>Use selected note</button>
       <button type="button" onClick={onCancelTransition}>Cancel {TRANSITION_NAMES[pendingTransition.kind]}</button>
     </div>}

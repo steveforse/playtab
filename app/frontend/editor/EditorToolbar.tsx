@@ -13,7 +13,7 @@ export const RIBBON_GROUPS: ReadonlyArray<{ label: string; items: readonly Ribbo
     // "Rest" keeps this name distinct from the Properties panel's Make rest.
     { command: 'make-rest', name: 'Rest' }] },
   { label: 'Menus', items: [
-    { menu: 'Note', entries: ['edit-fret', 'insert-event', 'remove-note', '-', 'split-rest', 'set-tempo'] },
+    { menu: 'Note', entries: ['edit-fret', 'insert-beat', 'remove-note', '-', 'split-rest', 'set-tempo'] },
     { menu: 'Techniques', entries: ['tie', 'hammer-on', 'pull-off', 'slide', '-', 'bend', 'grace', '-', 'remove-tie', 'remove-grace'] },
     { menu: 'Measure', entries: ['select-measure', 'insert-measure-before', 'insert-measure-after', 'duplicate-measure', 'delete-measure', '-', 'time-signature', 'repeat', 'pickup'] },
     { menu: 'Text', entries: ['chord', 'section', 'words', 'lyric', '-', 'lyrics-chords'] },

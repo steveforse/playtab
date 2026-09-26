@@ -42,13 +42,13 @@ test('ED-19 applies title, opening tempo, tuning and a local tempo intentionally
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await page.getByRole('combobox', { name: 'Selection measure' }).selectOption('2');
   await page.getByRole('combobox', { name: 'Selection voice' }).selectOption('2');
-  await page.getByRole('combobox', { name: 'Selection event' }).selectOption('2');
+  await page.getByRole('combobox', { name: 'Selection beat' }).selectOption('2');
   await page.getByRole('button', { name: 'Set tempo here…' }).click();
   const tempo = page.getByRole('dialog', { name: 'Set tempo here' });
   await expect(tempo).toContainText('108 BPM continues here from earlier in the score.');
   await tempo.getByLabel('Tempo').fill('80');
   await tempo.getByRole('button', { name: 'Apply tempo' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Tempo 80 BPM set at measure 2, event 2.' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Tempo 80 BPM set at measure 2, beat 2.' })).toBeVisible();
   await expect(notation.locator('svg text').filter({ hasText: /= 80/ })).toHaveCount(1);
   await notation.screenshot({ path: testInfo.outputPath('settings-score.png') });
 

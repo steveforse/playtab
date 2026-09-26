@@ -20,21 +20,21 @@ export function parseAscii(text: string, title: string, duration: 4 | 8 | 16, te
     for (let bar = 0; bar < rows[0].length; bar++) {
       const cells = rows.map(row => row[bar]);
       if (!cells.every(cell => cell.length === cells[0].length)) throw new Error(`Measure ${measures.length + 1}: string lines must have the same width.`);
-      const events = new Map<number, Beat['notes']>();
+      const columnNotes = new Map<number, Beat['notes']>();
       cells.forEach((cell, stringIndex) => {
         for (const match of cell.matchAll(/\d+/g)) {
           const column = match.index!;
-          const notes = events.get(column) ?? [];
+          const notes = columnNotes.get(column) ?? [];
           notes.push({ string: stringIndex + 1, fret: Number(match[0]) });
-          events.set(column, notes);
+          columnNotes.set(column, notes);
         }
       });
-      const columns = [...events.keys()].sort((a, b) => a - b);
-      if (columns.some((column, i) => i > 0 && column < columns[i - 1] + Math.max(...events.get(columns[i - 1])!.map(n => String(n.fret).length)))) {
-        throw new Error('A two-digit fret overlaps another event. Align simultaneous notes at their first digit.');
+      const columns = [...columnNotes.keys()].sort((a, b) => a - b);
+      if (columns.some((column, i) => i > 0 && column < columns[i - 1] + Math.max(...columnNotes.get(columns[i - 1])!.map(n => String(n.fret).length)))) {
+        throw new Error('A two-digit fret overlaps another beat. Align simultaneous notes at their first digit.');
       }
       if (columns.length !== duration) throw new Error(`Measure ${measures.length + 1} has ${columns.length} note columns. A 4/4 measure with ${duration === 4 ? 'quarter' : duration === 8 ? 'eighth' : 'sixteenth'} notes needs ${duration}. Rest-only columns cannot be inferred.`);
-      measures.push({ beats: columns.map(column => ({ duration, notes: events.get(column)! })) });
+      measures.push({ beats: columns.map(column => ({ duration, notes: columnNotes.get(column)! })) });
     }
   }
   const score: Score = { version: 1, title: title.trim(), tempo, tuning: [...OPEN_G], fretConvention: 'relative-to-string-nut', measures };

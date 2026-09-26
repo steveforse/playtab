@@ -17,7 +17,7 @@ test('ED-14 connects a cross-bar tie by pointer, blocks pitch edits, removes it,
   const origin = (await frets.nth(0).boundingBox())!;
   await page.mouse.click(origin.x + origin.width / 2, origin.y + origin.height / 2);
   await page.getByRole('button', { name: 'Tie', exact: true }).click();
-  await expect(page.getByText(/Origin: measure 1, event 1, string 4, fret 0/)).toBeVisible();
+  await expect(page.getByText(/Origin: measure 1, beat 1, string 4, fret 0/)).toBeVisible();
   await page.locator('.editor-technique-tools').screenshot({ path: testInfo.outputPath('tie-pending-sidebar.png') });
   const destination = (await frets.nth(1).boundingBox())!;
   await page.mouse.click(destination.x + destination.width / 2, destination.y + destination.height / 2);

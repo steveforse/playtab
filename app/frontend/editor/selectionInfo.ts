@@ -1,12 +1,12 @@
 import type { ScoreSelection } from '../Player';
 import type { Score } from '../music/score';
 import type { MusicXmlPreview } from '../music/musicxml';
-import { graceEventPlacement, inspectMusicXmlDuration, inspectMusicXmlNoteTechniques, inspectMusicXmlTie, inspectMusicXmlTransitions, inspectMusicXmlTriplet,
+import { graceBeatPlacement, inspectMusicXmlDuration, inspectMusicXmlNoteTechniques, inspectMusicXmlTie, inspectMusicXmlTransitions, inspectMusicXmlTriplet,
   type NoteTechniqueInfo, type NoteTransition, type TiePosition } from '../music/musicxml-editor';
 import { midiName } from './labels';
 
 export function tiePosition(selection: ScoreSelection): TiePosition {
-  return { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice,
+  return { measure: selection.measure - 1, beat: selection.beat - 1, voice: selection.voice,
     string: selection.string!, fret: selection.fret! };
 }
 
@@ -22,7 +22,7 @@ export function inspectSelection(selection: ScoreSelection | null, preview: Musi
     // Sounding open strings: pitches below come from sounding note values.
     const tuning = preview ? (staff?.tuning ?? []).map(value => value + (staff?.capo ?? 0)) : score.tuning;
     if (preview) {
-      const beat = selectedBeats?.[selection.event - 1];
+      const beat = selectedBeats?.[selection.beat - 1];
       if (!beat) return null;
       const ticks = Math.round(beat.playbackStart);
       const divisor = gcd(ticks, 960) || 960;
@@ -31,22 +31,22 @@ export function inspectSelection(selection: ScoreSelection | null, preview: Musi
       pitch = note ? note.realValue : null;
     } else {
       const beats = score.measures[selection.measure - 1]?.beats ?? [];
-      const sixteenths = beats.slice(0, selection.event - 1).reduce((sum, beat) => sum + 16 / beat.duration, 0);
+      const sixteenths = beats.slice(0, selection.beat - 1).reduce((sum, beat) => sum + 16 / beat.duration, 0);
       const divisor = gcd(sixteenths, 4) || 4;
       numerator = sixteenths / divisor; denominator = 4 / divisor;
-      const note = beats[selection.event - 1]?.notes.find(item => item.string === selection.string);
+      const note = beats[selection.beat - 1]?.notes.find(item => item.string === selection.string);
       pitch = note ? tuning[note.string - 1] + note.fret : null;
     }
     const offset = numerator === 0 ? 'Offset 0' : `Offset ${denominator === 1 ? numerator : `${numerator}/${denominator}`} quarter note${numerator / denominator > 1 ? 's' : ''}`;
-    let grace: { options: { label: string; event: number }[] } | null = null;
+    let grace: { options: { label: string; beat: number }[] } | null = null;
     if (selectedBeats) {
-      const index = selection.event - 1;
+      const index = selection.beat - 1;
       let destination = index;
       while (selectedBeats[destination]?.graceType) destination++;
       let start = destination;
       while (start > 0 && selectedBeats[start - 1]?.graceType) start--;
       if (start < destination && selectedBeats[destination]) {
-        grace = { options: [...Array.from({ length: destination - start }, (_, at) => ({ label: `Grace ${at + 1}`, event: start + at + 1 })), { label: 'Main', event: destination + 1 }] };
+        grace = { options: [...Array.from({ length: destination - start }, (_, at) => ({ label: `Grace ${at + 1}`, beat: start + at + 1 })), { label: 'Main', beat: destination + 1 }] };
       }
     }
     return { offset, pitch: pitch === null ? 'Rest / empty string' : midiName(pitch), pitchValue: pitch, tuning, grace };
@@ -56,22 +56,22 @@ export function inspectSelection(selection: ScoreSelection | null, preview: Musi
     const destination = Number(moveString);
     if (!Number.isInteger(destination) || destination === selection.string) return null;
     const fret = moveMode === 'fret' ? selection.fret : selectedDetails.pitchValue - selectedDetails.tuning[destination - 1];
-    const occupied = preview ? selectedBeats?.[selection.event - 1]?.notes.some(note => 6 - note.string === destination)
-      : score.measures[selection.measure - 1]?.beats[selection.event - 1]?.notes.some(note => note.string === destination);
-    const reason = occupied ? `String ${destination} already has a note in this event.`
+    const occupied = preview ? selectedBeats?.[selection.beat - 1]?.notes.some(note => 6 - note.string === destination)
+      : score.measures[selection.measure - 1]?.beats[selection.beat - 1]?.notes.some(note => note.string === destination);
+    const reason = occupied ? `String ${destination} already has a note in this beat.`
       : !Number.isInteger(fret) || fret < 0 || fret > 36 ? `Keeping the pitch would need fret ${fret} on string ${destination}, outside 0–36.` : null;
     return { destination, fret, pitch: midiName(selectedDetails.tuning[destination - 1] + fret), reason };
   })();
-  const selectedEventCount = selection ? (preview
+  const selectedBeatCount = selection ? (preview
     ? preview.score.tracks?.[0]?.staves?.[0]?.bars?.[selection.measure - 1]?.voices?.[selection.voice - 1]?.beats.length ?? 1
     : score.measures[selection.measure - 1]?.beats.length ?? 1) : 1;
   const selectedRhythm = selection ? preview
-    ? inspectMusicXmlDuration(preview.source, { measure: selection.measure - 1, beat: selection.event - 1,
+    ? inspectMusicXmlDuration(preview.source, { measure: selection.measure - 1, beat: selection.beat - 1,
       voice: selection.voice - 1 })
-    : { denominator: score.measures[selection.measure - 1]?.beats[selection.event - 1]?.duration ?? null,
+    : { denominator: score.measures[selection.measure - 1]?.beats[selection.beat - 1]?.duration ?? null,
       dots: 0, rest: selection.kind === 'rest', reason: undefined } : null;
   const selectedTriplet = selection && preview ? inspectMusicXmlTriplet(preview.source,
-    { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 }) : null;
+    { measure: selection.measure - 1, beat: selection.beat - 1, voice: selection.voice - 1 }) : null;
   const selectedTupletLocked = Boolean(selectedTriplet?.triplet || selectedTriplet?.reason);
   const selectedTransitions: NoteTransition[] = (() => {
     if (!selection || !preview || selection.kind !== 'note' || selection.string === null || selection.fret === null) return [];
@@ -92,18 +92,18 @@ export function inspectSelection(selection: ScoreSelection | null, preview: Musi
       return { picking: null, pickingReason: reason, fretting: null, frettingReason: reason, bend: null, bendReason: reason };
     }
   })();
-  // Grace groups before and after the selected event (a selected grace note
+  // Grace groups before and after the selected beat (a selected grace note
   // reports the group it belongs to).
   const placementAt = (beat: number) => {
     if (!selection || !preview || !selectedBeats?.[beat]?.graceType) return null;
-    try { return graceEventPlacement(preview.source, preview.score, { measure: selection.measure - 1, beat, voice: selection.voice - 1 }); }
+    try { return graceBeatPlacement(preview.source, preview.score, { measure: selection.measure - 1, beat, voice: selection.voice - 1 }); }
     catch { return null; }
   };
-  const selectedGracePlacement = selection && selection.graceIndex !== null ? placementAt(selection.event - 1) ?? 'before' : null;
-  const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || (selectedBeats?.[selection.event - 2]?.graceType
-    && (!preview || placementAt(selection.event - 2) === 'before'))));
-  const selectedHasAfterGrace = Boolean(selection && selection.graceIndex === null && placementAt(selection.event) === 'after');
-  return { selectedBeats, selectedDetails, moveOutcome, selectedEventCount, selectedRhythm, selectedTriplet, selectedTupletLocked, selectedTransitions, selectedTie, selectedTechniques,
+  const selectedGracePlacement = selection && selection.graceIndex !== null ? placementAt(selection.beat - 1) ?? 'before' : null;
+  const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || (selectedBeats?.[selection.beat - 2]?.graceType
+    && (!preview || placementAt(selection.beat - 2) === 'before'))));
+  const selectedHasAfterGrace = Boolean(selection && selection.graceIndex === null && placementAt(selection.beat) === 'after');
+  return { selectedBeats, selectedDetails, moveOutcome, selectedBeatCount, selectedRhythm, selectedTriplet, selectedTupletLocked, selectedTransitions, selectedTie, selectedTechniques,
     selectedHasGrace, selectedHasAfterGrace, selectedGracePlacement };
 }
 

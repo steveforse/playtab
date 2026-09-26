@@ -10,7 +10,7 @@ import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusi
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings,
-  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlEvent,
+  inspectMusicXmlTempo, setMusicXmlLocalTempo, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures, changeMusicXmlDuration, insertMusicXmlBeat,
   type ChordSpelling } from '../../../app/frontend/music/musicxml-editor';
 
 import './support';
@@ -127,7 +127,7 @@ describe('ED-19 score settings and local tempo', () => {
     expect(pitches(pitch.source, '2')).toEqual(pitches(single, '2'));
     expect(readMusicXml(pitch.source, 'rich.musicxml').score.tracks[0].staves[0].tuning).toEqual([62, 59, 55, 48, 67]);
     expect(() => applyMusicXmlScoreSettings(single, score(single), { ...base, tuning: [62, 59, 55, 60, 67], mode: 'pitches' }))
-      .toThrow('Measure 1, event 1, string 4: keeping its pitch would need fret -10, outside 0–36. No tuning change was applied.');
+      .toThrow('Measure 1, beat 1, string 4: keeping its pitch would need fret -10, outside 0–36. No tuning change was applied.');
   });
 
   it('respects a later tuning change and rejects changes the one-tuning preview cannot play', () => {
@@ -139,12 +139,12 @@ describe('ED-19 score settings and local tempo', () => {
     expect(lines(1)).toEqual(['1:A4', '2:D3', '3:G3', '4:B3', '5:D4']);
     expect(() => readMusicXml(fifth.source, 'rich.musicxml')).not.toThrow();
     expect(() => applyMusicXmlScoreSettings(rich, score(), { ...base, tuning: [62, 59, 55, 48, 67] }))
-      .toThrow('Measure 1, event 5, string 4: its tie continues past the tuning range');
+      .toThrow('Measure 1, beat 5, string 4: its tie continues past the tuning range');
     expect(() => applyMusicXmlScoreSettings(rich, score(), { ...base, tuning: [62, 59, 57, 50, 67] }))
-      .toThrow('Measure 1, event 1, string 3: this score changes tuning again at measure 2, and the preview plays one tuning per staff');
+      .toThrow('Measure 1, beat 1, string 3: this score changes tuning again at measure 2, and the preview plays one tuning per staff');
   });
 
-  it('sets and removes a local tempo at the selected event without touching other tempos', () => {
+  it('sets and removes a local tempo at the selected beat without touching other tempos', () => {
     const m2e2 = { measure: 1, beat: 1, voice: 1 };
     expect(inspectMusicXmlTempo(rich, score(), m2e2)).toEqual({ local: null, inherited: 108, opening: false });
     expect(inspectMusicXmlTempo(rich, score(), { measure: 1, beat: 0, voice: 1 })).toEqual({ local: 108, inherited: 96, opening: false });

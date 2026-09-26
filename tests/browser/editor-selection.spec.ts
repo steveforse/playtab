@@ -12,19 +12,19 @@ test('ED-02 selects a rendered note and keeps its identity through layout change
   expect(noteBox).not.toBeNull();
   await page.mouse.click(noteBox!.x + noteBox!.width / 2, noteBox!.y + noteBox!.height / 2);
   await expect(inspector).toContainText('Measure 1');
-  await expect(inspector).toContainText('Event 1');
+  await expect(inspector).toContainText('Beat 1');
   await expect(inspector).toContainText('String 3');
   await expect(inspector).toContainText('Fret 0');
   await expect(page.locator('.editor-note-selection')).toHaveCount(1);
 
   await page.getByTestId('notation').focus();
   await page.getByTestId('notation').press('ArrowRight');
-  await expect(inspector).toContainText('Event 2');
+  await expect(inspector).toContainText('Beat 2');
 
   await page.getByLabel('Selection measure').selectOption('2');
   await expect(inspector).toContainText('Measure 2');
-  await page.getByLabel('Selection event').selectOption('1');
-  await expect(inspector).toContainText('Event 1');
+  await page.getByLabel('Selection beat').selectOption('1');
+  await expect(inspector).toContainText('Beat 1');
 
   await page.getByRole('button', { name: 'View', exact: true }).click();
   await page.getByLabel('Score view', { exact: true }).selectOption('a4-portrait');
@@ -117,7 +117,7 @@ test('ED-02 selects an unoccupied staff string in the same beat', async ({ page 
   expect(box).not.toBeNull();
   await page.mouse.click(box!.x + box!.width / 2, box!.y + 18);
   await expect(inspector).toContainText('Measure 1');
-  await expect(inspector).toContainText('Event 1');
+  await expect(inspector).toContainText('Beat 1');
   await expect(inspector).toContainText(/String [1245]/);
   await expect(inspector).not.toContainText('String 3');
   const caret = (await page.locator('.editor-note-selection').boundingBox())!;

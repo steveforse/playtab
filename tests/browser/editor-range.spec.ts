@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('UI-04 extends a blue range band by event and measure from the keyboard', async ({ page }) => {
+test('UI-04 extends a blue range band by beat and measure from the keyboard', async ({ page }) => {
   await page.goto('/');
   const notation = page.getByTestId('notation');
   const zeros = notation.locator('svg text').filter({ hasText: /^0$/ });
@@ -12,7 +12,7 @@ test('UI-04 extends a blue range band by event and measure from the keyboard', a
 
   await page.keyboard.press('Shift+ArrowRight');
   await page.keyboard.press('Shift+ArrowRight');
-  await expect(summary).toHaveText('M1 E1 – M1 E3 selected');
+  await expect(summary).toHaveText('M1 B1 – M1 B3 selected');
   await expect(notation.locator('.editor-passage-selection')).toHaveCount(1);
   await expect(notation.locator('.editor-range-endpoint')).toHaveCount(2);
   const band = (await notation.locator('.editor-passage-selection').boundingBox())!;
@@ -23,7 +23,7 @@ test('UI-04 extends a blue range band by event and measure from the keyboard', a
   await page.keyboard.press('Control+Shift+ArrowRight');
   await expect(summary).toHaveText('Measures 1–2 selected');
   await page.keyboard.press('Shift+ArrowLeft');
-  await expect(summary).toContainText('M1 E1 – M2 E');
+  await expect(summary).toContainText('M1 B1 – M2 B');
 
   await page.keyboard.press('Escape');
   await expect(summary).toHaveCount(0);
