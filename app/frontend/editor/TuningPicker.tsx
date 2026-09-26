@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { TUNING_LIMITS } from '../music/musicxml-editor';
 import { midiName } from './labels';
 
@@ -22,15 +23,15 @@ const capital = (value: string) => value.charAt(0).toUpperCase() + value.slice(1
 
 // A preset menu plus one compact note menu per string (5th string first).
 // Editing a string by hand turns the preset into "Custom".
-export function TuningPicker({ tuning, onChange, label = '' }: { tuning: number[]; onChange: (tuning: number[]) => void; label?: string }) {
+export function TuningPicker({ tuning, onChange, label = '', children }: { tuning: number[]; onChange: (tuning: number[]) => void; label?: string; children?: ReactNode }) {
   const preset = tuningPreset(tuning);
   const prefix = label ? `${label} ` : '';
   return <>
-    <label className="anchor-text">Preset<select aria-label={capital(`${prefix}tuning preset`)} value={preset?.name ?? ''}
+    <div className="settings-tuning-top"><label className="anchor-text">Preset<select aria-label={capital(`${prefix}tuning preset`)} value={preset?.name ?? ''}
       onChange={event => { const chosen = TUNING_PRESETS.find(item => item.name === event.target.value); if (chosen) onChange([...chosen.tuning]); }}>
       {!preset && <option value="">Custom — {tuning.length === 5 ? tuningLetters(tuning) : ''}</option>}
       {TUNING_PRESETS.map(item => <option key={item.name} value={item.name}>{item.name} — {tuningLetters(item.tuning)}</option>)}
-    </select></label>
+    </select></label>{children}</div>
     <div className="settings-strings" role="group" aria-label={capital(`${prefix}open strings`)}>
       {[5, 4, 3, 2, 1].map(string => {
         const value = tuning[string - 1];
