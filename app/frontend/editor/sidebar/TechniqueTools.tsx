@@ -24,7 +24,7 @@ export function TechniqueTools({ selection, techniques, onHand, transitions, onR
           <button type="button" aria-label={name} title={name} onClick={() => onRemoveTransition(item)}><Icon name="clear" size={12} /></button></span>;
       })}
     </div>}
-    <div className="properties-add"><CommandButtons commands={commands} ids={[...TRANSITION_COMMANDS, 'bend', 'grace', 'grace-after', 'remove-grace']} /></div>
+    <div className="properties-add"><CommandButtons commands={commands} ids={[...TRANSITION_COMMANDS, 'bend', 'grace', 'remove-grace']} /></div>
     {techniques && <div className="editor-hand-tools">
       <label>Picking hand<select aria-label="Picking hand" value={techniques.picking ?? ''} disabled={techniques.picking === null}
         onChange={event => onHand('picking', event.target.value as PickingHand)}>

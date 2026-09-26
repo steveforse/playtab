@@ -28,9 +28,11 @@ test('edits, removes and adds a grace group after the last chord of a measure', 
   const chordTop = (await text(/^1$/).last().boundingBox())!;
   await page.mouse.click(chordTop.x + chordTop.width / 2, chordTop.y + chordTop.height / 2);
   const panel = page.getByRole('complementary', { name: 'Properties' });
-  await expect(panel.getByRole('button', { name: 'Edit grace after…' })).toBeVisible();
-  await panel.getByRole('button', { name: 'Edit grace after…' }).click();
+  await expect(panel.getByRole('button', { name: 'Edit grace…' })).toBeVisible();
+  await panel.getByRole('button', { name: 'Edit grace…' }).click();
+  // The chord only has a group after it, so the dialog opens on that side.
   const dialog = page.getByRole('dialog', { name: 'Edit grace group after' });
+  await expect(dialog.getByLabel('Grace position')).toHaveValue('after');
   await expect(dialog).toContainText('Grace notes play at the end of it');
   await expect(dialog.getByLabel('Grace event 1 transition 1')).toHaveValue('slide');
   await expect(dialog.getByLabel('Grace event 1 transition 2')).toHaveValue('slide');
@@ -43,13 +45,15 @@ test('edits, removes and adds a grace group after the last chord of a measure', 
   expect(grace.x).toBeLessThan(nextMeasure.x);
 
   await page.mouse.click(chordTop.x + chordTop.width / 2, chordTop.y + chordTop.height / 2);
-  await panel.getByRole('button', { name: 'Edit grace after…' }).click();
+  await panel.getByRole('button', { name: 'Edit grace…' }).click();
   await dialog.getByRole('button', { name: 'Remove grace group' }).click();
   await expect(text(/^4$/)).toHaveCount(0);
   await expect(text(/^3$/)).toHaveCount(0);
 
   await page.mouse.click(chordTop.x + chordTop.width / 2, chordTop.y + chordTop.height / 2);
-  await panel.getByRole('button', { name: 'Add grace after…' }).click();
+  await panel.getByRole('button', { name: 'Add grace…' }).click();
+  await expect(page.getByRole('dialog', { name: 'Add grace group' })).toBeVisible();
+  await page.getByLabel('Grace position').selectOption('after');
   const add = page.getByRole('dialog', { name: 'Add grace group after' });
   await add.getByLabel('Grace event 1 fret 1').fill('2');
   await add.getByLabel('Grace event 1 transition 1').selectOption('slide');
