@@ -15,6 +15,11 @@ module Tef2
     MAX_MEASURES = 256
     TEF2_TICKS_PER_QUARTER = 256
     TEF3_UNITS_PER_QUARTER = 16
+    # TablEdit's default note dynamic; nearly every note in real files has it.
+    DEFAULT_DYNAMIC = 2
+    DEFAULT_INSTRUMENT = { midi_voice: 105, midi_bank: 0, capo: 0, banjo5: 0, clef: 0, middle_c: 0 }.freeze
+    # TEF metadata written by the importer that export reads back.
+    CONSUMED_METADATA = /\ATEF (?:fingering .+|effect[23] \d+|dynamic \d+|stroke \d+|grace effect \d+|let ring|slap|fade (?:in|out))\z/
 
     def self.chord_values(chord)
       values = chord[:strings].to_a.first(5)
@@ -40,7 +45,7 @@ module Tef2
     end
 
     class Model
-      attr_reader :title, :tempo, :tuning, :measures, :notes, :texts, :chords, :lyrics, :warnings
+      attr_reader :title, :tempo, :tuning, :measures, :notes, :texts, :chords, :lyrics, :warnings, :instrument
 
       def self.from(document)
         unless document.is_a?(Hash)
@@ -124,6 +129,9 @@ module Tef2
         tempo = nil
         seen_texts = {}
         seen_chords = {}
+        instrument = read_instrument(xml, measure_nodes.first)
+        capo = instrument[:capo]
+        lost_graces = 0
 
         measure_nodes.each_with_index do |measure, measure_index|
           divisions = measure.at_xpath("./attributes/divisions")&.text.to_i.positive? ? measure.at_xpath("./attributes/divisions").text.to_i : divisions
@@ -134,6 +142,8 @@ module Tef2
 
           measure.xpath("./direction/direction-type/words").each do |words|
             text = words.text.strip
+            # A legacy "Capo N" direction is the capo itself, not a text.
+            next if measure_index.zero? && capo.positive? && text.match?(/\ACapo \d+\z/i)
             position = xml_ticks(words.parent.parent.at_xpath("./offset")&.text.to_i, divisions)
             string = metadata_string(words.parent.parent["data-playtab-string"])
             key = [ measure_index, position, text, string ]
@@ -170,11 +180,16 @@ module Tef2
 
           cursor = 0
           previous_note_position = nil
+          # TablEdit stores a grace note on the note it leads into, on the
+          # same string, so each grace waits for that note.
+          pending_graces = {}
           measure.element_children.each do |element|
             case element.name
             when "backup"
               cursor = [ cursor - xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions), 0 ].max
               previous_note_position = nil
+              lost_graces += pending_graces.length
+              pending_graces.clear
             when "forward"
               cursor += xml_ticks(element.at_xpath("./duration")&.text.to_i, divisions)
             when "note"
@@ -188,22 +203,37 @@ module Tef2
                 technical = element.at_xpath("./notations/technical")
                 string = technical&.at_xpath("./string")&.text.to_i
                 fret = technical&.at_xpath("./fret")&.text.to_i
-                if string.between?(1, 5) && fret >= 0
+                fret += capo if string == 5 && capo.positive?
+                if string.between?(1, 5) && fret >= 0 && element.at_xpath("./grace")
+                  # An after-grace (it steals time from the note before it)
+                  # has no TablEdit equivalent.
+                  if element.at_xpath("./grace[@steal-time-previous]") || pending_graces.key?(string) || fret > 0x1F
+                    lost_graces += 1
+                  else
+                    pending_graces[string] = { grace_fret: fret, grace_effect: metadata_value(technical, "grace effect").to_i & 0x07 }
+                  end
+                elsif string.between?(1, 5) && fret >= 0
                   chord_note = element.at_xpath("./chord")
                   position = chord_note && previous_note_position ? previous_note_position : cursor
-                  notes << note_from_xml(element, measure_index, position, duration, string, fret)
+                  note = note_from_xml(element, measure_index, position, duration, string, fret)
+                  (grace = pending_graces.delete(string)) ? note.merge!(grace, grace: true) : note[:grace] = false
+                  notes << note
                   cursor += duration unless chord_note
                   previous_note_position = position
                 end
               end
             end
           end
+          lost_graces += pending_graces.length
         end
 
         raise Invalid, "Imported MusicXML contains no tablature notes." if notes.empty?
         tuning ||= FullMusicxmlBuilder::DEFAULT_TUNING
         tempo ||= 120
         warnings.concat(loss_warnings(xml, target_staff, notes, measures))
+        warnings << "Some grace notes are not represented: TablEdit keeps one grace note before a note on the same string." if lost_graces.positive?
+        fifth_capo = xml.at_xpath("//miscellaneous-field[@name='playtab-fifth-string-capo']")&.text.to_i
+        warnings << "The 5th-string capo is written at capo + 5; fret #{fifth_capo} is not represented." if fifth_capo.positive? && fifth_capo != capo + 5
 
         new(
           title: document["title"].to_s,
@@ -214,11 +244,41 @@ module Tef2
           texts: texts,
           chords: chords,
           lyrics: xml.at_xpath("//miscellaneous-field[@name='playtab-lyrics']")&.text,
-          warnings: warnings.uniq
+          warnings: warnings.uniq,
+          instrument: instrument
         )
       end
 
-      def initialize(title:, tempo:, tuning:, measures:, notes:, texts:, chords:, lyrics:, warnings:)
+      # The score part's MIDI program and bank (one-based in MusicXML), the
+      # capo, and the TablEdit clef fields kept by the importer. Imports
+      # before this change wrote the zero-based banjo program 105 as-is.
+      def self.read_instrument(xml, first_measure)
+        program = xml.at_xpath("//score-part/midi-instrument/midi-program")&.text&.to_i
+        legacy = program == 105 && xml.at_xpath("//score-part/score-instrument/instrument-name")&.text == "Banjo"
+        bank = xml.at_xpath("//score-part/midi-instrument/midi-bank")&.text&.to_i
+        capo = first_measure.at_xpath("./attributes/staff-details/capo")&.text&.to_i
+        capo ||= first_measure.xpath("./direction/direction-type/words").filter_map { |words| words.text.strip[/\ACapo (\d+)\z/i, 1]&.to_i }.first
+        field = ->(name) { xml.at_xpath("//miscellaneous-field[@name='#{name}']")&.text.to_i }
+        capo = capo.to_i.clamp(0, 24)
+        {
+          midi_voice: program.nil? || legacy ? 105 : (program - 1).clamp(0, 127),
+          midi_bank: bank.nil? ? 0 : (bank - 1).clamp(0, 255),
+          capo: capo,
+          banjo5: xml.at_xpath("//miscellaneous-field[@name='playtab-tef-banjo5']") ? field.("playtab-tef-banjo5").clamp(0, 255) : capo,
+          clef: field.("playtab-tef-clef").clamp(0, 255),
+          middle_c: field.("playtab-tef-middle-c").clamp(0, 255)
+        }
+      end
+
+      def self.metadata_value(technical, name)
+        technical&.xpath("./other-technical")&.each do |node|
+          value = node.text.strip[/\ATEF #{name} (\d+)\z/, 1]
+          return value.to_i if value
+        end
+        nil
+      end
+
+      def initialize(title:, tempo:, tuning:, measures:, notes:, texts:, chords:, lyrics:, warnings:, instrument: {})
         @title = title
         @tempo = tempo
         @tuning = Array(tuning).map(&:to_i)
@@ -228,6 +288,7 @@ module Tef2
         @chords = chords
         @lyrics = lyrics.to_s.empty? ? nil : lyrics.to_s
         @warnings = warnings
+        @instrument = DEFAULT_INSTRUMENT.merge(instrument)
         validate!
       end
 
@@ -288,13 +349,15 @@ module Tef2
         technique = element.xpath("./notations/technical/*[self::hammer-on or self::pull-off or self::slide or self::bend]").find do |node|
           node["type"] != "stop"
         end
+        effect3 = metadata_value(technical, "effect3").to_i & 0x0F
         effect1 = case technique&.name
         when "hammer-on" then 1
         when "pull-off" then 2
         when "slide" then 3
         when "bend" then technique.at_xpath("./bend-alter")&.text.to_f == 0.5 ? 4 : (technique.at_xpath("./release") ? 13 : 12)
-        else 0
+        else primary_effect(element, effect3)
         end
+        effect2 = metadata_value(technical, "effect2") || secondary_effect(element, technical)
         annotation = if thumb
           6
         elsif fingering.to_i.between?(1, 4)
@@ -307,14 +370,46 @@ module Tef2
           string: string - 1,
           fret: fret,
           effect1: effect1,
-          effect2: 0,
-          effect3: 0,
+          effect2: effect2 & 0x0F,
+          effect3: effect3,
+          dynamic: (metadata_value(technical, "dynamic") || DEFAULT_DYNAMIC) & 0x07,
+          stroke: metadata_value(technical, "stroke").to_i & 0x07,
           annotation: annotation,
           fingering: thumb ? "T" : fingering.to_i.between?(1, 4) ? fingering.to_i : nil,
           tie: element.xpath("./notations/tied[@type='start' or @type='continue']").any?,
-          tuplet: element.at_xpath("./time-modification") != nil,
-          grace: element.at_xpath("./grace") != nil
+          tuplet: element.at_xpath("./time-modification") != nil
         }
+      end
+
+      # TablEdit primary effects other than the editable hammer-on,
+      # pull-off, slide and bend, read from how the importer renders them.
+      # A rendering the note's secondary effect already accounts for is not
+      # also a primary effect.
+      def self.primary_effect(element, effect3)
+        technical = element.at_xpath("./notations/technical")
+        if technical&.at_xpath("./harmonic/natural") && effect3 != 6 then 6
+        elsif technical&.at_xpath("./harmonic/artificial") && effect3 != 7 then 7
+        elsif technical&.at_xpath("./tap") then 9
+        elsif element.at_xpath("./notations/ornaments/wavy-line") then 10
+        elsif element.at_xpath("./notations/ornaments/tremolo") then 11
+        elsif element.at_xpath("./notations/arpeggiate") && effect3 != 3 then 14
+        elsif element.at_xpath("./notehead")&.text == "x" && effect3 != 10 then 15
+        else 0
+        end
+      end
+
+      # The secondary effect of MusicXML that did not come from a TEF3
+      # import, which carries the exact value as metadata instead.
+      def self.secondary_effect(element, technical)
+        labels = technical ? technical.xpath("./other-technical").map { |node| node.text.strip } : []
+        if element.at_xpath("./notations/articulations/staccato") then 7
+        elsif element.at_xpath("./notehead[@parentheses='yes']") then 4
+        elsif labels.include?("TEF let ring") then 1
+        elsif labels.include?("TEF slap") then 2
+        elsif labels.include?("TEF fade in") then 8
+        elsif labels.include?("TEF fade out") then 9
+        else 0
+        end
       end
 
       def self.chord_name(harmony)
@@ -351,8 +446,8 @@ module Tef2
         warnings = []
         warnings << "Only the first tablature part is exported; additional parts or independent voices are not represented." if xml.xpath("//part").length > 1
         warnings << "Timed lyrics are not represented in TEF export; the standalone lyric section is preserved only where the selected TEF version supports it." if xml.xpath("//note/lyric").any?
-        unsupported_technical = xml.xpath("//notations/*[self::articulations or self::ornaments or self::arpeggiate]").to_a
-        unsupported_technical.concat(xml.xpath("//notations/technical/other-technical").reject { |node| node.text.strip.start_with?("TEF fingering ") })
+        unsupported_technical = xml.xpath("//notations/articulations/*[not(self::staccato)] | //notations/ornaments/*[not(self::wavy-line or self::tremolo)]").to_a
+        unsupported_technical.concat(xml.xpath("//notations/technical/other-technical").reject { |node| node.text.strip.match?(CONSUMED_METADATA) })
         warnings << "Some MusicXML techniques are not represented in the selected TEF export." if unsupported_technical.any?
         warnings << "MusicXML contains rests or independent voices; TEF export keeps note positions but does not preserve those voice details." if xml.xpath("//rest | //voice[. != '1']").any?
         warnings << "MusicXML contains measure repeats or alternate endings; those layout instructions are not represented in TEF export." if xml.xpath("//repeat | //ending").any?
@@ -623,12 +718,19 @@ module Tef2
       end
 
       def self.instrument_section(model)
+        # Laid out as in files written by TablEdit, including its default
+        # output flags (0x0710).
         bytes = [ 68, 0, 1, 0 ]
+        instrument = model.instrument
         record = Array.new(68, 0)
         Binary.u16(record, 0, 5)
-        Binary.u16(record, 2, 1)
-        record[6] = 105
-        record[8] = 1
+        record[8] = instrument[:midi_voice]
+        record[9] = instrument[:midi_bank]
+        record[10] = instrument[:banjo5]
+        Binary.u16(record, 12, instrument[:capo])
+        record[14] = instrument[:middle_c]
+        record[15] = instrument[:clef]
+        Binary.u16(record, 16, 0x0710)
         model.tuning.each_with_index { |pitch, index| record[20 + index] = 96 - pitch }
         record[32, 36] = Binary.text(model.title, 36)
         bytes + record
@@ -698,7 +800,10 @@ module Tef2
           Binary.duration_code(note[:duration], DURATION_CODES)
         end
         fingering = note[:fingering] == "T" ? 6 : note[:fingering].to_i.between?(1, 4) ? note[:fingering].to_i + 1 : 0
-        [ marker, duration, note[:effect1].to_i & 0x0F, 0, 0, 0, fingering, note[:tie] ? 2 : 0 ]
+        dynamic = note.fetch(:dynamic, DEFAULT_DYNAMIC).to_i & 0x07
+        grace = note[:grace] ? ((note[:grace_effect].to_i & 0x07) << 5) | (note[:grace_fret].to_i & 0x1F) : 0
+        effects = (note[:effect2].to_i & 0x0F) | ((note[:effect3].to_i & 0x0F) << 4)
+        [ marker, duration | (dynamic << 5), note[:effect1].to_i & 0x0F, grace, effects, 0, fingering | ((note[:stroke].to_i & 0x07) << 5), note[:tie] ? 2 : 0 ]
       end
 
       def self.marker_record(marker, index)
