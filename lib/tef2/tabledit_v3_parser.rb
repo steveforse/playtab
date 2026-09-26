@@ -64,7 +64,7 @@ module Tef2
         component_count: marker_count,
         tuning: instrument[:tuning],
         track_data: instruments,
-        notes: assign_chord_durations(notes),
+        notes: assign_chord_durations(link_ties(notes)),
         chords: chords,
         tempo_changes: tempo_changes,
         time_sig_changes: [],
@@ -236,14 +236,19 @@ module Tef2
             tef2_duration: duration_ticks(duration_code),
             duration_code: duration_code,
             tuplet: tuplet_duration?(duration_code),
-            dynamic: (byte2 >> 5) & 0x07,
+            # The three-bit value 7 marks a note tied from the previous
+            # note on its string (as MuseScore's TablEdit importer reads
+            # it); 0-6 are dynamics.
+            dynamic: (byte2 >> 5) == 7 ? nil : byte2 >> 5,
+            tied_from_previous: (byte2 >> 5) == 7,
             fingering_combo: fingering_combo,
             fingerings: modern_fingerings(fingering_combo),
             stroke: byte7 >> 5,
             note_attributes: byte8,
             attributes: (byte3 >> 4) & 0x03,
             annotation: nil,
-            # Byte 2's top bit belongs to the three-bit dynamic, not the tie.
+            # A tie to the next note. Playtab exports before this change set
+            # byte 8 bit 1 on the first note instead.
             tie: (byte8 & 0x02) != 0,
             grace: (byte1 & 0x40) != 0,
             voice: (((byte3 >> 4) & 0x03) == 3 ? 2 : 1)
@@ -314,6 +319,17 @@ module Tef2
       when 6 then [ "T" ]
       else []
       end
+    end
+
+    # Moves each "tied from the previous note" flag to that previous note
+    # on the same string, where the MusicXML builder starts the tie.
+    def self.link_ties(notes)
+      notes.group_by { |note| note[:string] }.each_value do |string_notes|
+        string_notes.sort_by { |note| note[:absolute_position] }.each_cons(2) do |previous, note|
+          previous[:tie] = true if note[:tied_from_previous]
+        end
+      end
+      notes
     end
 
     def self.assign_chord_durations(notes)
