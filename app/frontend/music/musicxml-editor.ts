@@ -10,6 +10,7 @@ export { inspectMusicXmlDuration, changeMusicXmlDuration, insertMusicXmlBeat, cr
 export type { MusicXmlDurationInfo, InsertBeatOptions, MusicXmlTripletInfo } from './editor/durations';
 export { insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, inspectMusicXmlMeterRange, changeMusicXmlMeter, changeMusicXmlPickup } from './editor/measures';
 export type { MeasureDuplication, MeasureDeletion, MeterScope, MeterChange } from './editor/measures';
+export { addMusicXmlVoice, removeMusicXmlVoice, measureTabVoices } from './editor/voices';
 export { inspectMusicXmlRepeats, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat } from './editor/repeats';
 export type { RepeatRegion, RepeatEndings } from './editor/repeats';
 export { inspectMusicXmlTie, connectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlNoteTechniques, setMusicXmlHand, setMusicXmlBend, inspectMusicXmlTransitions, connectMusicXmlTransition, removeMusicXmlTransition } from './editor/techniques';

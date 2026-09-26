@@ -135,10 +135,15 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
     - Staccato (secondary 7) has its own code path, separate from the legato pairing.
   - Remaining, **blocked on sample files**: the per-effect numbers (roll speed, vibrato frequency/amplitude, tremolo subdivision, choke amount, staccato reduction) are not in the 8-byte note record, and MuseScore does not read them. The note record has only the three bend codes (choke 4, bend 12, bend-release 13). Needs TablEdit files that vary one parameter at a time.
 
-- [ ] **18. Finish second-voice-per-string support** — `feature/second-voice-support`
+- [x] **18. Finish second-voice-per-string support** — `feature/second-voice-support`
   - `voice` is already parsed (`parser.rb:247`) and rendered in MusicXML (`full_musicxml_builder.rb:419,459`), making this the most complete of the unfinished features — but `TableditWriter.note_record` has no voice field at all, and item 11's audit should confirm whether the editor UI supports it.
   - Scope depends on item 11: if the editor already has partial support, this may just need export wiring; if not, editor work is needed too.
   - Item 11 result: partial. The editor navigates to and edits existing voice-2 beats; adding a beat to an empty second voice, and TEF3 export of the voice bits (byte 3 bits 4–5), are the remaining work. MuseScore reads byte 3 bits 4–5 as 0 default, 2 upper and 3 lower voice.
+  - Done (2026-09-26):
+    - **Editor.** Measure → "Add second voice" adds whole-measure rests in a new voice on each staff (after a `<backup>`) and selects them, so the usual rest-to-note entry fills it. "Remove second voice" takes it out again once it holds only rests.
+    - **Voice pairing.** Staves are paired by voice order, so a MuseScore-style score (notation voice 1, TAB voice 2) works. The paired notation rest is now matched in the same voice, not by beat number across voices.
+    - **TEF3 export.** The TAB staff's second voice in each measure is written as TablEdit's lower voice (byte 3 bits 4–5 = 3). A third voice warns and joins the first; TEF2 export warns that it merges voices.
+    - **Upper voice.** TablEdit's explicit upper voice (2) reads as the first voice; no corpus file uses voices.
 
 - [ ] **19. Add remaining score markings and symbols** — `feature/musical-symbols`
   - TablEdit's Insert menu musical symbols (trill, mordent, fermata, emphasis points), crescendo/decrescendo markings, and scale diagrams have no code footprint — lowest priority of this list since they're less commonly used than the note-effect cluster.

@@ -141,7 +141,7 @@ class Tef2ExporterTest < ActiveSupport::TestCase
       { string: 1, fret: 5, effect1: 5, left_finger: 2, right_hand: "I" },
       { string: 2, fret: 1, effect1: 8, effect3: 9 },
       { string: 3, fret: 2, effect3: 5, right_hand: "M" },
-      { string: 1, fret: 6, effect2: 3, left_finger: 4, right_hand: "T" }
+      { string: 1, fret: 6, effect2: 3, left_finger: 4, right_hand: "T", voice: 2 }
     ].each_with_index.map do |note, index|
       { measure: index / 8, position: (index % 8) * 128, duration: 128, effect1: 0, effect2: 0, effect3: 0, dynamic: 2, stroke: 0, tie: false, grace: false }.merge(note)
     end
@@ -156,7 +156,7 @@ class Tef2ExporterTest < ActiveSupport::TestCase
 
     result = Tef2::Exporter.export({ "version" => 2, "title" => "Fields", "source" => imported[:musicxml] }, version: "tef3")
     exported = Tef2::TableditV3Parser.parse(result[:bytes])
-    fields = %i[string fret dynamic stroke effect1 effect2 effect3 grace grace_note_fret grace_note_effect fingering_combo fingerings tie]
+    fields = %i[string fret dynamic stroke effect1 effect2 effect3 grace grace_note_fret grace_note_effect fingering_combo fingerings tie voice attributes]
     assert_equal original[:notes].map { |note| note.slice(*fields) }, exported[:notes].map { |note| note.slice(*fields) }
     instrument = %i[midi_voice midi_bank capo banjo5 clef middle_c output]
     assert_equal original[:track_data].first.slice(*instrument), exported[:track_data].first.slice(*instrument)
@@ -218,6 +218,20 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     faster = musicxml.sub('<measure number="3">', '<measure number="3"><direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>132</per-minute></metronome></direction-type><sound tempo="132"/></direction>')
     result = Tef2::Exporter.export({ "version" => 2, "title" => "Meters", "source" => faster }, version: "tef3")
     assert_includes result[:warnings], "TEF export keeps the opening tempo; later tempo changes are not represented."
+  end
+
+  test "writes the tablature staff's second voice as TablEdit's lower voice" do
+    note = ->(voice, string, fret) { "<note><pitch><step>G</step><octave>3</octave></pitch><duration>2</duration><voice>#{voice}</voice><notations><technical><string>#{string}</string><fret>#{fret}</fret></technical></notations></note>" }
+    lanes = ->(*voices) { voices.each_with_index.map { |voice, index| (index.zero? ? "" : "<backup><duration>4</duration></backup>") + note.(voice, index + 1, index) + note.(voice, index + 1, index + 2) }.join }
+    xml = ->(body) { "<score-partwise><part-list><score-part id=\"P1\"/></part-list><part id=\"P1\"><measure number=\"1\"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time></attributes>#{body}</measure></part></score-partwise>" }
+    result = Tef2::Exporter.export({ "version" => 2, "title" => "Voices", "source" => xml.(lanes.("2", "3")) }, version: "tef3")
+    assert_equal [ [ 0, 1 ], [ 0, 1 ], [ 1, 2 ], [ 1, 2 ] ], Tef2::TableditV3Parser.parse(result[:bytes])[:notes].map { |parsed| parsed.values_at(:string, :voice) }.sort
+    refute result[:warnings].any? { |warning| warning.include?("two voices") }
+
+    crowded = Tef2::Exporter.export({ "version" => 2, "title" => "Voices", "source" => xml.(lanes.("1", "2", "3")) }, version: "tef3")
+    assert_includes crowded[:warnings], "TEF export keeps two voices per measure; later voices join the first."
+    tef2 = Tef2::Exporter.export({ "version" => 2, "title" => "Voices", "source" => xml.(lanes.("1", "2")) }, version: "tef2")
+    assert_includes tef2[:warnings], "TEF2 export writes the second voice's notes into the first voice."
   end
 
   test "reports malformed documents and TEF2 limits" do

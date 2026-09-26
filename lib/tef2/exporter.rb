@@ -36,6 +36,9 @@ module Tef2
       else raise Invalid, "Unsupported TEF export version."
       end
       warnings = model.warnings.dup
+      if version.to_s == TEF2 && model.notes.any? { |note| note[:voice] == 2 }
+        warnings << "TEF2 export writes the second voice's notes into the first voice."
+      end
       if version.to_s == TEF2 && model.reading_list.any?
         warnings << "TEF2 export writes the measures in written order; repeats, endings and jumps are not represented."
       end
@@ -188,6 +191,10 @@ module Tef2
 
           cursor = 0
           previous_note_position = nil
+          # The tablature staff's voices in the order they first appear: the
+          # second is TablEdit's lower voice, whatever its MusicXML number.
+          tab_notes = measure.xpath("./note").select { |note| target_staff ? note.at_xpath("./staff")&.text == target_staff : note.at_xpath("./notations/technical/string") }
+          voice_order = tab_notes.map { |note| note.at_xpath("./voice")&.text || "1" }.uniq
           # TablEdit stores a grace note on the note it leads into, on the
           # same string, so each grace waits for that note.
           pending_graces = {}
@@ -224,6 +231,7 @@ module Tef2
                   chord_note = element.at_xpath("./chord")
                   position = chord_note && previous_note_position ? previous_note_position : cursor
                   note = note_from_xml(element, measure_index, position, duration, string, fret)
+                  note[:voice] = voice_order.index(element.at_xpath("./voice")&.text || "1") == 1 ? 2 : 1
                   (grace = pending_graces.delete(string)) ? note.merge!(grace, grace: true) : note[:grace] = false
                   notes << note
                   cursor += duration unless chord_note
@@ -500,7 +508,11 @@ module Tef2
         unsupported_technical = xml.xpath("//notations/articulations/*[not(self::staccato)] | //notations/ornaments/*[not(self::wavy-line or self::tremolo)]").to_a
         unsupported_technical.concat(xml.xpath("//notations/technical/other-technical").reject { |node| node.text.strip.match?(CONSUMED_METADATA) })
         warnings << "Some MusicXML techniques are not represented in the selected TEF export." if unsupported_technical.any?
-        warnings << "MusicXML contains rests or independent voices; TEF export keeps note positions but does not preserve those voice details." if xml.xpath("//rest | //voice[. != '1']").any?
+        warnings << "MusicXML contains rests; TEF export keeps note positions but not the rests." if xml.xpath("//rest").any?
+        tab_voices = target_staff ? "./note[staff='#{target_staff}']/voice" : "./note/voice"
+        if xml.xpath("//part[1]/measure").any? { |measure| measure.xpath(tab_voices).map(&:text).uniq.length > 2 }
+          warnings << "TEF export keeps two voices per measure; later voices join the first."
+        end
         # TablEdit 3's encoding of a tempo change is unknown (no sample file
         # has one), so only the opening tempo is written.
         tempos = xml.xpath("//part[1]/measure/direction").filter_map do |direction|
@@ -892,7 +904,9 @@ module Tef2
         dynamic = tied_from_previous ? 7 : [ note.fetch(:dynamic, DEFAULT_DYNAMIC).to_i, 6 ].min
         grace = note[:grace] ? ((note[:grace_effect].to_i & 0x07) << 5) | (note[:grace_fret].to_i & 0x1F) : 0
         effects = (note[:effect2].to_i & 0x0F) | ((note[:effect3].to_i & 0x0F) << 4)
-        [ marker, duration | (dynamic << 5), note[:effect1].to_i & 0x0F, grace, effects, 0, fingering | ((note[:stroke].to_i & 0x07) << 5), 0 ]
+        # Byte 3 bits 4-5: 0 is the default voice, 3 the lower (second) one.
+        voice = note[:voice].to_i == 2 ? 0x30 : 0
+        [ marker, duration | (dynamic << 5), (note[:effect1].to_i & 0x0F) | voice, grace, effects, 0, fingering | ((note[:stroke].to_i & 0x07) << 5), 0 ]
       end
 
       def self.marker_record(marker, index)
