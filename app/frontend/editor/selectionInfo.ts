@@ -1,7 +1,7 @@
 import type { ScoreSelection } from '../Player';
 import type { Score } from '../music/score';
 import type { MusicXmlPreview } from '../music/musicxml';
-import { inspectMusicXmlDuration, inspectMusicXmlNoteTechniques, inspectMusicXmlTie, inspectMusicXmlTransitions, inspectMusicXmlTriplet,
+import { graceEventPlacement, inspectMusicXmlDuration, inspectMusicXmlNoteTechniques, inspectMusicXmlTie, inspectMusicXmlTransitions, inspectMusicXmlTriplet,
   type NoteTechniqueInfo, type NoteTransition, type TiePosition } from '../music/musicxml-editor';
 import { midiName } from './labels';
 
@@ -92,8 +92,19 @@ export function inspectSelection(selection: ScoreSelection | null, preview: Musi
       return { picking: null, pickingReason: reason, fretting: null, frettingReason: reason, bend: null, bendReason: reason };
     }
   })();
-  const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || selectedBeats?.[selection.event - 2]?.graceType));
-  return { selectedBeats, selectedDetails, moveOutcome, selectedEventCount, selectedRhythm, selectedTriplet, selectedTupletLocked, selectedTransitions, selectedTie, selectedTechniques, selectedHasGrace };
+  // Grace groups before and after the selected event (a selected grace note
+  // reports the group it belongs to).
+  const placementAt = (beat: number) => {
+    if (!selection || !preview || !selectedBeats?.[beat]?.graceType) return null;
+    try { return graceEventPlacement(preview.source, preview.score, { measure: selection.measure - 1, beat, voice: selection.voice - 1 }); }
+    catch { return null; }
+  };
+  const selectedGracePlacement = selection && selection.graceIndex !== null ? placementAt(selection.event - 1) ?? 'before' : null;
+  const selectedHasGrace = Boolean(selection && (selection.graceIndex !== null || (selectedBeats?.[selection.event - 2]?.graceType
+    && (!preview || placementAt(selection.event - 2) === 'before'))));
+  const selectedHasAfterGrace = Boolean(selection && selection.graceIndex === null && placementAt(selection.event) === 'after');
+  return { selectedBeats, selectedDetails, moveOutcome, selectedEventCount, selectedRhythm, selectedTriplet, selectedTupletLocked, selectedTransitions, selectedTie, selectedTechniques,
+    selectedHasGrace, selectedHasAfterGrace, selectedGracePlacement };
 }
 
 export type SelectionInfo = ReturnType<typeof inspectSelection>;

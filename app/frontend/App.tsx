@@ -4,10 +4,10 @@ import { defaultPlayerPreferences, Player, type ContextMenuRequest, type PlayerC
 import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type ImportedScoreDocument, type Score, type StoredScore } from './music/score';
 import { exportAscii, parseAscii } from './music/ascii';
 import { createBlankMusicXml, OPEN_G_TUNING, promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
-import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
+import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, graceEventPlacement, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlEvent,
   deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
-  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type PickingHand, type GraceEventSpec, type GraceTransition, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
+  type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type EventLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type PickingHand, type GraceEventSpec, type GraceTransition, type GracePlacement, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
 import { DURATION_DENOMINATORS, type DurationDenominator } from './editor/rhythm';
 import type { PlaybackEndpoints } from './editor/audition';
@@ -31,7 +31,7 @@ type MeterTarget = { originalKey: string; base: MusicXmlPreview; measureIndex: n
 type PickupTarget = { originalKey: string; base: MusicXmlPreview };
 type RepeatTarget = { originalKey: string; base: MusicXmlPreview; measure: number };
 type RepeatRemoval = RepeatTarget & { region: RepeatRegion; endings: RepeatEndings | null };
-type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; destination: number; first: number;
+type GraceTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; destination: number; first: number; placement: GracePlacement;
   existing: boolean; readOnly: string[]; connections: string[]; initialEvents: GraceEventSpec[] };
 type BendTarget = { originalKey: string; selection: ScoreSelection; existing: NoteBend | 'none' | null; reason?: string };
 type AnchorTarget = { originalKey: string; base: MusicXmlPreview; selection: ScoreSelection; kind: AnchorKind; items: AnchorItem[] };
@@ -807,18 +807,21 @@ export function App() {
         `Repeat in measures ${region.start + 1}–${region.end + 1} removed with its dependent endings.`) ?? '');
     } catch (failure) { setRepeatRemovalError((failure as Error).message); }
   }
-  function openGraceDialog(opener: HTMLElement) {
+  function openGraceDialog(opener: HTMLElement, requested: GracePlacement = 'before') {
     if (!selection || selection.kind !== 'note' || selection.string === null || selection.fret === null) {
       setError('Select a note to add or edit its grace group.'); return;
     }
     if (pendingFret) { setError('Apply the pending fret before editing grace notes.'); return; }
     try {
       const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
-      const info = inspectMusicXmlGraceGroup(base.source, base.score, { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 });
+      const position = { measure: selection.measure - 1, beat: selection.event - 1, voice: selection.voice - 1 };
+      // A selected grace note opens the group it belongs to, before or after.
+      const placement = selection.graceIndex !== null ? graceEventPlacement(base.source, base.score, position) ?? requested : requested;
+      const info = inspectMusicXmlGraceGroup(base.source, base.score, position, placement);
       const existing = info.events.length > 0;
       graceOpener.current = opener;
-      setGraceTarget({ originalKey: documentKey(currentDocument), base, selection, destination: info.destination,
-        first: info.destination - info.events.length, existing, readOnly: info.readOnly, connections: info.connections,
+      setGraceTarget({ originalKey: documentKey(currentDocument), base, selection, destination: info.destination, placement,
+        first: info.first ?? info.destination - info.events.length, existing, readOnly: info.readOnly, connections: info.connections,
         initialEvents: existing ? info.events : [{ denominator: 16, notes: [{ string: selection.string, fret: selection.fret, transition: 'none' }] }] });
       setError('');
     } catch (failure) { setError((failure as Error).message); }
@@ -840,15 +843,17 @@ export function App() {
   }
   function confirmGrace(candidate: string, graceEvents: GraceEventSpec[]): string | null {
     if (!graceTarget) return null;
-    const { selection: opened, first, existing } = graceTarget;
-    return commitGraceSource(candidate, `${existing ? 'Edit' : 'Add'} grace group in measure ${opened.measure}`,
-      existing ? 'Grace group updated.' : 'Grace group added before the selected event.', first + 1, graceEvents[0].notes[0].string);
+    const { selection: opened, first, existing, placement } = graceTarget;
+    const where = placement === 'after' ? 'after' : 'before';
+    return commitGraceSource(candidate, `${existing ? 'Edit' : 'Add'} grace group ${placement === 'after' ? 'after an event ' : ''}in measure ${opened.measure}`,
+      existing ? 'Grace group updated.' : `Grace group added ${where} the selected event.`, first + 1, graceEvents[0].notes[0].string);
   }
   function removeGraceGroup(): string | null {
     if (!graceTarget) return null;
     const { base, selection: opened, first } = graceTarget;
     try {
-      const removed = removeMusicXmlGraceGroup(base.source, base.score, { measure: opened.measure - 1, beat: graceTarget.destination, voice: opened.voice - 1 });
+      const removed = removeMusicXmlGraceGroup(base.source, base.score, { measure: opened.measure - 1, beat: graceTarget.destination, voice: opened.voice - 1 },
+        graceTarget.placement);
       return commitGraceSource(removed.source, `Remove grace group in measure ${opened.measure}`, 'Grace group removed.', first + 1, opened.string);
     } catch (failure) { return (failure as Error).message; }
   }
@@ -1579,7 +1584,7 @@ export function App() {
   // Read-only facts about the selected location: exact offset from the bar
   // start, sounding pitch, grace-group navigation, and string-move outcome.
   const { selectedBeats, selectedDetails, moveOutcome, selectedEventCount, selectedRhythm, selectedTriplet, selectedTupletLocked,
-    selectedTransitions, selectedTie, selectedTechniques, selectedHasGrace } = inspectSelection(selection, preview, score, moveString, moveMode);
+    selectedTransitions, selectedTie, selectedTechniques, selectedHasGrace, selectedHasAfterGrace, selectedGracePlacement } = inspectSelection(selection, preview, score, moveString, moveMode);
   const measureCount = preview?.score.masterBars.length ?? score.measures.length;
   const onSelection = (run: (current: ScoreSelection) => void) => (_opener: HTMLElement) => { if (selection) run(selection); };
   const noteSelected = selection?.kind === 'note';
@@ -1635,6 +1640,8 @@ export function App() {
     'remove-triplet': { label: 'Remove triplet', className: 'editor-remove-triplet', hidden: !selectedTriplet?.triplet,
       disabled: !selectedTriplet?.canRemove, run: () => changeSelectedTriplet(true) },
     grace: { label: selectedHasGrace ? 'Edit grace…' : 'Add grace…', disabled: !noteSelected, reason: 'Select a note first', run: opener => openGraceDialog(opener) },
+    'grace-after': { label: selectedHasAfterGrace ? 'Edit grace after…' : 'Add grace after…', icon: 'grace', disabled: !noteSelected,
+      hidden: selection?.graceIndex !== null && selection !== null, reason: 'Select a note first', run: opener => openGraceDialog(opener, 'after') },
     'remove-grace': { label: 'Remove grace', hidden: !noteSelected || selection?.graceIndex === null, run: onSelection(current => requestRemoval(current, 'grace')) },
     bend: { label: 'Bend…', disabled: !selectedTechniques, reason: 'Select a note first', run: opener => openBendDialog(opener) },
     ...Object.fromEntries(TRANSITION_COMMANDS.map(kind => [kind, {
@@ -1680,7 +1687,7 @@ export function App() {
     ? ['copy-passage', 'cut-passage', 'paste-passage', 'clear-range', '-', 'play-selection', 'clear-passage', '-', ...measureEntries]
     : noteSelected
       ? ['edit-fret', 'remove-note', 'make-rest', '-', durationEntries,
-        { label: 'Techniques', items: ['tie', 'hammer-on', 'pull-off', 'slide', 'bend', 'grace', 'remove-grace', 'remove-tie'] }, textEntries,
+        { label: 'Techniques', items: ['tie', 'hammer-on', 'pull-off', 'slide', 'bend', 'grace', 'grace-after', 'remove-grace', 'remove-tie'] }, textEntries,
         '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection']
       : ['edit-fret', 'insert-event', '-', durationEntries, textEntries, '-', 'paste-passage', '-', { label: 'Measure', items: measureEntries }, '-', 'play-from-here', 'play-selection'];
   const scoreTitle = preview?.score.title ?? score.title;

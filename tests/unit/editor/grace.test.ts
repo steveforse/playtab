@@ -5,7 +5,7 @@ import { midi, Settings } from '@coderline/alphatab';
 import { linearAuditionMidi, writtenPlaybackRange } from '../../../app/frontend/editor/audition';
 import { selectionFromBeat } from '../../../app/frontend/Player';
 import { createBlankMusicXml, OPEN_G_TUNING, readMusicXml } from '../../../app/frontend/music/musicxml';
-import { addMusicXmlEndings, addMusicXmlGraceGroup, addMusicXmlRepeat, applyMusicXmlEdits, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGrace, removeMusicXmlGraceGroup, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
+import { addMusicXmlEndings, addMusicXmlGraceGroup, graceEventPlacement, addMusicXmlRepeat, applyMusicXmlEdits, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGrace, removeMusicXmlGraceGroup, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, insertMusicXmlMeasure,
   inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, removeMusicXmlRepeat,
   inspectMusicXmlTie, removeMusicXmlTie,
   inspectMusicXmlMeterRange, musicXmlEditorState, addMusicXmlNote, inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, changeMusicXmlAnchor, inspectMusicXmlAnchor, removeMusicXmlNotes,
@@ -193,7 +193,7 @@ describe('ED-16 grace group dialog commands', () => {
 
   it('inspects the supported rich grace chord from either the grace or its destination', () => {
     const { score, voice, beat } = target(rich);
-    const expected = { destination: beat + 1, readOnly: [], connections: [],
+    const expected = { destination: beat + 1, first: beat, placement: 'before', readOnly: [], connections: [],
       events: [{ denominator: 16, notes: [{ string: 4, fret: 0, transition: 'none' }, { string: 3, fret: 0, transition: 'none' }] }] };
     expect(inspectMusicXmlGraceGroup(rich, score, { measure: 0, beat, voice })).toEqual(expected);
     expect(inspectMusicXmlGraceGroup(rich, score, { measure: 0, beat: beat + 1, voice })).toEqual(expected);
@@ -308,5 +308,87 @@ describe('ED-16 grace group dialog commands', () => {
       'Grace event 1, string 3 has an unslashed grace.',
       'Grace event 1 on the notation staff has a default-x note attribute.',
     ]);
+  });
+});
+
+describe('after-graces', () => {
+  const fixture = fs.readFileSync('tests/fixtures/editor-after-grace.musicxml', 'utf8');
+  // The fixture without its grace chord or slides: a pick, then a two-string chord.
+  const plain = fixture.replace(/\s*<note><grace[^]*?<\/note>/g, '').replace(/<slide type="start" number="\d"\/>/g, '');
+  const load = (value: string) => readMusicXml(value, 'after.musicxml');
+  const slideInto = [{ denominator: 16 as const, notes: [
+    { string: 1, fret: 2, transition: 'slide' as const }, { string: 2, fret: 3, transition: 'slide' as const }] }];
+  const noteOns = (value: string) => {
+    const file = new midi.MidiFile();
+    new midi.MidiFileGenerator(load(value).score, new Settings(), new midi.AlphaSynthMidiFileHandler(file)).generate();
+    return file.tracks.flatMap(track => track.events).filter(event => /NoteOn/.test(event.constructor.name)).map(event => event.tick);
+  };
+
+  it('adds a grace chord after the last event of a measure that the chord slides into', () => {
+    expect(plain).not.toContain('<grace');
+    const added = applyMusicXmlGraceGroup(plain, load(plain).score, { measure: 0, beat: 1, voice: 0 }, slideInto, 'after');
+    expect(added.match(/<grace slash="yes" steal-time-previous="25"\/>/g)).toHaveLength(2);
+    expect(added.match(/<slide type="start" number="\d"\/>/g)).toHaveLength(2);
+    expect(added.match(/<slide type="stop" number="\d"\/>/g)).toHaveLength(2);
+    const beats = load(added).score.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats).toHaveLength(3);
+    expect(beats[2].graceType).toBeTruthy();
+    expect(beats[1].notes.every(note => note.slideTarget)).toBe(true);
+    expect(beats[2].playbackStart).toBe(1800);
+    expect(noteOns(added)).toContain(1800);
+    const info = inspectMusicXmlGraceGroup(added, load(added).score, { measure: 0, beat: 2, voice: 0 }, 'after');
+    expect(info).toMatchObject({ destination: 1, first: 2, placement: 'after', readOnly: [] });
+    expect(info.events).toEqual(slideInto);
+    expect(graceEventPlacement(added, load(added).score, { measure: 0, beat: 2, voice: 0 })).toBe('after');
+    expect(graceEventPlacement(added, load(added).score, { measure: 0, beat: 1, voice: 0 })).toBeNull();
+    // Nothing is before the chord.
+    expect(inspectMusicXmlGraceGroup(added, load(added).score, { measure: 0, beat: 1, voice: 0 }).events).toEqual([]);
+  });
+
+  it('edits and removes an after-grace group as one unit', () => {
+    const added = applyMusicXmlGraceGroup(plain, load(plain).score, { measure: 0, beat: 1, voice: 0 }, slideInto, 'after');
+    const edited = applyMusicXmlGraceGroup(added, load(added).score, { measure: 0, beat: 2, voice: 0 },
+      [{ denominator: 8, notes: [{ string: 1, fret: 4, transition: 'hammer-on' }] }], 'after');
+    expect(edited.match(/<grace /g)).toHaveLength(1);
+    expect(edited).not.toContain('<slide');
+    expect(edited.match(/<hammer-on type="start"/g)).toHaveLength(1);
+    expect(inspectMusicXmlGraceGroup(edited, load(edited).score, { measure: 0, beat: 1, voice: 0 }, 'after').events)
+      .toEqual([{ denominator: 8, notes: [{ string: 1, fret: 4, transition: 'hammer-on' }] }]);
+    const removed = removeMusicXmlGraceGroup(edited, load(edited).score, { measure: 0, beat: 2, voice: 0 }, 'after');
+    expect(removed.source).not.toContain('<grace');
+    expect(removed.source).not.toContain('hammer-on');
+    expect(() => removeMusicXmlGraceGroup(removed.source, load(removed.source).score, { measure: 0, beat: 1, voice: 0 }, 'after'))
+      .toThrow('no grace group to remove');
+  });
+
+  it('checks transition direction and needs a note to come from', () => {
+    const score = load(plain).score;
+    const at = { measure: 0, beat: 1, voice: 0 };
+    expect(() => applyMusicXmlGraceGroup(plain, score, at, [{ denominator: 16, notes: [{ string: 1, fret: 0, transition: 'hammer-on' }] }], 'after'))
+      .toThrow('a hammer-on needs a higher fret than the note it comes from (fret 1)');
+    expect(() => applyMusicXmlGraceGroup(plain, score, at, [{ denominator: 16, notes: [{ string: 1, fret: 1, transition: 'slide' }] }], 'after'))
+      .toThrow('a slide needs a different fret from the note it comes from');
+    expect(() => applyMusicXmlGraceGroup(plain, score, at, [{ denominator: 16, notes: [{ string: 3, fret: 2, transition: 'pull-off' }] }], 'after'))
+      .toThrow('needs a note on string 3 in the main event or an earlier grace event');
+    // A second grace event can slide on from the first.
+    const chained = applyMusicXmlGraceGroup(plain, score, at, [{ denominator: 16, notes: [{ string: 1, fret: 2, transition: 'none' }] },
+      { denominator: 16, notes: [{ string: 1, fret: 4, transition: 'slide' }] }], 'after');
+    expect(inspectMusicXmlGraceGroup(chained, load(chained).score, at, 'after').events.map(event => event.notes[0].transition)).toEqual(['none', 'slide']);
+    expect(() => applyMusicXmlGraceGroup(plain, score, { measure: 1, beat: 5, voice: 0 }, slideInto, 'after')).toThrow();
+  });
+
+  it('keeps a mid-measure after-grace apart from the next event’s own grace group', () => {
+    const afterPick = applyMusicXmlGraceGroup(plain, load(plain).score, { measure: 0, beat: 0, voice: 0 },
+      [{ denominator: 16, notes: [{ string: 4, fret: 2, transition: 'hammer-on' }] }], 'after');
+    const both = applyMusicXmlGraceGroup(afterPick, load(afterPick).score, { measure: 0, beat: 2, voice: 0 },
+      [{ denominator: 16, notes: [{ string: 1, fret: 3, transition: 'none' }] }]);
+    const score = load(both).score;
+    const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+    expect(beats.map(beat => Boolean(beat.graceType))).toEqual([false, true, true, false]);
+    expect(graceEventPlacement(both, score, { measure: 0, beat: 1, voice: 0 })).toBe('after');
+    expect(graceEventPlacement(both, score, { measure: 0, beat: 2, voice: 0 })).toBe('before');
+    expect(inspectMusicXmlGraceGroup(both, score, { measure: 0, beat: 1, voice: 0 }, 'after').events[0].notes[0]).toEqual({ string: 4, fret: 2, transition: 'hammer-on' });
+    expect(inspectMusicXmlGraceGroup(both, score, { measure: 0, beat: 2, voice: 0 }).events[0].notes[0]).toEqual({ string: 1, fret: 3, transition: 'none' });
+    expect(inspectMusicXmlGraceGroup(both, score, { measure: 0, beat: 3, voice: 0 })).toMatchObject({ destination: 3, first: 2 });
   });
 });
