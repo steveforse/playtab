@@ -70,6 +70,7 @@ module Tef2
         time_sig_changes: [],
         endings: endings,
         repeats: [],
+        reading_list: parse_reading_list(bytes),
         texts: texts,
         percussions: [],
         rhythms: [],
@@ -355,6 +356,31 @@ module Tef2
       count.times.map { reader.text }
     rescue IndexError
       raise Invalid, "Truncated TablEdit text section"
+    end
+
+    # The reading list (header pointer 0x80): a u16 record size and count,
+    # then one record per measure range, starting with the 1-based first
+    # and last measure. The rest of a record is the range's name, which
+    # files written by TablEdit leave as uninitialized memory.
+    def self.parse_reading_list(bytes)
+      return [] if bytes.length < 0x84
+
+      pointer = read_u32(bytes, 0x80)
+      return [] if pointer.zero?
+
+      reader = Reader.new(bytes, pointer)
+      reader.require!(4)
+      size = reader.u16
+      count = reader.u16
+      raise Invalid, "Invalid TablEdit reading list" if size < 4 || count > ReadingList::MAX_SEQUENCES
+
+      count.times.map do |index|
+        record = Reader.new(bytes, pointer + 4 + index * size)
+        record.require!(size)
+        [ record.u16, record.u16 ]
+      end
+    rescue IndexError
+      raise Invalid, "Truncated TablEdit reading list"
     end
 
     def self.parse_chords(bytes)
