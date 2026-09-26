@@ -12,10 +12,6 @@ module Tef2
   # order back into a reading list for export.
   module ReadingList
     MAX_SEQUENCES = 96
-    # A return whose first ending is longer than this is written as a
-    # D.C./D.S. al Coda instead (the private corpus has 1-3 measure first
-    # endings, and 15-18 measure "first endings" that read as a coda).
-    MAX_ENDING_LENGTH = 4
 
     # sequences: [[from, to], ...] with 1-based measure numbers.
     # Returns [bars, warnings]: one hash per measure (0-based), or nil when
@@ -54,15 +50,15 @@ module Tef2
             repeats << [ from2, to1 ]
             explained[[ to1, from2 ]] = true
             i = j
-          elsif fits && after && after[0] == to1 + 1 && to1 - to2 <= MAX_ENDING_LENGTH
+          elsif fits && after && after[0] == to1 + 1
             # First and second endings: the second pass stops before the
-            # first ending and continues after it. The second ending is as
-            # long as the first, within the next reading-list range and
-            # before the next repeat starts (it is left out when that repeat
-            # starts right after the first ending).
-            first_length = to1 - to2
-            next_return = seqs[i + 3..].to_a.each_with_index.find { |(from, _), offset| from <= seqs[i + 2 + offset][1] }&.first&.first
-            second_last = [ to1 + first_length, after[1], measure_count - 1, (next_return || measure_count) - 1 ].min
+            # first ending and continues after it. As in TablEdit's printed
+            # scores (checked against the private PDFs), the first ending
+            # may be long (18 measures in one tune) and the second ending
+            # is the one measure after it, left out when the next repeat
+            # starts there.
+            next_return = seqs[i + 3..].to_a.each_with_index.find { |(from, _), offset| from <= seqs[i + 2 + offset][1] && from > to1 }&.first&.first
+            second_last = [ to1 + 1, (next_return || measure_count) - 1 ].min
             bars[from2][:forward] = true
             bars[to1][:backward] = 2
             (to2 + 1..to1).each { |index| bars[index][:endings] = [ 1 ] }
