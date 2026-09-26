@@ -14,8 +14,8 @@ export { inspectMusicXmlRepeats, addMusicXmlRepeat, addMusicXmlEndings, inspectM
 export type { RepeatRegion, RepeatEndings } from './editor/repeats';
 export { inspectMusicXmlTie, connectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlNoteTechniques, setMusicXmlHand, setMusicXmlBend, inspectMusicXmlTransitions, connectMusicXmlTransition, removeMusicXmlTransition } from './editor/techniques';
 export type { TiePosition, GraceTransition, PickingHand, FrettingHand, BendAmount, NoteBend, NoteTechniqueInfo, TransitionKind, NoteTransition } from './editor/techniques';
-export { removeMusicXmlGrace, inspectMusicXmlGraceGroup, applyMusicXmlGraceGroup, addMusicXmlGraceGroup, removeMusicXmlGraceGroup } from './editor/grace';
-export type { GraceRemoval, GraceMember, GraceNoteSpec, GraceEventSpec, GraceGroupInfo } from './editor/grace';
+export { removeMusicXmlGrace, inspectMusicXmlGraceGroup, applyMusicXmlGraceGroup, addMusicXmlGraceGroup, removeMusicXmlGraceGroup, graceEventPlacement, isAfterGraceGroup } from './editor/grace';
+export type { GraceRemoval, GraceMember, GraceNoteSpec, GraceEventSpec, GraceGroupInfo, GracePlacement } from './editor/grace';
 export { ANCHOR_TEXT_LIMIT, chordSpellingName, inspectMusicXmlAnchor, changeMusicXmlAnchor, LYRIC_VERSES, STANDALONE_LYRICS_LIMIT, inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics } from './editor/text';
 export type { ChordQuality, ChordRoot, ChordSpelling, AnchorKind, AnchorItem, AnchorInfo, LyricSyllabic, EventLyric } from './editor/text';
 export { TEMPO_LIMITS, TUNING_LIMITS, CAPO_LIMIT, defaultFifthCapo, fifthStringOffset, inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo } from './editor/settings';

@@ -106,8 +106,11 @@ export function applyTechniques(score: model.Score, tab: model.Staff, staffIndex
   for (const marker of markers.filter(m => m.staff === staffIndex)) {
     const beats = beatsInBar(marker.bar);
     const normalBeats = beats.filter(b => Math.abs(b.playbackStart - marker.tick) < 0.01);
+    // A grace belongs to the ordinary beat at its source time; an
+    // end-of-measure (after-)grace has none and forms the bar's trailing group.
     const targetBeats = marker.grace
-      ? normalBeats.flatMap(beat => beat.graceGroup?.beats ?? [])
+      ? normalBeats.length ? normalBeats.flatMap(beat => beat.graceGroup?.beats ?? [])
+        : beats.filter(beat => beat.graceType && beat.graceGroup && !beat.graceGroup.isComplete)
       : normalBeats;
     const notes = targetBeats.flatMap(b => b.notes)
       .filter(n => n.string === 6 - marker.string && n.fret === marker.fret && (marker.ghost === undefined || n.isGhost === marker.ghost));

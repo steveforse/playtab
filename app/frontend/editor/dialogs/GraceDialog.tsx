@@ -1,12 +1,12 @@
 import { useEffect, useState, type RefObject } from 'react';
 import type { MusicXmlPreview } from '../../music/musicxml';
-import { applyMusicXmlGraceGroup, type GraceEventSpec, type GraceTransition } from '../../music/musicxml-editor';
+import { applyMusicXmlGraceGroup, type GraceEventSpec, type GracePlacement, type GraceTransition } from '../../music/musicxml-editor';
 import { useModalDialog } from '../useModalDialog';
 
-export type GraceDialogTarget = { base: MusicXmlPreview; selection: { measure: number; voice: number }; destination: number;
+export type GraceDialogTarget = { base: MusicXmlPreview; selection: { measure: number; voice: number }; destination: number; placement: GracePlacement;
   existing: boolean; readOnly: string[]; connections: string[]; initialEvents: GraceEventSpec[] };
 
-// Add or edit the grace group before an event. The rewritten source is
+// Add or edit the grace group before an event, or after it (an after-grace). The rewritten source is
 // previewed live; onApply and onRemove return an error or null.
 export function GraceDialog({ target, onApply, onRemove, onClose, returnFocus }: {
   target: GraceDialogTarget | null; onApply: (candidate: string, events: GraceEventSpec[]) => string | null; onRemove: () => string | null;
@@ -24,14 +24,18 @@ export function GraceDialog({ target, onApply, onRemove, onClose, returnFocus }:
     if (!target || target.readOnly.length) return null;
     try {
       return { candidate: applyMusicXmlGraceGroup(target.base.source, target.base.score,
-        { measure: target.selection.measure - 1, beat: target.destination, voice: target.selection.voice - 1 }, graceEvents), error: '' };
+        { measure: target.selection.measure - 1, beat: target.destination, voice: target.selection.voice - 1 }, graceEvents, target.placement), error: '' };
     } catch (failure) { return { candidate: null, error: (failure as Error).message }; }
   })();
+  const after = target?.placement === 'after';
+  const title = `${target?.existing ? 'Edit' : 'Add'} grace group${after ? ' after' : ''}`;
   return (
-  <dialog ref={ref} className="duplicate-dialog grace-dialog" aria-label={target?.existing ? 'Edit grace group' : 'Add grace group'}
+  <dialog ref={ref} className="duplicate-dialog grace-dialog" aria-label={title}
     onCancel={event => { event.preventDefault(); onClose(); }}>
-    <h2>{target?.existing ? 'Edit grace group' : 'Add grace group'}</h2>
-    <p>Destination: measure {target?.selection.measure}, event {(target?.destination ?? 0) + 1}. Grace notes play before it without using measure time.</p>
+    <h2>{title}</h2>
+    <p>{after
+      ? <>After: measure {target?.selection.measure}, event {(target?.destination ?? 0) + 1}. Grace notes play at the end of it, taking their time from it, and are drawn after it (before the barline at the end of a measure).</>
+      : <>Destination: measure {target?.selection.measure}, event {(target?.destination ?? 0) + 1}. Grace notes play before it without using measure time.</>}</p>
     {!target ? null : target.readOnly.length ? <div className="grace-read-only" role="note">
       <p>This imported grace group is read-only, so Playtab keeps it exactly as written:</p>
       <ul>{target.readOnly.map(reason => <li key={reason}>{reason}</li>)}</ul>
@@ -52,7 +56,7 @@ export function GraceDialog({ target, onApply, onRemove, onClose, returnFocus }:
           <label>Fret<input aria-label={`Grace event ${eventIndex + 1} fret ${noteIndex + 1}`} inputMode="numeric" type="number" min={0} max={36} value={note.fret}
             onChange={change => updateGraceEvent(eventIndex, current => ({ ...current, notes: current.notes.map((item, at) =>
               at === noteIndex ? { ...item, fret: Number(change.target.value) } : item) }))} /></label>
-          <label>Transition<select aria-label={`Grace event ${eventIndex + 1} transition ${noteIndex + 1}`} value={note.transition}
+          <label>{after ? 'Into grace' : 'Transition'}<select aria-label={`Grace event ${eventIndex + 1} transition ${noteIndex + 1}`} value={note.transition}
             onChange={change => updateGraceEvent(eventIndex, current => ({ ...current, notes: current.notes.map((item, at) =>
               at === noteIndex ? { ...item, transition: change.target.value as GraceTransition } : item) }))}>
             <option value="none">None</option><option value="hammer-on">Hammer-on</option><option value="pull-off">Pull-off</option><option value="slide">Slide</option></select></label>

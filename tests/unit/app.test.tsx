@@ -58,7 +58,7 @@ vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState
   connectMusicXmlTransition: (source: string, score: unknown, kind: string, origin: unknown, destination: unknown) =>
     kind === 'tie' ? connectMusicXmlTie(source, score, origin, destination) : connectMusicXmlTransition(source, score, kind, origin, destination),
   inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo,
-  TEMPO_LIMITS: { min: 30, max: 240 }, TUNING_LIMITS: { min: 36, max: 96 }, CAPO_LIMIT: 12, defaultFifthCapo: (capo: number) => capo > 0 ? capo + 5 : null, inspectMusicXmlAnchor, changeMusicXmlAnchor, ANCHOR_TEXT_LIMIT: 160, LYRIC_VERSES: 8, STANDALONE_LYRICS_LIMIT: 20000,
+  TEMPO_LIMITS: { min: 30, max: 240 }, TUNING_LIMITS: { min: 36, max: 96 }, CAPO_LIMIT: 12, graceEventPlacement: () => null, defaultFifthCapo: (capo: number) => capo > 0 ? capo + 5 : null, inspectMusicXmlAnchor, changeMusicXmlAnchor, ANCHOR_TEXT_LIMIT: 160, LYRIC_VERSES: 8, STANDALONE_LYRICS_LIMIT: 20000,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics,
   chordSpellingName: (chord: { step: string; alter: number; quality: string; bass: { step: string } | null }) => `${chord.step}${chord.alter === -1 ? '♭' : chord.alter === 1 ? '♯' : ''}${chord.quality === 'minor' ? 'm' : chord.quality === 'major' ? '' : chord.quality}${chord.bass ? `/${chord.bass.step}` : ''}`,
   inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords }));
@@ -451,7 +451,7 @@ describe('workspace application', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add string to grace event 1' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove grace event 1 string 3' }));
     expect(applyMusicXmlGraceGroup).toHaveBeenLastCalledWith('<score-partwise/>', expect.anything(), { measure: 0, beat: 0, voice: 0 },
-      [{ denominator: 8, notes: [{ string: 3, fret: 2, transition: 'none' }, { string: 4, fret: 0, transition: 'hammer-on' }] }]);
+      [{ denominator: 8, notes: [{ string: 3, fret: 2, transition: 'none' }, { string: 4, fret: 0, transition: 'hammer-on' }] }], 'before');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply grace group' }));
     expect(screen.getByText('Grace group added before the selected event.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(false);
@@ -503,7 +503,7 @@ describe('workspace application', () => {
     expect(within(dialog).getByLabelText<HTMLSelectElement>('Grace event 1 transition 1').value).toBe('pull-off');
     fireEvent.change(within(dialog).getByLabelText('Grace event 1 fret 1'), { target: { value: '3' } });
     expect(applyMusicXmlGraceGroup).toHaveBeenLastCalledWith(source, expect.anything(), { measure: 0, beat: 1, voice: 0 },
-      [{ denominator: null, notes: [{ string: 3, fret: 3, transition: 'pull-off' }] }]);
+      [{ denominator: null, notes: [{ string: 3, fret: 3, transition: 'pull-off' }] }], 'before');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply grace group' }));
     expect(screen.getByText('Grace group updated.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
@@ -524,7 +524,7 @@ describe('workspace application', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove grace group' }));
     expect(within(dialog).getByRole('alert').textContent).toContain('cannot be matched safely');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove grace group' }));
-    expect(removeMusicXmlGraceGroup).toHaveBeenLastCalledWith(source, expect.anything(), { measure: 0, beat: 1, voice: 0 });
+    expect(removeMusicXmlGraceGroup).toHaveBeenLastCalledWith(source, expect.anything(), { measure: 0, beat: 1, voice: 0 }, 'before');
     expect(screen.getByText('Grace group removed.')).toBeTruthy();
     expect(screen.getByText('Fret 0')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add grace…' })).toBeTruthy();
