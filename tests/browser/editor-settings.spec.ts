@@ -23,13 +23,13 @@ test('ED-19 applies title, opening tempo, tuning and a local tempo intentionally
   await page.locator('summary', { hasText: /^Score$/ }).click();
   await page.getByRole('button', { name: 'Score settings…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Score settings' });
-  await expect(dialog.getByLabel('String 4 note')).toHaveText('D3');
+  await expect(dialog.getByLabel('String 4 note').locator('option:checked')).toHaveText('D3');
   await expect(dialog).not.toContainText('MIDI');
   await dialog.getByLabel('Title', { exact: true }).fill('Rich settings exercise');
   await dialog.getByLabel('Opening tempo').fill('120');
   await dialog.getByLabel('Tuning preset').selectOption('Standard C');
-  await expect(dialog.getByLabel('String 4 note')).toHaveText('C3');
-  await expect(dialog.locator('.settings-tuning-summary')).toHaveText('Standard C · gCGBD');
+  await expect(dialog.getByLabel('String 4 note').locator('option:checked')).toHaveText('C3');
+  await expect(dialog.getByLabel('Tuning preset').locator('option:checked')).toHaveText('Standard C — gCGBD');
   await dialog.getByLabel('Keep pitches (frets change)').check();
   await expect(dialog).toContainText('Tuning applies to measures 1–2.');
   await dialog.screenshot({ path: testInfo.outputPath('settings-dialog.png') });

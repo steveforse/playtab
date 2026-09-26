@@ -19,30 +19,28 @@ export const tuningLetters = (tuning: readonly number[]) =>
   [4, 3, 2, 1, 0].map((string, at) => { const name = LETTERS[((tuning[string] % 12) + 12) % 12]; return at === 0 ? name.toLowerCase() : name; }).join('');
 export const tuningPreset = (tuning: readonly number[]) => TUNING_PRESETS.find(preset => preset.tuning.every((value, index) => value === tuning[index]));
 const capital = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
-const ordinal = (string: number) => ['1st', '2nd', '3rd', '4th', '5th'][string - 1];
 
-// A preset menu plus a semitone stepper per string, shown by note name.
+// A preset menu plus one compact note menu per string (5th string first).
 // Editing a string by hand turns the preset into "Custom".
 export function TuningPicker({ tuning, onChange, label = '' }: { tuning: number[]; onChange: (tuning: number[]) => void; label?: string }) {
   const preset = tuningPreset(tuning);
   const prefix = label ? `${label} ` : '';
-  const step = (string: number, delta: number) => onChange(tuning.map((value, index) => index === string - 1 ? value + delta : value));
   return <>
     <label className="anchor-text">Preset<select aria-label={capital(`${prefix}tuning preset`)} value={preset?.name ?? ''}
       onChange={event => { const chosen = TUNING_PRESETS.find(item => item.name === event.target.value); if (chosen) onChange([...chosen.tuning]); }}>
-      {!preset && <option value="">Custom</option>}
+      {!preset && <option value="">Custom — {tuning.length === 5 ? tuningLetters(tuning) : ''}</option>}
       {TUNING_PRESETS.map(item => <option key={item.name} value={item.name}>{item.name} — {tuningLetters(item.tuning)}</option>)}
     </select></label>
-    <p className="settings-tuning-summary" aria-live="polite">{preset?.name ?? 'Custom'} · {tuning.length === 5 ? tuningLetters(tuning) : ''}</p>
-    <div className="settings-strings">
+    <div className="settings-strings" role="group" aria-label={capital(`${prefix}open strings`)}>
       {[5, 4, 3, 2, 1].map(string => {
         const value = tuning[string - 1];
-        return <div key={string} className="settings-string">
-          <span>{ordinal(string)} string</span>
-          <button type="button" aria-label={`Lower ${prefix}string ${string}`} disabled={value <= TUNING_LIMITS.min} onClick={() => step(string, -1)}>−</button>
-          <output aria-label={capital(`${prefix}string ${string} note`)}>{midiName(value)}</output>
-          <button type="button" aria-label={`Raise ${prefix}string ${string}`} disabled={value >= TUNING_LIMITS.max} onClick={() => step(string, 1)}>+</button>
-        </div>;
+        // An octave either side of the current note; Up/Down step a semitone.
+        const notes = Array.from({ length: 25 }, (_, index) => value - 12 + index).filter(note => note >= TUNING_LIMITS.min && note <= TUNING_LIMITS.max);
+        return <label key={string} className="settings-string"><span>{string === 5 ? '5th' : string}</span>
+          <select aria-label={capital(`${prefix}string ${string} note`)} value={value}
+            onChange={event => onChange(tuning.map((item, index) => index === string - 1 ? Number(event.target.value) : item))}>
+            {notes.map(note => <option key={note} value={note}>{midiName(note)}</option>)}
+          </select></label>;
       })}
     </div>
   </>;
