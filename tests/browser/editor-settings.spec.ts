@@ -23,11 +23,13 @@ test('ED-19 applies title, opening tempo, tuning and a local tempo intentionally
   await page.locator('summary', { hasText: /^Score$/ }).click();
   await page.getByRole('button', { name: 'Score settings…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Score settings' });
-  await expect(dialog.getByLabel('String 4 pitch')).toHaveValue('50');
-  await dialog.getByLabel('Title').fill('Rich settings exercise');
+  await expect(dialog.getByLabel('String 4 note')).toHaveText('D3');
+  await expect(dialog).not.toContainText('MIDI');
+  await dialog.getByLabel('Title', { exact: true }).fill('Rich settings exercise');
   await dialog.getByLabel('Opening tempo').fill('120');
-  await dialog.getByLabel('String 4 pitch').fill('48');
+  await dialog.getByLabel('Tuning preset').selectOption('Standard C');
   await expect(dialog.getByLabel('String 4 note')).toHaveText('C3');
+  await expect(dialog.locator('.settings-tuning-summary')).toHaveText('Standard C · gCGBD');
   await dialog.getByLabel('Keep pitches (frets change)').check();
   await expect(dialog).toContainText('Tuning applies to measures 1–2.');
   await dialog.screenshot({ path: testInfo.outputPath('settings-dialog.png') });
@@ -67,4 +69,29 @@ test('ED-19 applies title, opening tempo, tuning and a local tempo intentionally
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Rich editor exercise', level: 1 })).toBeVisible();
   await expect(notation.locator('svg text').filter({ hasText: /^6$/ })).toHaveCount(0);
+});
+
+test('sets a capo, credits and swing feel from Score settings', async ({ page }) => {
+  await page.goto('/');
+  const notation = page.getByTestId('notation');
+  await expect(notation.locator('svg text').first()).toBeVisible({ timeout: 45000 });
+  await page.getByRole('button', { name: 'Edit score' }).click();
+  await page.locator('summary', { hasText: /^Score$/ }).click();
+  await page.getByRole('button', { name: 'Score settings…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Score settings' });
+  await expect(dialog.getByLabel('Tuning preset')).toHaveValue('Open G');
+  await dialog.getByLabel('Capo', { exact: true }).selectOption('2');
+  await expect(dialog.getByLabel('5th-string capo')).toHaveValue('7');
+  await dialog.getByLabel('5th-string capo').selectOption('9');
+  await dialog.getByLabel('Capo', { exact: true }).selectOption('3');
+  await expect(dialog.getByLabel('5th-string capo')).toHaveValue('8');
+  await dialog.getByLabel('Composer').fill('Traditional');
+  await dialog.getByLabel('Feel').selectOption('swing');
+  await dialog.getByRole('button', { name: 'Apply settings' }).click();
+  await expect(page.getByRole('status', { name: 'Editor status' })).toContainText('Capo at fret 3.');
+  await expect(notation.locator('svg text').filter({ hasText: /Capo/ })).toHaveCount(1);
+  await expect(notation.locator('svg text').filter({ hasText: /Traditional/ })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Score settings…' }).click();
+  await expect(dialog.getByLabel('Capo', { exact: true })).toHaveValue('3');
+  await expect(dialog.getByLabel('Feel')).toHaveValue('swing');
 });

@@ -5,6 +5,8 @@ import { createSourceIdentityMap, reconcileSourceIdentityMap, sourceEventIdsByAd
 import { musicXmlEditorState } from './musicxml-editor';
 import { durationTime, fillRestTime, rationalTime } from '../editor/rhythm';
 import { readSourceDocument } from './xml-cache';
+import { applyFifthStringCapo } from './editor/tuning';
+export { openTabTuning } from './editor/tuning';
 
 export type MusicXmlSourceFormat = 'musicxml' | 'tef' | 'pdf';
 export type TimedLyric = { measure: number; beat: number; text: string };
@@ -166,7 +168,7 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
 
   // TuxGuitar exports standard notation and TAB as separate, duplicated staves.
   // Verify the duplication before removing the redundant staff from playback.
-  const signature = (staff: model.Staff) => staff.bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats.flatMap(beat => beat.notes.map(note => `${bar.index}:${beat.absolutePlaybackStart}:${beat.playbackDuration}:${note.realValue}`)))).sort().join('|');
+  const signature = (staff: model.Staff) => staff.bars.flatMap(bar => bar.voices.flatMap(voice => voice.beats.flatMap(beat => beat.notes.map(note => `${bar.index}:${beat.absolutePlaybackStart}:${beat.playbackDuration}:${note.realValue - staff.capo}`)))).sort().join('|');
   for (const staff of track.staves) {
     if (staff !== tab && signature(staff) !== signature(tab)) throw new Error('This score contains independent staff music that this preview cannot combine safely.');
   }
@@ -202,6 +204,7 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   });
   const names = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
   const tuningLabel = [...tab.tuning].reverse().map((n, i) => i === 0 ? names[n % 12].toLowerCase() : names[n % 12]).join(' ');
+  applyFifthStringCapo(score, tab, source);
   return {
     id: previewId(), source, filename, sourceFormat, score, tuningLabel,
     lyricsSection: techniques.lyricsSection, timedLyrics: timedLyricEntries, chordDiagrams: diagramEntries,

@@ -18,7 +18,7 @@ export { removeMusicXmlGrace, inspectMusicXmlGraceGroup, applyMusicXmlGraceGroup
 export type { GraceRemoval, GraceMember, GraceNoteSpec, GraceEventSpec, GraceGroupInfo } from './editor/grace';
 export { ANCHOR_TEXT_LIMIT, chordSpellingName, inspectMusicXmlAnchor, changeMusicXmlAnchor, LYRIC_VERSES, STANDALONE_LYRICS_LIMIT, inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics } from './editor/text';
 export type { ChordQuality, ChordRoot, ChordSpelling, AnchorKind, AnchorItem, AnchorInfo, LyricSyllabic, EventLyric } from './editor/text';
-export { TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo } from './editor/settings';
-export type { TuningMode, ScoreSettings, ScoreSettingsInfo, LocalTempoInfo } from './editor/settings';
+export { TEMPO_LIMITS, TUNING_LIMITS, CAPO_LIMIT, defaultFifthCapo, fifthStringOffset, inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo } from './editor/settings';
+export type { TuningMode, ScoreSettings, ScoreSettingsInfo, LocalTempoInfo, Feel } from './editor/settings';
 export { copyMusicXmlMeasures, pasteMusicXmlMeasures, cutMusicXmlMeasures } from './editor/clipboard';
 export type { MeasureClipboard, PasteMode, MeasureCut } from './editor/clipboard';

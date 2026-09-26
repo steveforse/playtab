@@ -1008,7 +1008,8 @@ export function App() {
       const after = selection ? selectionAtPosition(selection, score, nextPreview, {}) : null;
       remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity }, 'Change score settings');
       setPreview(nextPreview); setSelection(after); setSettingsTarget(null); setError('');
-      setMessage(tuningChanged ? `Score settings applied. Tuning changed for measures ${candidate.tuningRange.first}–${candidate.tuningRange.last}.` : 'Score settings applied.');
+      const capo = settingsDraft.capo !== info.capo ? (settingsDraft.capo ? ` Capo at fret ${settingsDraft.capo}.` : ' Capo removed.') : '';
+      setMessage(`${tuningChanged ? `Score settings applied. Tuning changed for measures ${candidate.tuningRange.first}–${candidate.tuningRange.last}.` : 'Score settings applied.'}${capo}`);
       return null;
     } catch (failure) { return (failure as Error).message; }
   }
@@ -1173,7 +1174,7 @@ export function App() {
     try {
       source = createBlankMusicXml({ title, tempo: Number(newScoreDraft.tempo), numerator: Number(newScoreDraft.numerator),
         denominator: Number(newScoreDraft.denominator), measures: Number(newScoreDraft.measures),
-        tuning: newScoreDraft.tuningPreset === 'open-g' ? OPEN_G_TUNING : newScoreDraft.tuning.map(Number) });
+        tuning: newScoreDraft.tuning });
     } catch (failure) { return (failure as Error).message; }
     setNewScoreOpen(false);
     requestLeave(() => {

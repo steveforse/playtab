@@ -1,10 +1,10 @@
 import { useEffect, useState, type RefObject } from 'react';
 import { OPEN_G_TUNING } from '../../music/musicxml';
-import { midiName } from '../labels';
+import { TuningPicker } from '../TuningPicker';
 import { useModalDialog } from '../useModalDialog';
 
-export type NewScoreDraft = { title: string; tempo: string; numerator: string; denominator: string; measures: string; tuningPreset: string; tuning: string[] };
-const defaults = (): NewScoreDraft => ({ title: 'Untitled', tempo: '96', numerator: '4', denominator: '4', measures: '8', tuningPreset: 'open-g', tuning: OPEN_G_TUNING.map(String) });
+export type NewScoreDraft = { title: string; tempo: string; numerator: string; denominator: string; measures: string; tuning: number[] };
+const defaults = (): NewScoreDraft => ({ title: 'Untitled', tempo: '96', numerator: '4', denominator: '4', measures: '8', tuning: [...OPEN_G_TUNING] });
 
 // A blank score's title, tempo, meter, length and tuning. onCreate returns
 // a validation error, or null once the App takes over (unsaved-work guard).
@@ -31,15 +31,9 @@ export function NewScoreDialog({ open, onCreate, onClose, returnFocus }: {
       <label>Beat unit<select aria-label="New score beat unit" value={newScoreDraft.denominator} onChange={event => setNewScoreDraft(draft => ({ ...draft, denominator: event.target.value }))}>
         {[2, 4, 8, 16].map(value => <option key={value} value={value}>{value}</option>)}</select></label>
     </div>
-    <fieldset className="settings-mode"><legend>Tuning</legend>
-      <label><input type="radio" name="new-tuning" checked={newScoreDraft.tuningPreset === 'open-g'} onChange={() => setNewScoreDraft(draft => ({ ...draft, tuningPreset: 'open-g' }))} />Open G (gDGBD)</label>
-      <label><input type="radio" name="new-tuning" checked={newScoreDraft.tuningPreset === 'custom'} onChange={() => setNewScoreDraft(draft => ({ ...draft, tuningPreset: 'custom' }))} />Custom</label>
+    <fieldset className="settings-section settings-tuning"><legend>Tuning</legend>
+      <TuningPicker label="new score" tuning={newScoreDraft.tuning} onChange={tuning => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, tuning })); }} />
     </fieldset>
-    {newScoreDraft.tuningPreset === 'custom' && <fieldset className="settings-tuning"><legend>Open-string MIDI pitch</legend>
-      {newScoreDraft.tuning.map((value, index) => <label key={index}>String {index + 1}<input aria-label={`New score string ${index + 1} pitch`} type="number" inputMode="numeric" min={36} max={96}
-        value={value} onChange={event => { setNewScoreError(''); setNewScoreDraft(draft => ({ ...draft, tuning: draft.tuning.map((item, at) => at === index ? event.target.value : item) })); }} />
-        <span>{midiName(Number(value))}</span></label>)}
-    </fieldset>}
     {newScoreError && <p className="alert" role="alert">{newScoreError}</p>}
     <div className="duplicate-dialog-actions">
       <button type="button" onClick={() => onClose()}>Cancel</button>

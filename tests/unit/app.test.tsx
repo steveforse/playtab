@@ -58,7 +58,7 @@ vi.mock('../../app/frontend/music/musicxml-editor', () => ({ musicXmlEditorState
   connectMusicXmlTransition: (source: string, score: unknown, kind: string, origin: unknown, destination: unknown) =>
     kind === 'tie' ? connectMusicXmlTie(source, score, origin, destination) : connectMusicXmlTransition(source, score, kind, origin, destination),
   inspectMusicXmlScoreSettings, applyMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo,
-  TEMPO_LIMITS: { min: 30, max: 240 }, TUNING_LIMITS: { min: 36, max: 96 }, inspectMusicXmlAnchor, changeMusicXmlAnchor, ANCHOR_TEXT_LIMIT: 160, LYRIC_VERSES: 8, STANDALONE_LYRICS_LIMIT: 20000,
+  TEMPO_LIMITS: { min: 30, max: 240 }, TUNING_LIMITS: { min: 36, max: 96 }, CAPO_LIMIT: 12, defaultFifthCapo: (capo: number) => capo > 0 ? capo + 5 : null, inspectMusicXmlAnchor, changeMusicXmlAnchor, ANCHOR_TEXT_LIMIT: 160, LYRIC_VERSES: 8, STANDALONE_LYRICS_LIMIT: 20000,
   inspectMusicXmlLyrics, setMusicXmlLyric, setMusicXmlStandaloneLyrics,
   chordSpellingName: (chord: { step: string; alter: number; quality: string; bass: { step: string } | null }) => `${chord.step}${chord.alter === -1 ? '♭' : chord.alter === 1 ? '♯' : ''}${chord.quality === 'minor' ? 'm' : chord.quality === 'major' ? '' : chord.quality}${chord.bass ? `/${chord.bass.step}` : ''}`,
   inspectMusicXmlNoteTechniques, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, removeMusicXmlGrace, addMusicXmlRepeat, addMusicXmlEndings, inspectMusicXmlRepeats, inspectMusicXmlRepeatEndings, removeMusicXmlRepeat, removeMusicXmlNotes, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, inspectMusicXmlTie, removeMusicXmlTie, inspectMusicXmlDuration, inspectMusicXmlMeterRange, insertMusicXmlEvent, createMusicXmlTriplet, removeMusicXmlTriplet, inspectMusicXmlTriplet, insertMusicXmlMeasure, duplicateMusicXmlMeasure, deleteMusicXmlMeasure, sourceTabNoteRecords }));
@@ -1626,7 +1626,8 @@ describe('workspace application', () => {
     const source = '<score-partwise version="4.0"><part/></score-partwise>';
     readMusicXml.mockImplementation((value: string) => ({ ...preview, source: value, score: { ...preview.score, title: 'Imported tune',
       tracks: [{ staves: [{ bars: [{ voices: [{ beats: [{ notes: [{ string: 3, fret: 0, id: 1 }], playbackStart: 0, graceType: 0, isRest: false }] }] }] }] }] } }));
-    inspectMusicXmlScoreSettings.mockReturnValue({ title: 'Imported tune', tempo: 96, tuning: [62, 59, 55, 50, 67], tuningRange: { first: 1, last: 2 } });
+    inspectMusicXmlScoreSettings.mockReturnValue({ title: 'Imported tune', tempo: 96, tuning: [62, 59, 55, 50, 67], tuningRange: { first: 1, last: 2 },
+      capo: 0, fifthCapo: null, subtitle: '', composer: '', arranger: '', keyFifths: 0, feel: 'straight' });
     applyMusicXmlScoreSettings.mockImplementation((_source: string, _score: unknown, settings: { tempo: number }) => {
       if (settings.tempo < 30) throw new Error('Opening tempo must be a whole number from 30 to 240 BPM.');
       return { source: `<score-partwise tempo="${settings.tempo}"/>`, tuningRange: { first: 1, last: 2 } };
@@ -1652,13 +1653,28 @@ describe('workspace application', () => {
     expect(within(dialog).getByRole('button', { name: 'Apply settings' }).hasAttribute('disabled')).toBe(true);
     fireEvent.change(within(dialog).getByLabelText('Opening tempo'), { target: { value: '120' } });
     fireEvent.change(within(dialog).getByLabelText('Title'), { target: { value: '  New name ' } });
-    fireEvent.change(within(dialog).getByLabelText('String 4 pitch'), { target: { value: '48' } });
+    expect(within(dialog).getByLabelText<HTMLSelectElement>('Tuning preset').value).toBe('Open G');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Lower string 4' }));
+    expect(within(dialog).getByLabelText<HTMLSelectElement>('Tuning preset').value).toBe('');
+    expect(dialog.textContent).toContain('Custom · gC#GBD');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Lower string 4' }));
     expect(within(dialog).getByLabelText('String 4 note').textContent).toBe('C3');
+    expect(within(dialog).getByLabelText<HTMLSelectElement>('Tuning preset').value).toBe('Standard C');
+    fireEvent.change(within(dialog).getByLabelText('Tuning preset'), { target: { value: 'Double C' } });
+    expect(within(dialog).getByLabelText('String 2 note').textContent).toBe('C4');
+    fireEvent.change(within(dialog).getByLabelText('Tuning preset'), { target: { value: 'Standard C' } });
+    fireEvent.change(within(dialog).getByLabelText('Capo'), { target: { value: '2' } });
+    expect(within(dialog).getByLabelText<HTMLSelectElement>('5th-string capo').value).toBe('7');
+    fireEvent.change(within(dialog).getByLabelText('5th-string capo'), { target: { value: '' } });
+    fireEvent.change(within(dialog).getByLabelText('Feel'), { target: { value: 'swing' } });
+    fireEvent.change(within(dialog).getByLabelText('Key signature'), { target: { value: '1' } });
+    fireEvent.change(within(dialog).getByLabelText('Composer'), { target: { value: 'Traditional' } });
     fireEvent.click(within(dialog).getByLabelText('Keep pitches (frets change)'));
     expect(dialog.textContent).toContain('Tuning applies to measures 1–2.');
-    expect(applyMusicXmlScoreSettings).toHaveBeenLastCalledWith(source, expect.anything(), { title: '  New name ', tempo: 120, tuning: [62, 59, 55, 48, 67], mode: 'pitches' });
+    expect(applyMusicXmlScoreSettings).toHaveBeenLastCalledWith(source, expect.anything(), { title: '  New name ', tempo: 120, tuning: [62, 59, 55, 48, 67], mode: 'pitches',
+      subtitle: '', composer: 'Traditional', arranger: '', feel: 'swing', keyFifths: 1, capo: 2, fifthCapo: null });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply settings' }));
-    expect(screen.getByText('Score settings applied. Tuning changed for measures 1–2.')).toBeTruthy();
+    expect(screen.getByText('Score settings applied. Tuning changed for measures 1–2. Capo at fret 2.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'New name' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(screen.getByRole('heading', { name: 'Imported tune' })).toBeTruthy();
@@ -1939,8 +1955,10 @@ describe('workspace application', () => {
     fireEvent.change(within(dialog).getByLabelText('New score measures'), { target: { value: '4' } });
     fireEvent.change(within(dialog).getByLabelText('New score title'), { target: { value: ' Cluck Old Hen ' } });
     fireEvent.change(within(dialog).getByLabelText('New score beats'), { target: { value: '3' } });
-    fireEvent.click(within(dialog).getByLabelText('Custom'));
-    fireEvent.change(within(dialog).getByLabelText('New score string 4 pitch'), { target: { value: '48' } });
+    expect(within(dialog).getByLabelText<HTMLSelectElement>('New score tuning preset').value).toBe('Open G');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Lower new score string 4' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Lower new score string 4' }));
+    expect(within(dialog).getByLabelText('New score string 4 note').textContent).toBe('C3');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create score' }));
     expect(createBlankMusicXml).toHaveBeenLastCalledWith({ title: 'Cluck Old Hen', tempo: 96, numerator: 3, denominator: 4, measures: 4, tuning: [62, 59, 55, 48, 67] });
     expect(readMusicXml).toHaveBeenLastCalledWith('<score-partwise blank="Cluck Old Hen" tuning="62,59,55,48,67"/>', 'Cluck Old Hen.musicxml', 'musicxml');

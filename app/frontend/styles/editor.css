@@ -590,9 +590,12 @@
   resize: vertical;
 }
 .settings-dialog {
-  width: min(520px,calc(100vw - 32px));
+  width: min(640px,calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
 }
 .settings-dialog input,
+.settings-dialog select,
 .duplicate-dialog .anchor-text input[type="number"] {
   width: 100%;
   box-sizing: border-box;
@@ -603,32 +606,82 @@
   color: var(--ink);
   padding: 6px;
 }
-.settings-tuning,
-.settings-mode {
+.settings-section {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 4px 14px;
   border: 1px solid #d6e0cf;
   border-radius: 6px;
   margin: 12px 0;
   padding: 8px 12px 12px;
 }
-.settings-tuning legend,
-.settings-mode legend {
-  font-size: 12px;
-  font-weight: 600;
+.settings-section legend {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--label);
   padding: 0 4px;
 }
-.settings-tuning {
+.settings-section .anchor-text {
+  margin: 4px 0;
+}
+.settings-section > .editor-rhythm-reason,
+.settings-tuning > *:not(.anchor-text) {
+  grid-column: 1 / -1;
+}
+.settings-readout {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0;
+  font-size: 12px;
+}
+.settings-readout strong {
+  font-size: 15px;
+}
+.settings-readout small {
+  color: var(--faint);
+}
+.settings-tuning-summary {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.settings-strings {
   display: grid;
   grid-template-columns: repeat(5,minmax(0,1fr));
   gap: 8px;
 }
-.settings-tuning label {
+.settings-string {
   display: grid;
+  grid-template-columns: 30px 1fr 30px;
+  align-items: center;
   gap: 4px;
-  font-size: 12px;
+  text-align: center;
 }
-.settings-tuning span {
-  font-size: 12px;
-  color: #5d735f;
+.settings-string > span {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--label);
+}
+.settings-string button {
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  background: var(--surface-soft);
+}
+.settings-string output {
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.settings-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
 }
 .settings-mode label {
   display: flex;
@@ -640,6 +693,14 @@
 .settings-mode input {
   width: auto;
   min-height: 0;
+}
+@media (max-width: 560px) {
+  .settings-section {
+    grid-template-columns: 1fr;
+  }
+  .settings-strings {
+    grid-template-columns: repeat(3,minmax(0,1fr));
+  }
 }
 .editor-score-tools button {
   width: 100%;

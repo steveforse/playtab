@@ -3,6 +3,7 @@ import type { model } from '@coderline/alphatab';
 import { child, children, descendants, directMeasures, ensure, parseDocument, placeLyric, removeChildren, scorePart, setPitch, setText, sourceTabStaff, text } from './xml';
 import { linkedStaffNotes, sourceBeatGroups } from './records';
 import { timingBoundary } from './time';
+import { openTabTuning } from './tuning';
 
 export type NotePosition = { measure: number; beat: number; voice: number; string: number; fret: number };
 
@@ -209,7 +210,7 @@ export function addMusicXmlNote(source: string, score: model.Score, position: No
   if (!group || group.some(note => child(note, 'grace'))) throw new Error('This source event cannot be mapped safely for note insertion.');
   const boundary = timingBoundary(document, position.measure, tabStaff, text(child(group[0], 'voice')) || '1', group);
   if (boundary) throw new Error(boundary);
-  const midi = score.tracks[0].staves[0].tuning[position.string - 1] + position.fret;
+  const midi = openTabTuning(score)[position.string - 1] + position.fret;
   if (!Number.isInteger(midi)) throw new Error('The selected string has no valid source tuning.');
   const otherStaves = new Set(children(measure).filter(item => item.localName === 'note').map(note => Number(text(child(note, 'staff')) || '1')));
   otherStaves.delete(tabStaff);
