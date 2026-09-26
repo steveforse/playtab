@@ -1641,7 +1641,6 @@ describe('workspace application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit score' }));
     fireEvent.click(screen.getByTestId('player'));
     expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true);
-    fireEvent.click(screen.getByText('Score', { selector: 'summary' }));
     fireEvent.click(screen.getByRole('button', { name: 'Score settings…' }));
     const dialog = screen.getByRole('dialog', { name: 'Score settings' });
     expect(within(dialog).getByLabelText<HTMLInputElement>('Title').value).toBe('Imported tune');
@@ -1736,7 +1735,6 @@ describe('workspace application', () => {
     fireEvent.change(screen.getByLabelText('Fret'), { target: { value: '3' } });
     fireEvent.click(screen.getByRole('button', { name: 'Set tempo here…' }));
     expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret');
-    fireEvent.click(screen.getByText('Score', { selector: 'summary' }));
     fireEvent.click(screen.getByRole('button', { name: 'Score settings…' }));
     expect(screen.getByRole('alert').textContent).toContain('Apply the pending fret');
   });
@@ -2113,8 +2111,7 @@ describe('workspace application', () => {
     expect(summary()).toContain('Fret 5');
     expect(summary()).toContain('G3');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    fireEvent.click(screen.getByText('Score', { selector: 'summary' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Keyboard help…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
     const help = screen.getByRole('dialog', { name: 'Keyboard help' });
     expect(help.textContent).toContain('Ctrl/Cmd+S');
     fireEvent.click(within(help).getByRole('button', { name: 'Close' }));

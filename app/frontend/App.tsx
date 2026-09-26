@@ -1718,7 +1718,7 @@ export function App() {
             </CommandGroup>
           </>}
         </div>
-        <CommandGroup className="editor-score-tools" summary="Score" commands={commands} ids={['score-settings', 'keyboard-help']} />
+        <div className="editor-score-tools"><CommandButton id="score-settings" command={commands['score-settings']} /></div>
       </section>;
   return <div className={editMode ? 'shell edit-mode' : 'shell'}>
     <aside className="sidebar">
