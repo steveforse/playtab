@@ -1,8 +1,47 @@
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-index b6203da..a1cfd03 100644
+index b6203da..78c6b52 100644
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.core.mjs
-@@ -33251,7 +33251,12 @@ class JsonConverter {
+@@ -3162,6 +3162,30 @@ class Voice$1 {
+ 			currentDisplayTick += beat.displayDuration;
+ 			currentPlaybackTick += beat.playbackDuration;
+ 		}
++		this._finishTrailingGraceGroup();
++	}
++	/**
++	* Playtab: a before-beat grace group at the end of a bar (an after-grace,
++	* MusicXML steal-time-previous) has no following beat to attach to. Like any
++	* before-beat group it takes its time from the end of the preceding beat,
++	* so it sounds before the barline instead of on the next downbeat.
++	*/
++	_finishTrailingGraceGroup() {
++		const last = this.beats[this.beats.length - 1];
++		const group = last?.graceGroup;
++		if (!last || last.graceType !== GraceType.BeforeBeat || !group || group.isComplete) return;
++		const first = group.beats[0];
++		const previous = first.index > 0 ? this.beats[first.index - 1] : null;
++		if (!previous || previous.graceType !== GraceType.None) return;
++		let stolen = 0;
++		for (const graceBeat of group.beats) stolen += graceBeat.playbackDuration;
++		if (previous.playbackDuration <= stolen) return;
++		previous.playbackDuration -= stolen;
++		let tick = previous.playbackStart + previous.playbackDuration;
++		for (const graceBeat of group.beats) {
++			graceBeat.playbackStart = tick;
++			tick += graceBeat.playbackDuration;
++		}
+ 	}
+ 	calculateDuration() {
+ 		if (this.isEmpty || this.beats.length === 0) return 0;
+@@ -23894,6 +23918,7 @@ class MusicXmlImporter extends ScoreImporter {
+ 					graceType = GraceType.BeforeBeat;
+ 				} else graceType = GraceType.OnBeat;
+ 				if (c.getAttribute("slash") === "yes") graceType = GraceType.BeforeBeat;
++				if (Number.parseFloat(c.getAttribute("steal-time-previous", "-1")) > 0) graceType = GraceType.BeforeBeat;
+ 				break;
+ 			case "chord":
+ 				isChord = true;
+@@ -33251,7 +33276,12 @@ class JsonConverter {
  				tempo.beatsPerMinute = JsonHelper.getValue(midiEvent, "beatsPerMinute");
  				return tempo;
  			case MidiEventType.PitchBend: return new PitchBendEvent(track, tick, JsonHelper.getValue(midiEvent, "channel"), JsonHelper.getValue(midiEvent, "value"));
@@ -16,7 +55,7 @@ index b6203da..a1cfd03 100644
  			case MidiEventType.EndOfTrack: return new EndOfTrackEvent(track, tick);
  		}
  		throw new AlphaTabError(AlphaTabErrorType.Format, `Unknown Midi Event type: ${type}`);
-@@ -33328,6 +33333,8 @@ class JsonConverter {
+@@ -33328,6 +33358,8 @@ class JsonConverter {
  				o.set("channel", midiEvent.channel);
  				o.set("noteKey", midiEvent.noteKey);
  				o.set("value", midiEvent.value);
@@ -25,7 +64,7 @@ index b6203da..a1cfd03 100644
  				break;
  			case MidiEventType.EndOfTrack: break;
  		}
-@@ -37962,6 +37969,11 @@ class Channel {
+@@ -37962,6 +37994,11 @@ class Channel {
  	tuning = 0;
  	mixVolume = 0;
  	mute = false;
@@ -37,7 +76,7 @@ index b6203da..a1cfd03 100644
  	solo = false;
  }
  //#endregion
-@@ -38696,8 +38708,9 @@ class Voice {
+@@ -38696,8 +38733,9 @@ class Voice {
  			let gainMono;
  			let gainLeft;
  			let gainRight = 0;
@@ -49,7 +88,7 @@ index b6203da..a1cfd03 100644
  			if (dynamicLowpass) {
  				const fres = tmpInitialFilterFc + this.modLfo.level * tmpModLfoToFilterFc + this.modEnv.level * tmpModEnvToFilterFc;
  				tmpLowpass.active = fres <= 13500;
-@@ -38710,6 +38723,9 @@ class Voice {
+@@ -38710,6 +38748,9 @@ class Voice {
  			gainMono = noteGain * this.ampEnv.level;
  			if (isMuted) gainMono = 0;
  			else gainMono *= this.mixVolume;
@@ -59,7 +98,7 @@ index b6203da..a1cfd03 100644
  			if (updateModLFO) this.modLfo.process(blockSamples);
  			if (updateVibLFO) this.vibLfo.process(blockSamples);
  			switch (f.outputMode) {
-@@ -38762,6 +38778,13 @@ class Voice {
+@@ -38762,6 +38803,13 @@ class Voice {
  					break;
  			}
  			const inaudible = this.ampEnv.segment === VoiceEnvelopeSegment.Release && Math.abs(gainMono) < SynthConstants.AudibleLevelThreshold;
@@ -73,7 +112,7 @@ index b6203da..a1cfd03 100644
  			if (tmpSourceSamplePosition >= tmpSampleEndDbl || this.ampEnv.segment === VoiceEnvelopeSegment.Done || inaudible) {
  				this.kill();
  				return;
-@@ -38994,9 +39017,15 @@ class TinySoundFont {
+@@ -38994,9 +39042,15 @@ class TinySoundFont {
  				break;
  			case MidiEventType.PerNotePitchBend:
  				const noteBend = e;
@@ -90,7 +129,7 @@ index b6203da..a1cfd03 100644
  				break;
  		}
  	}
-@@ -39086,10 +39115,11 @@ class TinySoundFont {
+@@ -39086,10 +39140,11 @@ class TinySoundFont {
  	/**
  	* Start playing a note
  	* @param presetIndex preset index >= 0 and < {@link presetCount}
@@ -106,7 +145,7 @@ index b6203da..a1cfd03 100644
  		if (!this.presets) return;
  		const midiVelocity = vel * 127 | 0;
  		if (presetIndex < 0 || presetIndex >= this.presets.length) return;
-@@ -39102,8 +39132,8 @@ class TinySoundFont {
+@@ -39102,8 +39157,8 @@ class TinySoundFont {
  			if (key < region.loKey || key > region.hiKey || midiVelocity < region.loVel || midiVelocity > region.hiVel) continue;
  			let voice = null;
  			if (region.group !== 0) {
@@ -117,7 +156,7 @@ index b6203da..a1cfd03 100644
  			} else for (const v of this._voices) if (v.playingPreset === -1) voice = v;
  			if (!voice) {
  				for (let i = 0; i < 4; i++) {
-@@ -39116,6 +39146,9 @@ class TinySoundFont {
+@@ -39116,6 +39171,9 @@ class TinySoundFont {
  			voice.region = region;
  			voice.playingPreset = presetIndex;
  			voice.playingKey = key;
@@ -127,7 +166,7 @@ index b6203da..a1cfd03 100644
  			voice.playIndex = voicePlayIndex;
  			voice.noteGainDb = this.globalGainDb - region.attenuation - SynthHelper.gainToDecibels(1 / vel);
  			if (this._channels) this._channels.setupVoice(this, voice);
-@@ -39251,16 +39284,17 @@ class TinySoundFont {
+@@ -39251,16 +39309,17 @@ class TinySoundFont {
  	}
  	/**
  	* Start playing a note on a channel
@@ -151,7 +190,7 @@ index b6203da..a1cfd03 100644
  	}
  	/**
  	* Stop playing notes on a channel
-@@ -41571,6 +41605,8 @@ class AlphaSynthWebWorklet {
+@@ -41571,6 +41630,8 @@ class AlphaSynthWebWorklet {
  */
  class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
  	_worklet = null;
@@ -160,7 +199,7 @@ index b6203da..a1cfd03 100644
  	_bufferTimeInMilliseconds = 0;
  	_settings;
  	_boundHandleMessage;
-@@ -41588,8 +41624,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+@@ -41588,8 +41649,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
  	play() {
  		super.play();
  		const ctx = this.context;
@@ -173,7 +212,7 @@ index b6203da..a1cfd03 100644
  			this._worklet = new AudioWorkletNode(ctx, "alphatab", {
  				numberOfOutputs: 1,
  				outputChannelCount: [2],
-@@ -41597,8 +41637,9 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+@@ -41597,8 +41662,9 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
  			});
  			this._worklet.port.addEventListener("message", this._boundHandleMessage);
  			this._worklet.port.start();
@@ -185,7 +224,7 @@ index b6203da..a1cfd03 100644
  			this._worklet.connect(ctx.destination);
  			const pending = this._pendingEvents;
  			if (pending) {
-@@ -41621,7 +41662,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
+@@ -41621,7 +41687,12 @@ class AlphaSynthAudioWorkletOutput extends AlphaSynthWebAudioOutputBase {
  		}
  	}
  	pause() {
@@ -199,7 +238,7 @@ index b6203da..a1cfd03 100644
  		if (this._worklet) {
  			this._worklet.port.postMessage({ cmd: "alphaSynth.output.stop" });
  			this._worklet.port.removeEventListener("message", this._boundHandleMessage);
-@@ -41923,12 +41969,15 @@ class AlphaSynthMidiFileHandler {
+@@ -41923,12 +41994,15 @@ class AlphaSynthMidiFileHandler {
  		else value = Math.floor(value);
  		this._midiFile.addEvent(new PitchBendEvent(track, tick, channel, value));
  	}
@@ -217,7 +256,7 @@ index b6203da..a1cfd03 100644
  		}
  	}
  	finishTrack(track, tick) {
-@@ -43390,7 +43439,7 @@ class MidiFileGenerator {
+@@ -43390,7 +43464,7 @@ class MidiFileGenerator {
  		if (staff.tuning.length > 0) for (const t of staff.tuning) this._handler.addNote(staff.track.index, beatStart, deadSlapDuration, t, MidiUtils.dynamicToVelocity(DynamicValue.F), staff.track.playbackInfo.primaryChannel);
  	}
  	_needsSecondaryChannel(note) {
@@ -226,7 +265,7 @@ index b6203da..a1cfd03 100644
  	}
  	_determineChannel(track, note) {
  		if (this._needsSecondaryChannel(note)) return track.playbackInfo.secondaryChannel;
-@@ -43422,6 +43471,13 @@ class MidiFileGenerator {
+@@ -43422,6 +43496,13 @@ class MidiFileGenerator {
  		noteDuration.letRingEnd -= brushOffset;
  		const velocity = MidiFileGenerator._getNoteVelocity(note);
  		const channel = this._determineChannel(track, note);
@@ -240,7 +279,7 @@ index b6203da..a1cfd03 100644
  		let initialBend = 0;
  		const noteSoundDuration = Math.max(noteDuration.untilTieOrSlideEnd, noteDuration.letRingEnd);
  		if (note.hasBend) initialBend = MidiFileGenerator.getPitchWheel(note.bendPoints[0].value);
-@@ -43446,10 +43502,11 @@ class MidiFileGenerator {
+@@ -43446,10 +43527,11 @@ class MidiFileGenerator {
  			return;
  		}
  		if (note.hasBend) this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
@@ -253,7 +292,7 @@ index b6203da..a1cfd03 100644
  	}
  	/**
  	* For every note within the octave, the number of keys to go up when playing ornaments.
-@@ -43576,6 +43633,14 @@ class MidiFileGenerator {
+@@ -43576,6 +43658,14 @@ class MidiFileGenerator {
  				const tieDestinationDuration = this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart);
  				durationWithEffects.untilTieOrSlideEnd = endNote.beat.absolutePlaybackStart + tieDestinationDuration.untilTieOrSlideEnd - startTick;
  			} else durationWithEffects.untilTieOrSlideEnd = beatPlayDuration + this._getNoteDuration(endNote, endNote.beat.playbackDuration, tempoOnBeatStart).untilTieOrSlideEnd;
@@ -268,7 +307,7 @@ index b6203da..a1cfd03 100644
  		} else if (note.slideOutType === SlideOutType.Legato) {
  			const endNote = note.slideTarget;
  			if (endNote) {
-@@ -43716,6 +43781,22 @@ class MidiFileGenerator {
+@@ -43716,6 +43806,22 @@ class MidiFileGenerator {
  	static getPitchWheel(bendValue) {
  		return SynthConstants.DefaultPitchWheel + bendValue / 2 * MidiFileGenerator._pitchValuePerSemitone;
  	}
@@ -291,7 +330,7 @@ index b6203da..a1cfd03 100644
  	_generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart) {
  		const duration = note.slideOutType === SlideOutType.Legato ? noteDuration.noteOnly : noteDuration.untilTieOrSlideEnd;
  		const playedBendPoints = [];
-@@ -50739,7 +50820,7 @@ class CapoEffectInfo extends EffectInfo {
+@@ -50739,7 +50845,7 @@ class CapoEffectInfo extends EffectInfo {
  		return beat.index === 0 && beat.voice.bar.index === 0 && beat.voice.bar.staff.capo !== 0;
  	}
  	createNewGlyph(renderer, beat) {
@@ -300,7 +339,7 @@ index b6203da..a1cfd03 100644
  	}
  	canExpand(_from, _to) {
  		return false;
-@@ -51996,7 +52077,9 @@ class MarkerEffectInfo extends EffectInfo {
+@@ -51996,7 +52102,9 @@ class MarkerEffectInfo extends EffectInfo {
  		return beat.voice.bar.staff.index === 0 && beat.voice.index === 0 && beat.index === 0 && beat.voice.bar.masterBar.isSectionStart;
  	}
  	createNewGlyph(renderer, beat) {
@@ -311,7 +350,7 @@ index b6203da..a1cfd03 100644
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -52641,13 +52724,69 @@ class EffectBand extends Glyph {
+@@ -52641,13 +52749,69 @@ class EffectBand extends Glyph {
  				const g = v[k];
  				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
  				try {
@@ -382,7 +421,27 @@ index b6203da..a1cfd03 100644
  	alignGlyphs() {
  		for (let v = 0; v < this._effectGlyphs.length; v++) for (const beatIndex of this._effectGlyphs[v].keys()) {
  			const g = this.renderer.bar.voices[v].beats[beatIndex];
-@@ -55698,7 +55837,15 @@ class TextEffectInfo extends EffectInfo {
+@@ -52962,11 +53126,15 @@ class MultiVoiceContainerGlyph extends Glyph {
+ 						const lastGraceSpring = graceSprings[currentBeatGlyph.graceGroup.beats.length - 1];
+ 						currentBeatGlyph.x -= lastGraceSpring.graceBeatWidth;
+ 					} else {
++						// Playtab: a trailing (after-)grace group sits in the space the bar reserves
++						// for it at its end, right before the barline, instead of over the
++						// preceding beat (whose own width is only stretched afterwards).
+ 						const graceSpring = this.renderer.layoutingInfo.incompleteGraceRods.get(graceGroupId);
+-						const relativeOffset = graceSpring[currentBeatGlyph.graceIndex].postSpringWidth - graceSpring[currentBeatGlyph.graceIndex].preSpringWidth;
+-						if (i > 0) if (currentBeatGlyph.graceIndex === 0) currentBeatGlyph.x = beatGlyphs[i - 1].x + beatGlyphs[i - 1].width;
+-						else currentBeatGlyph.x = beatGlyphs[i - 1].x + graceSpring[currentBeatGlyph.graceIndex - 1].postSpringWidth - graceSpring[currentBeatGlyph.graceIndex - 1].preSpringWidth - relativeOffset;
+-						else currentBeatGlyph.x = -relativeOffset;
++						const springWidth = sp => sp ? sp.preBeatWidth + sp.postSpringWidth : 0;
++						let graceX = this.width;
++						for (const sp of graceSpring) graceX -= springWidth(sp);
++						for (let k = 0; k < currentBeatGlyph.graceIndex; k++) graceX += springWidth(graceSpring[k]);
++						currentBeatGlyph.x = graceX;
+ 					}
+ 					break;
+ 			}
+@@ -55698,7 +55866,15 @@ class TextEffectInfo extends EffectInfo {
  		return !!beat.text;
  	}
  	createNewGlyph(renderer, beat) {
@@ -399,7 +458,7 @@ index b6203da..a1cfd03 100644
  	}
  	canExpand(_from, _to) {
  		return true;
-@@ -59240,11 +59387,17 @@ class TieGlyphLabels {
+@@ -59240,11 +59416,17 @@ class TieGlyphLabels {
  * @internal
  */
  class TabSlurGlyph extends TabTieGlyph {
@@ -418,7 +477,7 @@ index b6203da..a1cfd03 100644
  	}
  	getTieHeight(startX, _startY, endX, _endY) {
  		return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
-@@ -59253,9 +59406,9 @@ class TabSlurGlyph extends TabTieGlyph {
+@@ -59253,9 +59435,9 @@ class TabSlurGlyph extends TabTieGlyph {
  		if (this._labels === null) {
  			this._labels = [];
  			const slur = this.startNote.effectSlur;
@@ -430,7 +489,7 @@ index b6203da..a1cfd03 100644
  					const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
  					if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
  				}
-@@ -63810,6 +63963,7 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63810,6 +63992,7 @@ class TabNoteChordGlyph extends Glyph {
  	_deadSlapped = null;
  	_isGrace;
  	beat;
@@ -438,7 +497,7 @@ index b6203da..a1cfd03 100644
  	maxStringNote = null;
  	minStringNote = null;
  	beatEffects = /* @__PURE__ */ new Map();
-@@ -63907,7 +64061,9 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63907,7 +64090,9 @@ class TabNoteChordGlyph extends Glyph {
  			let maxEffectY = NaN;
  			let effectY = this.getNoteY(this.minStringNote, NoteYPosition.Center) + tabHeight / 2;
  			const effectSpacing = this.renderer.smuflMetrics.onNoteEffectPadding;
@@ -448,7 +507,7 @@ index b6203da..a1cfd03 100644
  				g.y += effectY;
  				g.x += this.width / 2;
  				g.renderer = this.renderer;
-@@ -63916,6 +64072,17 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63916,6 +64101,17 @@ class TabNoteChordGlyph extends Glyph {
  				if (Number.isNaN(minEffectY) || minEffectY > effectY) minEffectY = effectY;
  				if (Number.isNaN(maxEffectY) || maxEffectY < effectY) maxEffectY = effectY;
  			}
@@ -466,7 +525,7 @@ index b6203da..a1cfd03 100644
  			if (!Number.isNaN(minEffectY)) this.renderer.registerBeatEffectOverflows(minEffectY, maxEffectY);
  		}
  		this.width = w;
-@@ -63923,6 +64090,12 @@ class TabNoteChordGlyph extends Glyph {
+@@ -63923,6 +64119,12 @@ class TabNoteChordGlyph extends Glyph {
  	addNoteGlyph(noteGlyph, note) {
  		this._notes.push(noteGlyph);
  		this.notesPerString.set(note.string, noteGlyph);
@@ -479,7 +538,7 @@ index b6203da..a1cfd03 100644
  		if (!this.minStringNote || note.string < this.minStringNote.string) this.minStringNote = note;
  		if (!this.maxStringNote || note.string > this.maxStringNote.string) this.maxStringNote = note;
  	}
-@@ -64060,7 +64233,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
+@@ -64060,7 +64262,7 @@ class TabBeatGlyph extends BeatOnNoteGlyphBase {
  				centeredEffectGlyphs.push(glyph);
  			}
  			if (this.container.beat.dots > 0 && tabRenderer.rhythmMode !== TabRhythmMode.Hidden) {
@@ -488,7 +547,7 @@ index b6203da..a1cfd03 100644
  				for (let i = 0; i < this.container.beat.dots; i++) this.addEffect(new AugmentationDotGlyph(0, y));
  			}
  		} else {
-@@ -64379,7 +64552,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+@@ -64379,7 +64581,14 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
  			const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
  			this.addTie(tapSlur);
  		}
@@ -504,7 +563,7 @@ index b6203da..a1cfd03 100644
  			let expanded = false;
  			for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
  				expanded = true;
-@@ -64391,7 +64571,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
+@@ -64391,7 +64600,13 @@ class TabBeatContainerGlyph extends BeatContainerGlyph {
  				this.addTie(effectSlur);
  			}
  		}
@@ -519,7 +578,7 @@ index b6203da..a1cfd03 100644
  			let expanded = false;
  			for (const slur of this._effectSlurs) if (slur.tryExpand(n.effectSlurOrigin, n, false, true)) {
  				expanded = true;
-@@ -64530,8 +64716,10 @@ class TabBarRenderer extends LineBarRenderer {
+@@ -64530,8 +64745,10 @@ class TabBarRenderer extends LineBarRenderer {
  	createLinePreBeatGlyphs() {
  		if (this.isFirstOfStaff) {
  			const center = (this.bar.staff.tuning.length - 1) / 2;
@@ -532,7 +591,7 @@ index b6203da..a1cfd03 100644
  		}
  		if (this.showTimeSignature && (!this.bar.previousBar || this.bar.previousBar && this.bar.masterBar.timeSignatureNumerator !== this.bar.previousBar.masterBar.timeSignatureNumerator || this.bar.previousBar && this.bar.masterBar.timeSignatureDenominator !== this.bar.previousBar.masterBar.timeSignatureDenominator || this.bar.previousBar && this.bar.masterBar.isFreeTime && this.bar.masterBar.isFreeTime !== this.bar.previousBar.masterBar.isFreeTime)) {
  			this.createStartSpacing();
-@@ -64923,7 +65111,7 @@ class Environment {
+@@ -64923,7 +65140,7 @@ class Environment {
  			},
  			{
  				effect: new MarkerEffectInfo(),
@@ -541,7 +600,7 @@ index b6203da..a1cfd03 100644
  			},
  			{
  				effect: new DirectionsEffectInfo(),
-@@ -64935,7 +65123,7 @@ class Environment {
+@@ -64935,7 +65152,7 @@ class Environment {
  			},
  			{
  				effect: new TextEffectInfo(),
@@ -551,10 +610,69 @@ index b6203da..a1cfd03 100644
  			{
  				effect: new BeatTimerEffectInfo(),
 diff --git a/node_modules/@coderline/alphatab/dist/alphaTab.js b/node_modules/@coderline/alphatab/dist/alphaTab.js
-index 6da399c..2c0a5c3 100644
+index 6da399c..987fb50 100644
 --- a/node_modules/@coderline/alphatab/dist/alphaTab.js
 +++ b/node_modules/@coderline/alphatab/dist/alphaTab.js
-@@ -59245,10 +59245,12 @@
+@@ -3166,6 +3166,30 @@
+ 				currentDisplayTick += beat.displayDuration;
+ 				currentPlaybackTick += beat.playbackDuration;
+ 			}
++			this._finishTrailingGraceGroup();
++		}
++		/**
++		* Playtab: a before-beat grace group at the end of a bar (an after-grace,
++		* MusicXML steal-time-previous) has no following beat to attach to. Like any
++		* before-beat group it takes its time from the end of the preceding beat,
++		* so it sounds before the barline instead of on the next downbeat.
++		*/
++		_finishTrailingGraceGroup() {
++			const last = this.beats[this.beats.length - 1];
++			const group = last?.graceGroup;
++			if (!last || last.graceType !== GraceType.BeforeBeat || !group || group.isComplete) return;
++			const first = group.beats[0];
++			const previous = first.index > 0 ? this.beats[first.index - 1] : null;
++			if (!previous || previous.graceType !== GraceType.None) return;
++			let stolen = 0;
++			for (const graceBeat of group.beats) stolen += graceBeat.playbackDuration;
++			if (previous.playbackDuration <= stolen) return;
++			previous.playbackDuration -= stolen;
++			let tick = previous.playbackStart + previous.playbackDuration;
++			for (const graceBeat of group.beats) {
++				graceBeat.playbackStart = tick;
++				tick += graceBeat.playbackDuration;
++			}
+ 		}
+ 		calculateDuration() {
+ 			if (this.isEmpty || this.beats.length === 0) return 0;
+@@ -23898,6 +23922,7 @@
+ 						graceType = GraceType.BeforeBeat;
+ 					} else graceType = GraceType.OnBeat;
+ 					if (c.getAttribute("slash") === "yes") graceType = GraceType.BeforeBeat;
++				if (Number.parseFloat(c.getAttribute("steal-time-previous", "-1")) > 0) graceType = GraceType.BeforeBeat;
+ 					break;
+ 				case "chord":
+ 					isChord = true;
+@@ -52966,11 +52991,15 @@
+ 							const lastGraceSpring = graceSprings[currentBeatGlyph.graceGroup.beats.length - 1];
+ 							currentBeatGlyph.x -= lastGraceSpring.graceBeatWidth;
+ 						} else {
++							// Playtab: a trailing (after-)grace group sits in the space the bar reserves
++							// for it at its end, right before the barline, instead of over the
++							// preceding beat (whose own width is only stretched afterwards).
+ 							const graceSpring = this.renderer.layoutingInfo.incompleteGraceRods.get(graceGroupId);
+-							const relativeOffset = graceSpring[currentBeatGlyph.graceIndex].postSpringWidth - graceSpring[currentBeatGlyph.graceIndex].preSpringWidth;
+-							if (i > 0) if (currentBeatGlyph.graceIndex === 0) currentBeatGlyph.x = beatGlyphs[i - 1].x + beatGlyphs[i - 1].width;
+-							else currentBeatGlyph.x = beatGlyphs[i - 1].x + graceSpring[currentBeatGlyph.graceIndex - 1].postSpringWidth - graceSpring[currentBeatGlyph.graceIndex - 1].preSpringWidth - relativeOffset;
+-							else currentBeatGlyph.x = -relativeOffset;
++							const springWidth = sp => sp ? sp.preBeatWidth + sp.postSpringWidth : 0;
++							let graceX = this.width;
++							for (const sp of graceSpring) graceX -= springWidth(sp);
++							for (let k = 0; k < currentBeatGlyph.graceIndex; k++) graceX += springWidth(graceSpring[k]);
++							currentBeatGlyph.x = graceX;
+ 						}
+ 						break;
+ 				}
+@@ -59245,10 +59274,12 @@
  	*/
  	var TabSlurGlyph = class extends TabTieGlyph {
  		_forSlide;
@@ -568,7 +686,7 @@ index 6da399c..2c0a5c3 100644
  		}
  		getTieHeight(startX, _startY, endX, _endY) {
  			return Math.log(endX - startX + 1) * this.renderer.settings.notation.slurHeight / 2;
-@@ -59257,9 +59259,9 @@
+@@ -59257,9 +59288,9 @@
  			if (this._labels === null) {
  				this._labels = [];
  				const slur = this.startNote.effectSlur;
@@ -580,7 +698,7 @@ index 6da399c..2c0a5c3 100644
  						const label = TieGlyphLabels.build(s, s.toNote.fret >= s.fromNote.fret);
  						if (notationSettings.isNotationElementVisible(label.element)) this._labels.push(label);
  					}
-@@ -64383,7 +64385,14 @@
+@@ -64383,7 +64414,14 @@
  				const tapSlur = new TabTieGlyph(`tab.tie.leftHandTap.${n.id}`, n, n, false);
  				this.addTie(tapSlur);
  			}
@@ -596,7 +714,7 @@ index 6da399c..2c0a5c3 100644
  				let expanded = false;
  				for (const slur of this._effectSlurs) if (slur.tryExpand(n, n.effectSlurDestination, false, false)) {
  					expanded = true;
-@@ -64395,7 +64404,13 @@
+@@ -64395,7 +64433,13 @@
  					this.addTie(effectSlur);
  				}
  			}
