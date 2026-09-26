@@ -642,40 +642,23 @@
 .settings-readout small {
   color: var(--faint);
 }
-.settings-tuning-summary {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
 .settings-strings {
-  display: grid;
-  grid-template-columns: repeat(5,minmax(0,1fr));
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .settings-string {
   display: grid;
-  grid-template-columns: 30px 1fr 30px;
-  align-items: center;
-  gap: 4px;
+  gap: 2px;
+  width: 72px;
+  font-size: 10px;
+  color: var(--label);
   text-align: center;
 }
-.settings-string > span {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  color: var(--label);
-}
-.settings-string button {
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--edge);
-  border-radius: 4px;
-  background: var(--surface-soft);
-}
-.settings-string output {
+.settings-dialog .settings-string select {
+  min-height: 32px;
+  padding: 4px 6px;
   font-weight: 700;
-  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 .settings-mode {
@@ -697,9 +680,6 @@
 @media (max-width: 560px) {
   .settings-section {
     grid-template-columns: 1fr;
-  }
-  .settings-strings {
-    grid-template-columns: repeat(3,minmax(0,1fr));
   }
 }
 .editor-score-tools button {
