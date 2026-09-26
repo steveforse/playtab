@@ -67,10 +67,16 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - In progress on `feature/scanned-pdf-recognition`: image-only pages now use a 300-DPI Ruby `ruby-vips`/Tesseract pipeline for staff geometry and fret-digit recovery, while the existing vector recognizer remains the first path. Raster imports now detect printed time signatures, recover open strings split by staff lines, and preserve direction-validated hammer-on/pull-off marks; title and tuning are preserved when recognized.
   - Remaining work is scan deskew, broader reliable rhythm recovery, confidence-aware review, and recognition of raster chords, lyrics, sections, fingerings, and repeats.
 
-- [ ] **11. Audit editor UI against parsed TEF3 fields** — `chore/editor-parity-audit`
+- [x] **11. Audit editor UI against parsed TEF3 fields** — `chore/editor-parity-audit`
   - Check `app/frontend/music/editor/*` and `app/frontend/music/score.ts` for whether capo, clef, per-note dynamics, pick-stroke direction, and the second voice-per-string are exposed anywhere in the editing UI, given that the TEF3 parser already reads them.
   - Result determines scope for items 12 and 17 below: fields with existing (even partial) editor support only need export wiring; fields with none need editor work too.
   - No code changes expected beyond findings; produces a short note per field (present / absent / partial) to fold into the affected tickets.
+  - Findings (2026-09-26). TEF3 export reads the edited MusicXML (`Exporter::Model.from_musicxml`), not the parsed TEF, so a field survives a round trip only if the importer writes it into MusicXML, the editor keeps it, and the exporter reads it back.
+    - **Capo — partial.** Import writes only a "Capo N" words direction (item 20). The editor reads that, converts it to `<capo>`, and edits capo and 5th-string capo in Score settings. The exporter ignores both, so the TEF instrument capo is always 0.
+    - **Clef — absent.** The importer hardcodes treble-8vb notation plus TAB and never uses the parsed `clef`/`middle_c`. The editor keeps `<clef>` attributes but offers no control. The exporter writes no clef. Export wiring only; no editor work unless a non-default clef turns up in the corpus.
+    - **Per-note dynamics — absent.** Parsed (`dynamic`, byte 2 bits 5–7) but never written to MusicXML, so nothing reaches the editor or exporter. Needs an importer representation (MusicXML `<dynamics>`, or `<note dynamics="…">` for velocity), editor controls, and export.
+    - **Pick-stroke direction — partial.** Only `stroke == 1` is used, as the thumb marker ("TEF fingering T"), which the editor exposes as the Thumb fingering choice. The exporter writes thumb as fingering code 6, not as a stroke. Other stroke values are dropped on import, so the editor has nothing to show.
+    - **Second voice per string — partial.** The importer writes `<voice>2</voice>`. The editor addresses beats by voice (Properties → Go to → Voice 1–4) and edits existing voice-2 beats in place. It cannot create a voice-2 beat where the source has none. The exporter reads no voice and writes none, and warns that independent voices are not preserved.
 
 - [ ] **12. Close TEF3 export data loss** — `feature/tef3-export-parity`
   - `lib/tef2/exporter.rb::TableditWriter.note_record` currently hardcodes `effect2`/`effect3` to `0, 0, 0` on every note regardless of source data — fix so parsed effect bytes round-trip.
@@ -78,6 +84,7 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Write back per-instrument `capo` and `clef`, parsed in `parse_instruments` but never referenced in `TableditWriter`.
   - Stop hardcoding MIDI program 105 (banjo) in export; write the source instrument's actual `midi_voice`/`midi_bank`.
   - Add round-trip tests: import a fixture exercising each field, export, re-import, assert values match the original.
+  - Scope from item 11: capo, clef, stroke/thumb and grace fields need exporter wiring only (MusicXML already carries them, or the importer can add them without new editor UI). Dynamics also need an importer representation before export can round-trip them; editor controls for dynamics can follow in item 17. Raw `effect2`/`effect3` bytes are not in MusicXML today, so round-tripping them means writing them as `other-technical` metadata on import (as unsupported effect codes already are).
 
 - [ ] **13. Restore TEF3 repeat support** — `feature/tef3-repeats`
   - `lib/tef2/tabledit_v3_parser.rb` hardcodes `repeats: []` for the modern TEF3 layout even though the older `full_parser.rb` (TEF2) already decodes a repeat table — port/adapt that logic to the TEF3 content stream.
@@ -110,6 +117,7 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
 - [ ] **18. Finish second-voice-per-string support** — `feature/second-voice-support`
   - `voice` is already parsed (`parser.rb:247`) and rendered in MusicXML (`full_musicxml_builder.rb:419,459`), making this the most complete of the unfinished features — but `TableditWriter.note_record` has no voice field at all, and item 11's audit should confirm whether the editor UI supports it.
   - Scope depends on item 11: if the editor already has partial support, this may just need export wiring; if not, editor work is needed too.
+  - Item 11 result: partial. The editor navigates to and edits existing voice-2 beats; adding a beat to an empty second voice, and TEF3 export of the voice bits (byte 3 bits 4–5), are the remaining work.
 
 - [ ] **19. Add remaining score markings and symbols** — `feature/musical-symbols`
   - TablEdit's Insert menu musical symbols (trill, mordent, fermata, emphasis points), crescendo/decrescendo markings, and scale diagrams have no code footprint — lowest priority of this list since they're less commonly used than the note-effect cluster.
