@@ -7,8 +7,9 @@ class Tef2ReadingListTest < ActiveSupport::TestCase
       "first and second endings" => [ [ [ 1, 8 ], [ 1, 7 ], [ 9, 17 ], [ 10, 16 ], [ 18, 18 ] ], 18 ],
       "two-measure endings" => [ [ [ 1, 11 ], [ 2, 9 ], [ 12, 14 ] ], 14 ],
       "a repeat right after the first ending" => [ [ [ 1, 4 ], [ 1, 3 ], [ 5, 8 ], [ 5, 8 ] ], 8 ],
-      "D.C. al Coda" => [ [ [ 1, 32 ], [ 1, 15 ], [ 33, 33 ] ], 33 ],
-      "D.S. al Coda" => [ [ [ 1, 26 ], [ 2, 8 ], [ 27, 27 ] ], 27 ],
+      "a long first ending" => [ [ [ 1, 26 ], [ 2, 8 ], [ 27, 27 ] ], 27 ],
+      "D.C. al Coda" => [ [ [ 1, 8 ], [ 1, 8 ], [ 9, 12 ], [ 1, 6 ], [ 13, 14 ] ], 14 ],
+      "D.S. al Coda" => [ [ [ 1, 8 ], [ 1, 8 ], [ 9, 12 ], [ 3, 6 ], [ 13, 14 ] ], 14 ],
       "D.C. al Fine" => [ [ [ 1, 12 ], [ 1, 6 ] ], 12 ]
     }.each do |name, (list, measures)|
       bars, warnings = Tef2::ReadingList.decode(list, measures)
@@ -21,8 +22,10 @@ class Tef2ReadingListTest < ActiveSupport::TestCase
     bars, = Tef2::ReadingList.decode([ [ 1, 8 ], [ 1, 7 ], [ 9, 10 ] ], 10)
     assert_equal [ true, 2, [ 1 ] ], [ bars[0][:forward], bars[7][:backward], bars[7][:endings] ]
     assert_equal [ 2 ], bars[8][:endings]
-    coda, = Tef2::ReadingList.decode([ [ 1, 26 ], [ 2, 8 ], [ 27, 27 ] ], 27)
-    assert_equal [ 1, 7, 25, 26 ], [ :segno, :to_coda, :dalsegno, :coda ].map { |mark| coda.index { |bar| bar[mark] } }
+    long, = Tef2::ReadingList.decode([ [ 1, 26 ], [ 2, 8 ], [ 27, 27 ] ], 27)
+    assert_equal [ [ 1 ], [ 1 ], [ 2 ], [] ], [ 8, 25, 26, 7 ].map { |index| long[index][:endings] }
+    coda, = Tef2::ReadingList.decode([ [ 1, 8 ], [ 1, 8 ], [ 9, 12 ], [ 3, 6 ], [ 13, 14 ] ], 14)
+    assert_equal [ 2, 5, 11, 12 ], [ :segno, :to_coda, :dalsegno, :coda ].map { |mark| coda.index { |bar| bar[mark] } }
   end
 
   test "warns about reading lists it cannot play as written" do
@@ -35,7 +38,7 @@ class Tef2ReadingListTest < ActiveSupport::TestCase
     assert_equal [ "The TablEdit reading list ends at measure 16; the score plays the remaining measures." ], warnings
     _, warnings = Tef2::ReadingList.decode([ [ 1, 4 ], [ 7, 8 ] ], 8)
     assert_match(/skips from measure 4 to 7/, warnings.first)
-    _, warnings = Tef2::ReadingList.decode([ [ 1, 30 ], [ 1, 10 ], [ 31, 40 ], [ 5, 40 ] ], 40)
+    _, warnings = Tef2::ReadingList.decode([ [ 1, 4 ], [ 1, 4 ], [ 5, 8 ], [ 1, 2 ], [ 9, 10 ], [ 1, 2 ] ], 10)
     assert_match(/only the first D.C.\/D.S./, warnings.first)
     _, warnings = Tef2::ReadingList.decode([ [ 1, 9 ], [ 2, 6 ], [ 10, 44 ], [ 2, 9 ], [ 2, 6 ], [ 10, 27 ], [ 45, 45 ] ], 45)
     assert_match(/repeats play once/, warnings.first)
@@ -62,13 +65,15 @@ class Tef2ReadingListTest < ActiveSupport::TestCase
     tef2 = Tef2::Exporter.export({ "version" => 2, "title" => "Reading", "source" => musicxml }, version: "tef2")
     assert_includes tef2[:warnings], "TEF2 export writes the measures in written order; repeats, endings and jumps are not represented."
 
-    coda = Tef2.convert(tef3_with_reading_list([ [ 1, 8 ], [ 2, 3 ], [ 9, 9 ] ], 9))
+    coda = Tef2.convert(tef3_with_reading_list([ [ 1, 3 ], [ 1, 3 ], [ 4, 7 ], [ 2, 2 ], [ 8, 8 ] ], 8))
     document = Nokogiri::XML(coda[:musicxml])
     assert_equal 1, document.xpath("//measure[2]/direction/direction-type/segno").length
-    assert_equal [ "coda" ], document.xpath("//measure[3]/sound/@tocoda").map(&:value)
-    assert_equal [ "segno" ], document.xpath("//measure[8]/sound/@dalsegno").map(&:value)
+    assert_equal [ "coda" ], document.xpath("//measure[2]/sound/@tocoda").map(&:value)
+    assert_equal [ "segno" ], document.xpath("//measure[7]/sound/@dalsegno").map(&:value)
     exported = Tef2::Exporter.export({ "version" => 2, "title" => "Coda", "source" => coda[:musicxml] }, version: "tef3")
-    assert_equal [ [ 1, 8 ], [ 2, 3 ], [ 9, 9 ] ], Tef2::TableditV3Parser.parse(exported[:bytes])[:reading_list]
+    # Export may join ranges that play on without a jump (1-3, 4-7 as 1-7).
+    played = ->(list) { list.flat_map { |from, to| (from..to).to_a } }
+    assert_equal played.([ [ 1, 3 ], [ 1, 3 ], [ 4, 7 ], [ 2, 2 ], [ 8, 8 ] ]), played.(Tef2::TableditV3Parser.parse(exported[:bytes])[:reading_list])
     assert_empty Tef2::TableditV3Parser.parse(exported[:bytes])[:texts]
   end
 
