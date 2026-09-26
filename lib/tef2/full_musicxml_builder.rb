@@ -45,6 +45,8 @@ module Tef2
       lyrics_text = parsed[:lyrics_text].to_s
       instrument = (parsed[:track_data] || []).first || {}
       guides = parsed[:reading_guides]
+      # TablEdit 3 keeps a key per measure; TEF2 imports keep G major.
+      keys = parsed[:measure_keys] || Array.new(measures, 1)
 
       builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
         xml.send("score-partwise", version: "3.1") do
@@ -70,9 +72,13 @@ module Tef2
             measures.times do |m|
               xml.measure(number: m + 1) do
                 measure_time_sig = measure_signatures&.fetch(m, time_sig) || time_sig
-                write_measure_attributes(xml, m, measure_time_sig, tempo, strings, tuning) if m == 0
+                write_measure_attributes(xml, m, measure_time_sig, tempo, strings, tuning, key: keys[0].to_i) if m == 0
                 write_capo_direction(xml, capo) if m == 0 && capo.positive?
-                write_measure_time_signature(xml, measure_time_sig) if m.positive? && measure_signatures && measure_time_sig != measure_signatures[m - 1]
+                if m.positive?
+                  key_change = keys[m] != keys[m - 1] ? keys[m].to_i : nil
+                  time_change = measure_signatures && measure_time_sig != measure_signatures[m - 1] ? measure_time_sig : nil
+                  write_measure_changes(xml, key_change, time_change) if key_change || time_change
+                end
                 write_tempo_direction(xml, tempo) if m == 0 && tempo > 0
                 guides ? write_reading_guides(xml, guides, m, location: "left") : write_measure_barlines(xml, m, endings, location: "left")
                 write_measure_notes(xml, m, notes, annotations, texts, chords, tempo_changes, strings, tuning, measure_time_sig, capo: capo)
@@ -87,12 +93,12 @@ module Tef2
 
     private
 
-    def self.write_measure_attributes(xml, measure_index, time_sig, tempo, strings, tuning)
+    def self.write_measure_attributes(xml, measure_index, time_sig, tempo, strings, tuning, key: 1)
       xml.attributes do
         xml.divisions DIVISIONS
-        xml.staves 2
-        xml.key { xml.fifths 1 }  # G major
+        xml.key { xml.fifths key }
         write_time_signature(xml, time_sig)
+        xml.staves 2
 
         # Staff 1: Standard notation
         xml.clef(number: "1") { xml.sign "G"; xml.line 2; xml.send("clef-octave-change", -1) }
@@ -113,8 +119,11 @@ module Tef2
       end
     end
 
-    def self.write_measure_time_signature(xml, time_sig)
-      xml.attributes { write_time_signature(xml, time_sig) }
+    def self.write_measure_changes(xml, key, time_sig)
+      xml.attributes do
+        xml.key { xml.fifths key } if key
+        write_time_signature(xml, time_sig) if time_sig
+      end
     end
 
     # Repeat signs, endings and jumps decoded from a TablEdit reading list

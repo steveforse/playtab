@@ -190,15 +190,17 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert_includes result[:warnings], "The 5th-string capo is written at capo + 5; fret 9 is not represented."
   end
 
-  test "round trips per-measure time signatures and warns about later tempo changes" do
+  test "round trips per-measure keys and time signatures and warns about later tempo changes" do
     signatures = [ { numerator: 3, denominator: 4 }, { numerator: 4, denominator: 4 }, { numerator: 6, denominator: 8 } ]
     notes = signatures.each_index.map { |measure| { measure: measure, position: 0, duration: 256, string: 1, fret: measure, effect1: 0, effect2: 0, effect3: 0, tie: false, grace: false } }
     model = Tef2::Exporter::Model.new(title: "Meters", tempo: 96, tuning: [ 62, 59, 55, 50, 67 ], measures: signatures,
-      notes: notes, texts: [], chords: [], lyrics: nil, warnings: [])
+      notes: notes, texts: [], chords: [], lyrics: nil, warnings: [], keys: [ 3, 3, -2 ])
     musicxml = Tef2.convert(Tef2::Exporter::TableditWriter.build(model))[:musicxml]
+    assert_equal [ "3", "-2" ], Nokogiri::XML(musicxml).xpath("//key/fifths").map(&:text)
     result = Tef2::Exporter.export({ "version" => 2, "title" => "Meters", "source" => musicxml }, version: "tef3")
     parsed = Tef2::TableditV3Parser.parse(result[:bytes])
     assert_equal signatures, parsed[:measure_signatures]
+    assert_equal [ 3, 3, -2 ], parsed[:measure_keys]
     assert_equal 96, parsed[:tempo]
     refute_includes result[:warnings], "TEF export keeps the opening tempo; later tempo changes are not represented."
 
