@@ -51,7 +51,6 @@ export function SettingsDialog({ target, onApply, onClose, returnFocus }: {
       } catch (failure) { problem = (failure as Error).message; }
       const last = info.tuningRange.last;
       const measures = base.score.masterBars.length;
-      const first = base.score.masterBars[0];
       return <>
         <h2>Score settings</h2>
         <fieldset className="settings-section settings-credits"><legend>Score</legend>
@@ -71,16 +70,15 @@ export function SettingsDialog({ target, onApply, onClose, returnFocus }: {
           <label className="anchor-text">Key signature<select aria-label="Key signature" value={draft.keyFifths} onChange={event => update({ keyFifths: Number(event.target.value) })}>
             {KEYS.map(fifths => <option key={fifths} value={fifths}>{keyName(fifths)}</option>)}
           </select></label>
-          <p className="settings-readout"><span>Time signature</span><strong>{first ? `${first.timeSignatureNumerator}/${first.timeSignatureDenominator}` : '—'}</strong>
-            <small>Change it from Measure ▸ Time signature…</small></p>
         </fieldset>
         <fieldset className="settings-section settings-tuning"><legend>Tuning</legend>
-          <TuningPicker tuning={draft.tuning} onChange={tuning => update({ tuning })} />
+          <TuningPicker tuning={draft.tuning} onChange={tuning => update({ tuning })}>
           <div className="settings-mode" role="radiogroup" aria-label="When tuning changes">
             <label><input type="radio" name="tuning-mode" checked={draft.mode === 'frets'} onChange={() => update({ mode: 'frets' })} />Keep frets (pitches change)</label>
             <label><input type="radio" name="tuning-mode" checked={draft.mode === 'pitches'} onChange={() => update({ mode: 'pitches' })} />Keep pitches (frets change)</label>
           </div>
-          <p className="editor-rhythm-reason">{tuningChanged ? 'Tuning applies to' : 'A tuning change would apply to'} measures 1–{last}{last < measures ? `; measure ${last + 1} changes tuning again and is not affected` : ''}.</p>
+          </TuningPicker>
+          <p className="settings-hint">{tuningChanged ? 'Tuning applies to' : 'A tuning change would apply to'} measures 1–{last}{last < measures ? `; measure ${last + 1} changes tuning again and is not affected` : ''}.</p>
         </fieldset>
         <fieldset className="settings-section settings-capo"><legend>Capo</legend>
           <label className="anchor-text">Capo<select aria-label="Capo" value={draft.capo}
@@ -93,7 +91,7 @@ export function SettingsDialog({ target, onApply, onClose, returnFocus }: {
             <option value="">None</option>
             {Array.from({ length: 12 }, (_, index) => index + 6).map(fret => <option key={fret} value={fret}>Fret {fret}</option>)}
           </select></label>
-          <p className="editor-rhythm-reason">Frets are written relative to the capo; playback sounds at the capoed pitch. Changing the capo moves the 5th-string capo to match (capo + 5); set it separately for other spikes.</p>
+          <p className="settings-hint">Frets are relative to the capo. The 5th-string capo follows at capo + 5.</p>
         </fieldset>
         {problem && <p className="alert" role="alert">{problem}</p>}
         {settingsError && <p className="alert" role="alert">{settingsError}</p>}
