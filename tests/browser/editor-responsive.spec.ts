@@ -64,7 +64,6 @@ test('ED-23 uses a side sheet on short screens and keeps the score operable at 2
   expect(box.x).toBeGreaterThan(300);
   await tap(page, first);
   await expect(sheet.getByLabel('Selection inspector')).toContainText('Fret 0');
-  await sheet.locator('summary', { hasText: /^Score$/ }).click();
   const settings = sheet.getByRole('button', { name: 'Score settings…' });
   await settings.scrollIntoViewIfNeeded();
   await expect(settings).toBeInViewport();

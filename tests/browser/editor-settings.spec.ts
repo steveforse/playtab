@@ -20,7 +20,6 @@ test('ED-19 applies title, opening tempo, tuning and a local tempo intentionally
   const firstFret = notation.locator('svg text').filter({ hasText: /^0$/ }).first();
   await expect(firstFret).toBeVisible({ timeout: 45000 });
   await page.getByRole('button', { name: 'Edit score', exact: true }).click();
-  await page.locator('summary', { hasText: /^Score$/ }).click();
   await page.getByRole('button', { name: 'Score settings…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Score settings' });
   await expect(dialog.getByLabel('String 4 note').locator('option:checked')).toHaveText('D3');
@@ -76,7 +75,6 @@ test('sets a capo, credits and swing feel from Score settings', async ({ page })
   const notation = page.getByTestId('notation');
   await expect(notation.locator('svg text').first()).toBeVisible({ timeout: 45000 });
   await page.getByRole('button', { name: 'Edit score' }).click();
-  await page.locator('summary', { hasText: /^Score$/ }).click();
   await page.getByRole('button', { name: 'Score settings…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Score settings' });
   await expect(dialog.getByLabel('Tuning preset')).toHaveValue('Open G');
