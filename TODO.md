@@ -67,6 +67,54 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - In progress on `feature/scanned-pdf-recognition`: image-only pages now use a 300-DPI Ruby `ruby-vips`/Tesseract pipeline for staff geometry and fret-digit recovery, while the existing vector recognizer remains the first path. Raster imports now detect printed time signatures, recover open strings split by staff lines, and preserve direction-validated hammer-on/pull-off marks; title and tuning are preserved when recognized.
   - Remaining work is scan deskew, broader reliable rhythm recovery, confidence-aware review, and recognition of raster chords, lyrics, sections, fingerings, and repeats.
 
+- [ ] **11. Audit editor UI against parsed TEF3 fields** — `chore/editor-parity-audit`
+  - Check `app/frontend/music/editor/*` and `app/frontend/music/score.ts` for whether capo, clef, per-note dynamics, pick-stroke direction, and the second voice-per-string are exposed anywhere in the editing UI, given that the TEF3 parser already reads them.
+  - Result determines scope for items 12 and 17 below: fields with existing (even partial) editor support only need export wiring; fields with none need editor work too.
+  - No code changes expected beyond findings; produces a short note per field (present / absent / partial) to fold into the affected tickets.
+
+- [ ] **12. Close TEF3 export data loss** — `feature/tef3-export-parity`
+  - `lib/tef2/exporter.rb::TableditWriter.note_record` currently hardcodes `effect2`/`effect3` to `0, 0, 0` on every note regardless of source data — fix so parsed effect bytes round-trip.
+  - Write back `dynamic`, `stroke` (pick direction), and grace-note effect/fret, all of which are parsed but currently dropped on export.
+  - Write back per-instrument `capo` and `clef`, parsed in `parse_instruments` but never referenced in `TableditWriter`.
+  - Stop hardcoding MIDI program 105 (banjo) in export; write the source instrument's actual `midi_voice`/`midi_bank`.
+  - Add round-trip tests: import a fixture exercising each field, export, re-import, assert values match the original.
+
+- [ ] **13. Restore TEF3 repeat support** — `feature/tef3-repeats`
+  - `lib/tef2/tabledit_v3_parser.rb` hardcodes `repeats: []` for the modern TEF3 layout even though the older `full_parser.rb` (TEF2) already decodes a repeat table — port/adapt that logic to the TEF3 content stream.
+  - **Before implementing**, read TablEdit's own "Reading List" manual page (`reading_list.htm` / `glos_reading_guides.htm` in its help file) in full: TablEdit does not store simple start/end barline pairs. It stores an ordered list of up to 96 measure-range sequences (e.g. "1-16, 3-14, 17-18") and *derives* repeat signs, voltas, Da Capo/Da Segno/Segno markers, and named section labels from that list. Modeling this as flat barline pairs will misrepresent any file using Da Capo/Da Segno or named sequences.
+  - Export repeat barlines in `TableditWriter` instead of relying on the existing loss-warning at `exporter.rb:358`.
+  - Cover with a fixture containing simple and nested repeat sections, plus at least one using Da Capo/Da Segno.
+
+- [ ] **14. Export alternate endings** — `feature/tef3-alternate-endings`
+  - Endings are already parsed (`parser.rb:268-279`) and rendered in MusicXML but never written back to `.tef` — add the write path in `TableditWriter` and remove the now-inapplicable loss warning.
+  - Depends on or can be bundled with item 13 since both derive from the same Reading List structure, not independent barline pairs — see item 13's note.
+
+- [ ] **15. Support mid-score tempo and time signature changes** — `feature/tef3-tempo-timesig-changes`
+  - Tempo changes are parsed (`parser.rb:280-287`) but `TableditWriter` only ever exports the single global header tempo — add mid-score tempo change export.
+  - Mid-score time signature changes aren't parsed at all for TEF3 (`time_sig_changes: []` is hardcoded) — determine the TEF3 encoding for a time signature change event and decode it, mirroring how tempo changes are found.
+  - Fixture files should include at least one file with a tempo change and one with a time signature change partway through.
+
+- [ ] **16. Add key signature and transpose support** — `feature/key-signature-transpose`
+  - Neither exists anywhere in the codebase today. Reverse-engineer where TablEdit stores key signature (likely near the instrument or header block) using minimal-diff sample files the same way prior format work was done.
+  - Transpose is an editing operation in TablEdit rather than stored state — decide whether to implement it as a score-level edit action in the frontend editor plus corresponding fret/tuning recalculation, or scope it out if it's genuinely just a transient UI convenience with no persisted effect.
+
+- [ ] **17. Decode the extended note-effect cluster** — `feature/extended-note-effects`
+  - Choke, rasgueado, roll, brush, dead note, ghost note, tapping (as distinct from hammer-on), tremolo, and vibrato currently have no structured decode — they either fall through to generic bend/harmonic/staccato handling or an unlabeled `"TEF effect2 #{low}"` metadata string.
+  - Fully decode the remaining bend variants (currently only 3 of TablEdit's bend/choke/tremolo options are distinguished).
+  - TablEdit's manual (`special_effects.htm`) documents two dimensions not yet accounted for — confirm scope covers both before considering this done:
+    - **Primary + secondary "combination" effects**: a note can carry a primary effect and a secondary combination effect together (e.g. Brush + Choke), and combined effects render differently from either alone (e.g. hammer-on/pull-off slur moves to stem level, Roll finishes early with no curvy line, Harmonic displays an octave low, Brush arrow moves side). Check whether `effect1`/`effect2`/`effect3` already separate primary from secondary before assuming this is undecoded.
+    - **Per-effect numeric parameters**: Roll speed (1-8, default 4), Vibrato frequency (1-16, default 12) and amplitude (1-8), Tremolo subdivision, Choke pitch amount, Staccato duration reduction, plus the fixed Muted (-30% volume/-50% duration) and Ghost note (-33% volume) adjustments. Labeling effect *type* without capturing these adjustable values is still lossy — add explicit round-trip coverage for the parameters, not just the type.
+  - Double-check the staccato rendering at `full_musicxml_builder.rb:517`, which reuses the hammer-on/pull-off pairing logic — confirm this isn't conflating two distinct effect codes before building on top of it.
+  - Each effect needs: parse, MusicXML technique rendering, and TEF3 export — don't repeat the import/export asymmetry from item 12.
+
+- [ ] **18. Finish second-voice-per-string support** — `feature/second-voice-support`
+  - `voice` is already parsed (`parser.rb:247`) and rendered in MusicXML (`full_musicxml_builder.rb:419,459`), making this the most complete of the unfinished features — but `TableditWriter.note_record` has no voice field at all, and item 11's audit should confirm whether the editor UI supports it.
+  - Scope depends on item 11: if the editor already has partial support, this may just need export wiring; if not, editor work is needed too.
+
+- [ ] **19. Add remaining score markings and symbols** — `feature/musical-symbols`
+  - TablEdit's Insert menu musical symbols (trill, mordent, fermata, emphasis points), crescendo/decrescendo markings, and scale diagrams have no code footprint — lowest priority of this list since they're less commonly used than the note-effect cluster.
+  - Percussion events are also unimplemented for TEF3 (`percussions: []` hardcoded); the older TEF2 `full_parser.rb` path has some percussion handling worth checking for reusable logic first.
+
 ## Already completed
 
 - Native Ruby TEF2 and TablEdit TEF3 import with bounded validation and explicit unsupported-feature warnings.
@@ -76,6 +124,48 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
 - Configurable measures per line, lyric columns, and PDF layout fixes.
 - TEF2 and TablEdit TEF3 export with explicit loss warnings.
 - Public GitHub repository with passing Rails, frontend, lint, and security CI.
+
+- [ ] **20. Write a real capo on TEF import** — `fix/tef-capo-element`
+  - `lib/tef2/full_musicxml_builder.rb` writes the capo only as a "Capo N" words direction, so imported capo scores play two semitones low until Score settings converts the text into a `<staff-details><capo>` (the editor reads the text as the capo since #77).
+  - Write `<capo>` in the first measure's TAB `staff-details` and drop the words direction; if a TEF records a 5th-string capo other than capo + 5, write the `playtab-fifth-string-capo` identification field the editor already reads.
+  - Relates to item 12 (capo export). Revalidate the private capo corpus: 5th-string display frets stay capo-relative.
+
+- [ ] **21. Transitions from an earlier note into a before-grace** — `feature/grace-incoming-transitions`
+  - After-graces (#83–#84) cover a note sliding, hammering or pulling into a grace note. The remaining case is a transition from an earlier main note into the grace group *before* a later note; the ordinary Techniques commands and the before-grace dialog still exclude it.
+  - Only needed if a real arrangement requires it; musically it matches an after-grace on the earlier note.
+
+- [ ] **22. Range selection follow-ups** — `feature/range-selection-followups`
+  - Clicking an empty area inside the staff still selects a string position; only the zone above the staff selects the whole measure.
+  - Ranges are per voice; support and describe all-voice ranges ("Measures 2–4, all voices").
+
+- [ ] **23. Feel changes within a score** — `feature/feel-changes`
+  - Score settings sets one feel (straight, swung 2:1, dotted 3:1) for the whole score; allow a feel change at a chosen measure via `<sound><swing>`, which alphaTab already plays and marks.
+
+- [ ] **24. Editor accessibility and device pass** — `chore/editor-a11y-device-pass`
+  - Screen-reader pass over the edit title bar, ribbon menus, context menu, Properties panel and status bar; touch long-press on a real device; printing from edit mode.
+  - Known timing-flaky browser tests under 2-worker load (editor-add-note 200% zoom, ED-02 selection, ED-23 phone sheet) should be made deterministic.
+
+- [ ] **25. Finish splitting App.tsx** — `refactor/app-commands-session`
+  - App is still about 1,800 lines. Move the editor command table (`useEditorCommands`) and the save / leave / conflict session logic (`useScoreSession`) into their own modules, as R-03–R-05 did for dialogs, selection info and shortcuts.
+
+- [ ] **26. Support the banjo 5th-string partial capo** — `feature/fifth-string-capo`
+  - Distinct from the main instrument capo (already tracked in item 12/20): TablEdit has a separate "Capo 5th" field specific to the 5-string banjo's short drone string. Unlike the main capo it does not transpose pitch — it only changes fret-number display (notes at the capo position show as 0, notes above show as negative unless capos are "aligned") and blocks entering frets below the capo position.
+  - This is common in real clawhammer banjo arrangements, so worth its own ticket rather than folding into item 12 — it's a distinct field with its own display/validation logic, not just another value to write through on export.
+  - See TablEdit's `special_instruments.htm` (Clawhammer banjo section) for the exact display rules to replicate.
+  - Editor side already exists (#77): Score settings has a 5th-string capo that follows capo + 5 when the capo changes and can be set separately (or None). Playtab's model differs from TablEdit's: the MusicXML keeps the *open* 5th-string tuning, frets stay capo-relative, and a spike other than capo + 5 is stored as the `playtab-fifth-string-capo` identification field and applied as a playback-only offset (`app/frontend/music/editor/tuning.ts`). TEF import/export must convert between the two (TablEdit's 5th-string tuning is already the sounding pitch), or the 5th string is raised twice. Still missing on the editor side: TablEdit's display rules (negative frets below the capo unless aligned) and blocking fret entry below the capo.
+
+- [ ] **27. Verify structured lyrics round-trip** — `chore/lyrics-structure-audit`
+  - TablEdit's lyrics support up to 8 numbered verses, per-syllable inline chord names (e.g. `[C]Twin-kle`), a link to a specific instrument module, and independent Y-position/font settings (`lyrics.htm`) — much richer than a single free-text blob.
+  - Check whether `indirect_text(bytes, 0x4C)` (`lyrics_text`) already captures this whole structure as one opaque string (round-trip likely fine even if unparsed) or whether verses/inline chords are separately encoded and currently being dropped. Only build structured parsing if the audit finds real data loss.
+
+- [ ] **28. Verify Title Information fields round-trip** — `chore/title-info-audit`
+  - Beyond title/subtitle/comment (already tracked in item A), TablEdit's Title Information dialog has distinct fields for Composer, Date of composition, a Copyright field separate from Comments, password-protection status, and an optional hyperlink + description (`title_information.htm`).
+  - Check whether these live in the same indirect-text block already parsed or are separate fields being silently dropped on import/export.
+  - Editor side (#77): Score settings edits Subtitle (`<credit>` with `credit-type` subtitle), Composer and Arranger (`<identification><creator>`), which alphaTab prints in the score header. Map TablEdit's fields onto these on import (and back on export) rather than adding new storage; Date, Copyright (`<rights>`) and the hyperlink have no editor field yet.
+
+- [ ] **29. Defensive handling for unrecognized marker types** — `fix/marker-type-coverage`
+  - TablEdit's marker/anchor-point taxonomy (`markers.htm`) includes independent fingering indicators (separate from per-note fingering), connection markers, line breaks, beam breaks, stem-length markers, and spacing markers, beyond the already-tracked text/chord/tempo/symbol markers.
+  - Mostly print-layout cosmetics, not musical content, so low priority for playback — but audit `parse_contents`'s marker-type switch in `tabledit_v3_parser.rb` to confirm unrecognized marker types are explicitly logged/warned rather than silently skipped, so future gaps surface instead of hiding.
 
 ## Project rules
 
