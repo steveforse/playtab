@@ -57,6 +57,7 @@ module Tef2
       {
         measures: measures.length,
         measure_signatures: measures.map { |measure| measure.slice(:numerator, :denominator) },
+        measure_keys: measures.map { |measure| measure[:key] },
         time_signature: measures.first.slice(:numerator, :denominator),
         tempo: read_u16(bytes, 6),
         strings: instrument[:strings],

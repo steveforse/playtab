@@ -48,7 +48,7 @@ module Tef2
     end
 
     class Model
-      attr_reader :title, :tempo, :tuning, :measures, :notes, :texts, :chords, :lyrics, :warnings, :instrument, :reading_list
+      attr_reader :title, :tempo, :tuning, :measures, :notes, :texts, :chords, :lyrics, :warnings, :instrument, :reading_list, :keys
 
       def self.from(document)
         unless document.is_a?(Hash)
@@ -122,6 +122,7 @@ module Tef2
         raise Invalid, "Imported MusicXML has no measures." if measure_nodes.empty? || measure_nodes.length > MAX_MEASURES
 
         measures = []
+        keys = []
         notes = []
         texts = []
         chords = []
@@ -140,6 +141,8 @@ module Tef2
           divisions = measure.at_xpath("./attributes/divisions")&.text.to_i.positive? ? measure.at_xpath("./attributes/divisions").text.to_i : divisions
           signature = time_signature(measure, measures.last || { numerator: 4, denominator: 4 })
           measures << signature
+          fifths = measure.at_xpath("./attributes/key/fifths")&.text
+          keys << (fifths ? fifths.to_i.clamp(-7, 7) : keys.last || 0)
           tuning ||= read_tuning(measure)
           tempo ||= read_tempo(measure)
 
@@ -256,7 +259,8 @@ module Tef2
           lyrics: xml.at_xpath("//miscellaneous-field[@name='playtab-lyrics']")&.text,
           warnings: warnings.uniq,
           instrument: instrument,
-          reading_list: reading_list
+          reading_list: reading_list,
+          keys: keys
         )
       end
 
@@ -315,7 +319,7 @@ module Tef2
         nil
       end
 
-      def initialize(title:, tempo:, tuning:, measures:, notes:, texts:, chords:, lyrics:, warnings:, instrument: {}, reading_list: [])
+      def initialize(title:, tempo:, tuning:, measures:, notes:, texts:, chords:, lyrics:, warnings:, instrument: {}, reading_list: [], keys: [])
         @title = title
         @tempo = tempo
         @tuning = Array(tuning).map(&:to_i)
@@ -327,6 +331,7 @@ module Tef2
         @warnings = warnings
         @instrument = DEFAULT_INSTRUMENT.merge(instrument)
         @reading_list = reading_list
+        @keys = keys
         validate!
       end
 
@@ -757,8 +762,8 @@ module Tef2
         # The table records are eight bytes, while the table's declared
         # structure size is twelve in files written by TablEdit.
         bytes = [ 12, 0, model.measures.length, 0, 0, 0, 0, 0 ]
-        model.measures.each do |signature|
-          bytes.concat([ 0, 0, 0, 0, signature[:denominator], signature[:numerator], 0, 0 ])
+        model.measures.each_with_index do |signature, index|
+          bytes.concat([ 0, 0, model.keys[index].to_i & 0xFF, 0, signature[:denominator], signature[:numerator], 0, 0 ])
         end
         bytes
       end
