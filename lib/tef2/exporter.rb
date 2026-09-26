@@ -488,6 +488,13 @@ module Tef2
         unsupported_technical.concat(xml.xpath("//notations/technical/other-technical").reject { |node| node.text.strip.match?(CONSUMED_METADATA) })
         warnings << "Some MusicXML techniques are not represented in the selected TEF export." if unsupported_technical.any?
         warnings << "MusicXML contains rests or independent voices; TEF export keeps note positions but does not preserve those voice details." if xml.xpath("//rest | //voice[. != '1']").any?
+        # TablEdit 3's encoding of a tempo change is unknown (no sample file
+        # has one), so only the opening tempo is written.
+        tempos = xml.xpath("//part[1]/measure/direction").filter_map do |direction|
+          value = direction.at_xpath("./sound/@tempo")&.value || direction.at_xpath("./direction-type/metronome/per-minute")&.text
+          value.to_f.round if value
+        end.chunk_while { |a, b| a == b }.map(&:first)
+        warnings << "TEF export keeps the opening tempo; later tempo changes are not represented." if tempos.length > 1
         warnings << "Some note timings were rounded to TEF position units." if notes.any? { |note| (note[:position] % 4).positive? || (note[:duration] % 4).positive? }
         warnings << "The source contains changing time signatures." if measures.uniq.length > 1
         warnings
@@ -823,7 +830,8 @@ module Tef2
       def self.content_section(model)
         measure_starts = [ 0 ]
         model.measures.each { |signature| measure_starts << measure_starts.last + signature[:numerator] * 64 / signature[:denominator] }
-        entries = model.notes.map { |note| [ logical_offset(note, measure_starts), note_record(note) ] }
+        continued = tied_continuations(model.notes)
+        entries = model.notes.each_with_index.map { |note, index| [ logical_offset(note, measure_starts), note_record(note, tied_from_previous: continued.include?(index)) ] }
         model.texts.each_with_index { |text, index| entries << [ logical_offset(text, measure_starts), marker_record(0x39, index) ] }
         model.chords.each_with_index { |chord, index| entries << [ logical_offset(chord, measure_starts), marker_record(0x35, index) ] }
         entries.sort_by!(&:first)
@@ -843,7 +851,19 @@ module Tef2
         ((absolute_units * 5 + item[:string].to_i) << 3)
       end
 
-      def self.note_record(note)
+      # Indexes of the notes a tie reaches: TablEdit marks the second note
+      # of a tie, Playtab's model the first.
+      def self.tied_continuations(notes)
+        continued = Set.new
+        notes.each_with_index.group_by { |note, _index| note[:string] }.each_value do |string_notes|
+          string_notes.sort_by { |note, _index| [ note[:measure], note[:position] ] }.each_cons(2) do |(previous, _), (_, index)|
+            continued << index if previous[:tie]
+          end
+        end
+        continued
+      end
+
+      def self.note_record(note, tied_from_previous: false)
         marker = note[:fret] + 1
         marker |= 0x40 if note[:grace]
         duration = if note[:tuplet] && TUPLET_CODES[note[:duration].to_i]
@@ -852,10 +872,10 @@ module Tef2
           Binary.duration_code(note[:duration], DURATION_CODES)
         end
         fingering = note[:fingering] == "T" ? 6 : note[:fingering].to_i.between?(1, 4) ? note[:fingering].to_i + 1 : 0
-        dynamic = note.fetch(:dynamic, DEFAULT_DYNAMIC).to_i & 0x07
+        dynamic = tied_from_previous ? 7 : [ note.fetch(:dynamic, DEFAULT_DYNAMIC).to_i, 6 ].min
         grace = note[:grace] ? ((note[:grace_effect].to_i & 0x07) << 5) | (note[:grace_fret].to_i & 0x1F) : 0
         effects = (note[:effect2].to_i & 0x0F) | ((note[:effect3].to_i & 0x0F) << 4)
-        [ marker, duration | (dynamic << 5), note[:effect1].to_i & 0x0F, grace, effects, 0, fingering | ((note[:stroke].to_i & 0x07) << 5), note[:tie] ? 2 : 0 ]
+        [ marker, duration | (dynamic << 5), note[:effect1].to_i & 0x0F, grace, effects, 0, fingering | ((note[:stroke].to_i & 0x07) << 5), 0 ]
       end
 
       def self.marker_record(marker, index)

@@ -107,6 +107,9 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Tempo changes are parsed (`parser.rb:280-287`) but `TableditWriter` only ever exports the single global header tempo — add mid-score tempo change export.
   - Mid-score time signature changes aren't parsed at all for TEF3 (`time_sig_changes: []` is hardcoded) — determine the TEF3 encoding for a time signature change event and decode it, mirroring how tempo changes are found.
   - Fixture files should include at least one file with a tempo change and one with a time signature change partway through.
+  - Status (2026-09-26). Time signatures: TablEdit 3 keeps one per measure in the measure table, which import already reads and TEF3 export writes; `time_sig_changes: []` only matters for TEF2. A round-trip test now covers 3/4 → 4/4 → 6/8, and 3 private files change meter.
+  - Tempo changes are **blocked on a sample**: no private TEF (104 TEF3, 271 TEF2) has a mid-score tempo change, and MuseScore's TablEdit importer reads only the header tempo. The parser's 0xFE record is unverified, so export does not write it. Instead it warns that later tempo changes are not represented. Needs a TablEdit file saved with a tempo change.
+  - Found alongside: MuseScore's importer (`src/importexport/tabledit/internal/importtef.cpp`) marks a tie on the second note as dynamic value 7 in byte 2. Import and TEF3 export now follow that; byte 8 bit 1 is still read for earlier Playtab exports.
 
 - [ ] **16. Add key signature and transpose support** — `feature/key-signature-transpose`
   - Neither exists anywhere in the codebase today. Reverse-engineer where TablEdit stores key signature (likely near the instrument or header block) using minimal-diff sample files the same way prior format work was done.
@@ -120,11 +123,12 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
     - **Per-effect numeric parameters**: Roll speed (1-8, default 4), Vibrato frequency (1-16, default 12) and amplitude (1-8), Tremolo subdivision, Choke pitch amount, Staccato duration reduction, plus the fixed Muted (-30% volume/-50% duration) and Ghost note (-33% volume) adjustments. Labeling effect *type* without capturing these adjustable values is still lossy — add explicit round-trip coverage for the parameters, not just the type.
   - Double-check the staccato rendering at `full_musicxml_builder.rb:517`, which reuses the hammer-on/pull-off pairing logic — confirm this isn't conflating two distinct effect codes before building on top of it.
   - Each effect needs: parse, MusicXML technique rendering, and TEF3 export — don't repeat the import/export asymmetry from item 12.
+  - Reference: MuseScore's TablEdit importer reads byte 7's low five bits as right hand × 6 + left hand (left hand 1 = open, 2–5 = fingers 1–4; right hand 1 = thumb, then index, middle…). Playtab decodes only the single values 2–6. The private corpus uses nothing else.
 
 - [ ] **18. Finish second-voice-per-string support** — `feature/second-voice-support`
   - `voice` is already parsed (`parser.rb:247`) and rendered in MusicXML (`full_musicxml_builder.rb:419,459`), making this the most complete of the unfinished features — but `TableditWriter.note_record` has no voice field at all, and item 11's audit should confirm whether the editor UI supports it.
   - Scope depends on item 11: if the editor already has partial support, this may just need export wiring; if not, editor work is needed too.
-  - Item 11 result: partial. The editor navigates to and edits existing voice-2 beats; adding a beat to an empty second voice, and TEF3 export of the voice bits (byte 3 bits 4–5), are the remaining work.
+  - Item 11 result: partial. The editor navigates to and edits existing voice-2 beats; adding a beat to an empty second voice, and TEF3 export of the voice bits (byte 3 bits 4–5), are the remaining work. MuseScore reads byte 3 bits 4–5 as 0 default, 2 upper and 3 lower voice.
 
 - [ ] **19. Add remaining score markings and symbols** — `feature/musical-symbols`
   - TablEdit's Insert menu musical symbols (trill, mordent, fermata, emphasis points), crescendo/decrescendo markings, and scale diagrams have no code footprint — lowest priority of this list since they're less commonly used than the note-effect cluster.

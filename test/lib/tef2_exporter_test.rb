@@ -109,7 +109,8 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     model = Tef2::Exporter::Model.new(
       title: "Tuplets", tempo: 120, tuning: [ 62, 59, 55, 50, 67 ],
       measures: [ { numerator: 3, denominator: 4 }, { numerator: 4, denominator: 4 } ],
-      notes: [ { measure: 1, position: 0, duration: 256, string: 0, fret: 4, effect1: 1, effect2: 0, effect3: 0, annotation: 6, fingering: "T", tie: true, tuplet: true, grace: true } ],
+      notes: [ { measure: 1, position: 0, duration: 256, string: 0, fret: 4, effect1: 1, effect2: 0, effect3: 0, annotation: 6, fingering: "T", tie: true, tuplet: true, grace: true },
+               { measure: 1, position: 256, duration: 256, string: 0, fret: 4, effect1: 0, effect2: 0, effect3: 0, dynamic: 5 } ],
       texts: [], chords: [], lyrics: nil, warnings: []
     )
     result = Tef2::Exporter.export({ "version" => 1, "title" => "x", "tempo" => 120, "tuning" => [ 62, 59, 55, 50, 67 ], "measures" => [ { "beats" => Array.new(4) { { "duration" => 4, "notes" => [ { "string" => 1, "fret" => 0 } ] } } } ] }, version: "tef3")
@@ -118,11 +119,15 @@ class Tef2ExporterTest < ActiveSupport::TestCase
 
     bytes = Tef2::Exporter::TableditWriter.build(model)
     assert_equal [ 4, 0, 4, 10 ], bytes.byteslice(0xCA, 4).bytes
-    note = Tef2::TableditV3Parser.parse(bytes)[:notes].first
+    note, continuation = Tef2::TableditV3Parser.parse(bytes)[:notes]
     assert_equal [ "T" ], note[:fingerings]
     assert note[:grace]
     assert note[:tie]
     assert note[:tuplet]
+    # TablEdit marks the second note of a tie with the dynamic value 7.
+    assert continuation[:tied_from_previous]
+    assert_nil continuation[:dynamic]
+    refute continuation[:tie]
   end
 
   test "round trips TEF3 note and instrument fields through import and export" do
@@ -183,6 +188,23 @@ class Tef2ExporterTest < ActiveSupport::TestCase
     assert_empty parsed[:texts]
     assert_equal 2, parsed[:notes][1][:fret], "5th-string frets are written absolute"
     assert_includes result[:warnings], "The 5th-string capo is written at capo + 5; fret 9 is not represented."
+  end
+
+  test "round trips per-measure time signatures and warns about later tempo changes" do
+    signatures = [ { numerator: 3, denominator: 4 }, { numerator: 4, denominator: 4 }, { numerator: 6, denominator: 8 } ]
+    notes = signatures.each_index.map { |measure| { measure: measure, position: 0, duration: 256, string: 1, fret: measure, effect1: 0, effect2: 0, effect3: 0, tie: false, grace: false } }
+    model = Tef2::Exporter::Model.new(title: "Meters", tempo: 96, tuning: [ 62, 59, 55, 50, 67 ], measures: signatures,
+      notes: notes, texts: [], chords: [], lyrics: nil, warnings: [])
+    musicxml = Tef2.convert(Tef2::Exporter::TableditWriter.build(model))[:musicxml]
+    result = Tef2::Exporter.export({ "version" => 2, "title" => "Meters", "source" => musicxml }, version: "tef3")
+    parsed = Tef2::TableditV3Parser.parse(result[:bytes])
+    assert_equal signatures, parsed[:measure_signatures]
+    assert_equal 96, parsed[:tempo]
+    refute_includes result[:warnings], "TEF export keeps the opening tempo; later tempo changes are not represented."
+
+    faster = musicxml.sub('<measure number="3">', '<measure number="3"><direction><direction-type><metronome><beat-unit>quarter</beat-unit><per-minute>132</per-minute></metronome></direction-type><sound tempo="132"/></direction>')
+    result = Tef2::Exporter.export({ "version" => 2, "title" => "Meters", "source" => faster }, version: "tef3")
+    assert_includes result[:warnings], "TEF export keeps the opening tempo; later tempo changes are not represented."
   end
 
   test "reports malformed documents and TEF2 limits" do
