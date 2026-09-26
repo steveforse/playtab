@@ -4,6 +4,7 @@ import { child, children, descendants, directMeasures, ensure, parseDocument, pl
 import { linkedStaffNotes, sourceBeatGroups } from './records';
 import { timingBoundary } from './time';
 import { openTabTuning } from './tuning';
+import { staffVoices } from './voices';
 
 export type NotePosition = { measure: number; beat: number; voice: number; string: number; fret: number };
 
@@ -219,7 +220,9 @@ export function addMusicXmlNote(source: string, score: model.Score, position: No
   if (group.length === 1 && child(group[0], 'rest')) {
     if (!beat.isRest) throw new Error('The source rest does not match the selected beat.');
     const pairedRests = [...otherStaves].map(staff => {
-      const paired = sourceBeatGroups(measure, staff)[position.beat];
+      // The paired staff's rest in the voice at the same place in its order.
+      const pairedVoice = staffVoices(measure, staff)[staffVoices(measure, tabStaff).indexOf(text(child(group[0], 'voice')) || '1')];
+      const paired = pairedVoice ? sourceBeatGroups(measure, staff, pairedVoice)[position.beat] : undefined;
       if (!paired || paired.length !== 1 || !child(paired[0], 'rest') || text(child(paired[0], 'duration')) !== text(child(group[0], 'duration'))) {
         throw new Error('The paired notation rest cannot be matched safely.');
       }

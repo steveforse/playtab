@@ -5,7 +5,7 @@ import { demo, isImportedScoreDocument, validateScore, validateStoredScore, type
 import { exportAscii, parseAscii } from './music/ascii';
 import { createBlankMusicXml, OPEN_G_TUNING, promoteNativeScore, readMusicXml, toImportedScoreDocument, type MusicXmlPreview } from './music/musicxml';
 import { addMusicXmlEndings, cutMusicXmlMeasures, copyMusicXmlMeasures, pasteMusicXmlMeasures, connectMusicXmlTransition, inspectMusicXmlTransitions, removeMusicXmlTransition, applyMusicXmlScoreSettings, inspectMusicXmlScoreSettings, inspectMusicXmlTempo, setMusicXmlLocalTempo, TEMPO_LIMITS, TUNING_LIMITS, inspectMusicXmlLyrics, LYRIC_VERSES, setMusicXmlLyric, setMusicXmlStandaloneLyrics, STANDALONE_LYRICS_LIMIT, ANCHOR_TEXT_LIMIT, changeMusicXmlAnchor, chordSpellingName, inspectMusicXmlAnchor, setMusicXmlBend, setMusicXmlHand, applyMusicXmlGraceGroup, inspectMusicXmlGraceGroup, removeMusicXmlGraceGroup, graceBeatPlacement, addMusicXmlNote, addMusicXmlRepeat, applyMusicXmlEdits, removeMusicXmlGrace, changeMusicXmlDuration, changeMusicXmlMeter, changeMusicXmlPickup, connectMusicXmlTie, createMusicXmlTriplet, insertMusicXmlBeat,
-  deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
+  addMusicXmlVoice, removeMusicXmlVoice, measureTabVoices, deleteMusicXmlMeasure, duplicateMusicXmlMeasure, inspectMusicXmlMeterRange, inspectMusicXmlRepeatEndings, inspectMusicXmlRepeats, inspectMusicXmlTie, inspectMusicXmlTriplet, insertMusicXmlMeasure, musicXmlEditorState,
   removeMusicXmlNotes, removeMusicXmlRepeat, removeMusicXmlTie, removeMusicXmlTriplet, sourceTabNoteRecords,
   type MeasureClipboard, type MeasureCut, type PasteMode, type NoteTransition, type TransitionKind, type LocalTempoInfo, type ScoreSettingsInfo, type TuningMode, type BeatLyric, type LyricSyllabic, type AnchorItem, type AnchorKind, type ChordQuality, type ChordRoot, type ChordSpelling, type BendAmount, type FrettingHand, type NoteBend, type PickingHand, type GraceBeatSpec, type GraceTransition, type GracePlacement, type RepeatEndings, type RepeatRegion, type TiePosition } from './music/musicxml-editor';
 import { documentKey, emptyHistory, record, travel, type Snapshot } from './editor/history';
@@ -646,6 +646,26 @@ export function App() {
       setPreview(nextPreview); setSelection(after);
       if (passage) { setPassage(null); setMessage('Playback selection cleared after inserting a measure.'); }
       setError('');
+    } catch (failure) { setError((failure as Error).message); }
+  }
+  function toggleSecondVoice() {
+    if (!selection) return;
+    if (pendingFret) { setError('Apply the pending fret before changing voices.'); return; }
+    try {
+      const base = preview ?? withPreviewTitle(readMusicXml(promoteNativeScore(score), `${score.title.slice(0, 148)}.musicxml`), score.title);
+      const index = selection.measure - 1;
+      const voices = measureTabVoices(base.source, index);
+      const adding = voices.length < 2;
+      const added = adding ? addMusicXmlVoice(base.source, base.score, index) : null;
+      const nextSource = added ? added.source : removeMusicXmlVoice(base.source, base.score, index);
+      const nextPreview = withPreviewTitle(readMusicXml(nextSource, base.filename, base.sourceFormat,
+        base.sourceIdentity ? { source: base.source, map: base.sourceIdentity } : undefined), base.score.title);
+      const after = selectionAtPosition(selection, score, nextPreview, { measure: selection.measure, beat: 1,
+        voice: Number(added ? added.voice : voices[0] ?? 1) });
+      remember({ document: toImportedScoreDocument(nextPreview, warnings), selection: after, sourceIdentity: nextPreview.sourceIdentity },
+        adding ? `Add second voice to measure ${selection.measure}` : `Remove second voice from measure ${selection.measure}`);
+      setPreview(nextPreview); setSelection(after); setError('');
+      setMessage(adding ? `Measure ${selection.measure} has a second voice; its rests are selected.` : `Removed the second voice from measure ${selection.measure}.`);
     } catch (failure) { setError((failure as Error).message); }
   }
   function previewDuplicateMeasure(opener: HTMLElement) {
@@ -1603,6 +1623,7 @@ export function App() {
   const measureCount = preview?.score.masterBars.length ?? score.measures.length;
   const onSelection = (run: (current: ScoreSelection) => void) => (_opener: HTMLElement) => { if (selection) run(selection); };
   const noteSelected = selection?.kind === 'note';
+  const secondVoice = Boolean(preview && selection && measureTabVoices(preview.source, selection.measure - 1).length > 1);
   const graceReason = selection?.graceIndex !== null && selection ? 'Not available on a grace note' : undefined;
   const tupletReason = !selectedRhythm ? 'Select a beat first' : selectedTupletLocked ? selectedTriplet?.reason ?? 'Change the triplet as a whole' : undefined;
   const wholeRange = wholeMeasurePassage();
@@ -1682,6 +1703,7 @@ export function App() {
     'insert-measure-before': { label: 'Insert measure before', disabled: !selection, run: () => insertSelectedMeasure('before') },
     'insert-measure-after': { label: 'Insert measure after', disabled: !selection, run: () => insertSelectedMeasure('after') },
     'duplicate-measure': { label: 'Duplicate measure…', disabled: !selection, run: opener => previewDuplicateMeasure(opener) },
+    'second-voice': { label: secondVoice ? 'Remove second voice' : 'Add second voice', disabled: !selection, run: () => toggleSecondVoice() },
     'delete-measure': { label: 'Delete measure…', disabled: !selection || measureCount <= 1, reason: 'The last remaining measure cannot be deleted', run: opener => previewDeleteMeasure(opener) },
     'time-signature': { label: 'Time signature…', disabled: !selection, run: opener => openMeterDialog(opener) },
     repeat: { label: 'Repeat / endings…', disabled: !selection, run: opener => openRepeatDialog(opener) },
@@ -1693,7 +1715,7 @@ export function App() {
     'score-settings': { label: 'Score settings…', run: opener => openSettingsDialog(opener) },
     'keyboard-help': { label: 'Keyboard help…', shortcut: '?', run: () => setHelpOpen(true) },
   };
-  const measureEntries: MenuEntry[] = ['select-measure', 'insert-measure-before', 'insert-measure-after', 'duplicate-measure', 'delete-measure', 'time-signature', 'repeat'];
+  const measureEntries: MenuEntry[] = ['select-measure', 'insert-measure-before', 'insert-measure-after', 'duplicate-measure', 'delete-measure', 'time-signature', 'repeat', 'second-voice'];
   const durationEntries: MenuEntry = { label: 'Duration', items: [...DURATION_COMMANDS, 'dotted', 'split-rest', 'triplet', 'remove-triplet'] };
   const textEntries: MenuEntry = { label: 'Text', items: ['chord', 'section', 'words', 'lyric'] };
   const contextEntries: MenuEntry[] = contextMenu?.scope === 'range' || contextMenu?.scope === 'measure'
@@ -1732,7 +1754,7 @@ export function App() {
               {clipboard && <p className="editor-rhythm-reason">Clipboard: {clipboard.measures.length} measure{clipboard.measures.length === 1 ? '' : 's'} from “{clipboard.title}”.</p>}
             </CommandGroup>
             <CommandGroup className="editor-measure-tools" summary="Measure" commands={commands} ids={['select-measure', 'insert-measure-before', 'insert-measure-after',
-              'duplicate-measure', 'delete-measure', 'time-signature', 'repeat', 'pickup']}>
+              'duplicate-measure', 'delete-measure', 'time-signature', 'repeat', 'pickup', 'second-voice']}>
               {measureCount <= 1 && <p>The last remaining measure cannot be deleted.</p>}
               {selection.measure !== 1 && <p>Pickup length is available only in the first measure.</p>}
             </CommandGroup>

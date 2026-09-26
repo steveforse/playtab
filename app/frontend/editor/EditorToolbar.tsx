@@ -15,7 +15,7 @@ export const RIBBON_GROUPS: ReadonlyArray<{ label: string; items: readonly Ribbo
   { label: 'Menus', items: [
     { menu: 'Note', entries: ['edit-fret', 'insert-beat', 'remove-note', '-', 'split-rest', 'set-tempo'] },
     { menu: 'Techniques', entries: ['tie', 'hammer-on', 'pull-off', 'slide', '-', 'bend', 'grace', '-', 'remove-tie', 'remove-grace'] },
-    { menu: 'Measure', entries: ['select-measure', 'insert-measure-before', 'insert-measure-after', 'duplicate-measure', 'delete-measure', '-', 'time-signature', 'repeat', 'pickup'] },
+    { menu: 'Measure', entries: ['select-measure', 'insert-measure-before', 'insert-measure-after', 'duplicate-measure', 'delete-measure', '-', 'time-signature', 'repeat', 'pickup', 'second-voice'] },
     { menu: 'Text', entries: ['chord', 'section', 'words', 'lyric', '-', 'lyrics-chords'] },
   ] },
   // Short names keep these distinct from the Properties panel's range actions.
