@@ -68,6 +68,8 @@ test('unsupported uploads give an honest message and mobile layout fits', async 
   await page.getByLabel('Choose tablature file').setInputFiles({ name: 'test.pdf', mimeType: 'application/pdf', buffer: Buffer.from('PDF') });
   await expect(page.getByRole('alert')).toContainText('This file is not a PDF.');
   await page.getByRole('button', { name: 'Close import' }).click();
+  // On a phone the score starts below the fold and renders once scrolled to.
+  await page.getByTestId('notation').scrollIntoViewIfNeeded();
   await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'tmp/playtab-mobile.png', fullPage: true });
@@ -96,6 +98,7 @@ test('keeps paginated rows and selection coordinates aligned', async ({ page }) 
 
   const secondPage = page.locator('.score-page').nth(1);
   const secondSystem = secondPage.locator(':scope > div').first();
+  await secondSystem.scrollIntoViewIfNeeded();
   const systemBox = await secondSystem.boundingBox();
   if (!systemBox) throw new Error('Second-page system is not visible.');
   await page.mouse.move(systemBox.x + 100, systemBox.y + 45);

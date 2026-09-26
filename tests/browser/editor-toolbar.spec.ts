@@ -36,6 +36,7 @@ test('UI-02 the editing toolbar reflects the selection and runs the shared comma
 test('UI-02 the ribbon scrolls sideways on a phone without widening the page', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
+  await page.getByTestId('notation').scrollIntoViewIfNeeded();
   await expect(page.getByTestId('notation').locator('svg').first()).toBeVisible({ timeout: 45000 });
   await page.getByRole('button', { name: 'Edit score' }).click();
   const toolbar = page.getByRole('toolbar', { name: 'Editing toolbar' });

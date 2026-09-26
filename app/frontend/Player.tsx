@@ -581,6 +581,19 @@ export function createHorizontalPageScrollHandler(root: HTMLElement, viewport: H
   return handler;
 }
 
+// alphaTab scrolls to its cursor after every render (so after every edit)
+// and when playback pauses. Follow the music only while it plays; otherwise
+// the page stays where the reader put it.
+export function playbackOnlyScrollHandler(api: AlphaTabApi, custom: AlphaTabApi['customScrollHandler'] | null, playing: () => boolean) {
+  const inner = () => custom ?? (api as unknown as { _defaultScrollHandler?: NonNullable<AlphaTabApi['customScrollHandler']> })._defaultScrollHandler;
+  const handler: NonNullable<AlphaTabApi['customScrollHandler']> = {
+    [Symbol.dispose]: () => {},
+    forceScrollTo: beatBounds => { if (playing()) inner()?.forceScrollTo(beatBounds); },
+    onBeatCursorUpdating: (...args) => { if (playing()) inner()?.onBeatCursorUpdating(...args); },
+  };
+  return handler;
+}
+
 export function download(text: string, filename: string, type = 'text/plain') {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const anchor = document.createElement('a');
@@ -650,6 +663,7 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   const updatingScoreRef = useRef(false);
   const renderResultRef = useRef(onRenderResult);
   renderResultRef.current = onRenderResult;
+  const playerActive = useRef(false);
   const contextMenuRef = useRef(onContextMenu);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
@@ -798,13 +812,14 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
         mapPaginatedSelection(element.current!, event.highlightBlocks ?? []);
       });
     }
-    if (scoreView !== 'continuous' && scrollDirection === 'horizontal') instance.customScrollHandler = createHorizontalPageScrollHandler(element.current!, scoreViewport.current!);
+    const pageScroll = scoreView !== 'continuous' && scrollDirection === 'horizontal' ? createHorizontalPageScrollHandler(element.current!, scoreViewport.current!) : null;
+    instance.customScrollHandler = playbackOnlyScrollHandler(instance, pageScroll, () => playerActive.current);
     instance.playbackSpeed = speed;
     instance.masterVolume = volume;
     instance.isLooping = loop;
     instance.metronomeVolume = metronome ? 0.6 : 0;
     instance.playerReady.on(() => setReady(true));
-    instance.playerStateChanged.on(event => setPlaying(event.state === 1));
+    instance.playerStateChanged.on(event => { playerActive.current = event.state === 1; setPlaying(event.state === 1); });
     instance.playerPositionChanged.on(event => setPosition({ currentTime: event.currentTime, endTime: event.endTime }));
     instance.renderFinished.on(() => {
       renderResultRef.current?.({ ok: true });
@@ -856,8 +871,9 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
     const instance = api.current;
     const previous = renderedDocument.current;
     if (!instance || (previous?.score === score && previous.preview === currentPreview)) return;
-    instance.pause();
-    instance.stop();
+    // alphaTab scrolls to its cursor whenever playback pauses, so an edit
+    // only stops playback that is actually running; stopping never scrolls.
+    if (instance.playerState === 1) instance.stop();
     setPlaying(false);
     setUpdatingScore(true);
     setPlaybackMessage('Score updated. Press Play to listen.');
@@ -873,6 +889,19 @@ export function Player({ score, preview, preferences, onPreferencesChange, editi
   useEffect(() => {
     if (api.current) api.current.settings.player.enableUserInteraction = !editing;
   }, [editing]);
+  useEffect(() => {
+    // Playback scrolls the current system to the top of the window; in the
+    // edit workspace that top is covered by the sticky title bar and ribbon.
+    const instance = api.current;
+    if (!instance) return;
+    const chrome = editing ? document.querySelector<HTMLElement>('.edit-chrome') : null;
+    const update = () => { instance.settings.player.scrollOffsetY = chrome ? -Math.ceil(chrome.getBoundingClientRect().height + 12) : 0; };
+    update();
+    if (!chrome || typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(update);
+    observer.observe(chrome);
+    return () => observer.disconnect();
+  });
 
   // Draws a range as one band per system row spanning the staff height,
   // like alphaTab's playback highlight, and outlines its first and last events.

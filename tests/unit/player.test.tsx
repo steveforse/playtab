@@ -176,6 +176,7 @@ describe('notation player', () => {
     act(() => api.playerReady.emit());
     fireEvent.click(screen.getByRole('button', { name: 'Play selection' }));
     expect(api.player.loadMidiFile).toHaveBeenCalledOnce();
+    (api as any).playerState = 1;
     rerender(<Player score={{ ...demo, title: 'Edited' }} editing selection={selection} />);
     expect(api.stop).toHaveBeenCalled();
     act(() => api.renderFinished.emit());
