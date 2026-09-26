@@ -19,7 +19,7 @@ module Tef2
     DEFAULT_DYNAMIC = 2
     DEFAULT_INSTRUMENT = { midi_voice: 105, midi_bank: 0, capo: 0, banjo5: 0, clef: 0, middle_c: 0 }.freeze
     # TEF metadata written by the importer that export reads back.
-    CONSUMED_METADATA = /\ATEF (?:fingering .+|effect[23] \d+|dynamic \d+|stroke \d+|grace effect \d+|let ring|slap|fade (?:in|out))\z/
+    CONSUMED_METADATA = /\ATEF (?:fingering .+|effect[23] \d+|dynamic \d+|stroke \d+|grace effect \d+|let ring|slap|fade (?:in|out)|brush|muted)\z/
 
     def self.chord_values(chord)
       values = chord[:strings].to_a.first(5)
@@ -389,6 +389,7 @@ module Tef2
         thumb = technical&.xpath("./other-technical").any? do |node|
           [ "TEF fingering T", "TEF fingering code 6" ].include?(node.text.strip)
         end
+        right_hand = technical&.xpath("./other-technical")&.filter_map { |node| node.text.strip[/\ATEF fingering ([IMAC])\z/, 1] }&.first
         technique = element.xpath("./notations/technical/*[self::hammer-on or self::pull-off or self::slide or self::bend]").find do |node|
           node["type"] != "stop"
         end
@@ -400,7 +401,9 @@ module Tef2
         when "bend" then technique.at_xpath("./bend-alter")&.text.to_f == 0.5 ? 4 : (technique.at_xpath("./release") ? 13 : 12)
         else primary_effect(element, effect3)
         end
-        effect2 = metadata_value(technical, "effect2") || secondary_effect(element, technical)
+        # A TEF3 import writes every secondary effect as metadata, so a note
+        # with a raw combination effect but no secondary one had none.
+        effect2 = metadata_value(technical, "effect2") || (effect3.positive? ? 0 : secondary_effect(element, technical))
         annotation = if thumb
           6
         elsif fingering.to_i.between?(1, 4)
@@ -419,6 +422,8 @@ module Tef2
           stroke: metadata_value(technical, "stroke").to_i & 0x07,
           annotation: annotation,
           fingering: thumb ? "T" : fingering.to_i.between?(1, 4) ? fingering.to_i : nil,
+          left_finger: (fingering.to_i if fingering.to_i.between?(1, 4)),
+          right_hand: thumb ? "T" : right_hand,
           tie: element.xpath("./notations/tied[@type='start' or @type='continue']").any?,
           tuplet: element.at_xpath("./time-modification") != nil
         }
@@ -430,12 +435,15 @@ module Tef2
       # also a primary effect.
       def self.primary_effect(element, effect3)
         technical = element.at_xpath("./notations/technical")
-        if technical&.at_xpath("./harmonic/natural") && effect3 != 6 then 6
+        labels = technical ? technical.xpath("./other-technical").map { |node| node.text.strip } : []
+        if labels.include?("TEF brush") then 5
+        elsif labels.include?("TEF muted") then 8
+        elsif technical&.at_xpath("./harmonic/natural") && effect3 != 6 then 6
         elsif technical&.at_xpath("./harmonic/artificial") && effect3 != 7 then 7
         elsif technical&.at_xpath("./tap") then 9
         elsif element.at_xpath("./notations/ornaments/wavy-line") then 10
         elsif element.at_xpath("./notations/ornaments/tremolo") then 11
-        elsif element.at_xpath("./notations/arpeggiate") && effect3 != 3 then 14
+        elsif element.at_xpath("./notations/arpeggiate") && ![ 3, 5 ].include?(effect3) && metadata_value(technical, "effect2") != 3 then 14
         elsif element.at_xpath("./notehead")&.text == "x" && effect3 != 10 then 15
         else 0
         end
@@ -876,7 +884,11 @@ module Tef2
         else
           Binary.duration_code(note[:duration], DURATION_CODES)
         end
-        fingering = note[:fingering] == "T" ? 6 : note[:fingering].to_i.between?(1, 4) ? note[:fingering].to_i + 1 : 0
+        # Right hand * 6 + left hand (left hand 2-5 = fingers 1-4).
+        left = note.key?(:left_finger) ? note[:left_finger] : (note[:fingering] if note[:fingering].is_a?(Integer))
+        right = TableditV3Parser::RIGHT_HAND.index(note.key?(:right_hand) ? note[:right_hand] : ("T" if note[:fingering] == "T")).to_i
+        fingering = right * 6 + (left.to_i.between?(1, 4) ? left.to_i + 1 : 0)
+        fingering = right * 6 if fingering > 0x1F
         dynamic = tied_from_previous ? 7 : [ note.fetch(:dynamic, DEFAULT_DYNAMIC).to_i, 6 ].min
         grace = note[:grace] ? ((note[:grace_effect].to_i & 0x07) << 5) | (note[:grace_fret].to_i & 0x1F) : 0
         effects = (note[:effect2].to_i & 0x0F) | ((note[:effect3].to_i & 0x0F) << 4)

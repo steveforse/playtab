@@ -137,12 +137,16 @@ class Tef2ExporterTest < ActiveSupport::TestCase
       { string: 2, fret: 0, effect1: 6, effect3: 12 },
       { string: 3, fret: 5, effect2: 7, grace: true, grace_fret: 3, grace_effect: 2 },
       { string: 4, fret: 7, dynamic: 0 },
-      { string: 0, fret: 4, effect1: 11, fingering: "T" }
+      { string: 0, fret: 4, effect1: 11, fingering: "T" },
+      { string: 1, fret: 5, effect1: 5, left_finger: 2, right_hand: "I" },
+      { string: 2, fret: 1, effect1: 8, effect3: 9 },
+      { string: 3, fret: 2, effect3: 5, right_hand: "M" },
+      { string: 1, fret: 6, effect2: 3, left_finger: 4, right_hand: "T" }
     ].each_with_index.map do |note, index|
-      { measure: 0, position: index * 128, duration: 128, effect1: 0, effect2: 0, effect3: 0, dynamic: 2, stroke: 0, tie: false, grace: false }.merge(note)
+      { measure: index / 8, position: (index % 8) * 128, duration: 128, effect1: 0, effect2: 0, effect3: 0, dynamic: 2, stroke: 0, tie: false, grace: false }.merge(note)
     end
     source = Tef2::Exporter::Model.new(
-      title: "Fields", tempo: 100, tuning: [ 62, 59, 55, 50, 67 ], measures: [ { numerator: 4, denominator: 4 } ],
+      title: "Fields", tempo: 100, tuning: [ 62, 59, 55, 50, 67 ], measures: Array.new(2) { { numerator: 4, denominator: 4 } },
       notes: notes, texts: [], chords: [], lyrics: nil, warnings: [],
       instrument: { midi_voice: 25, midi_bank: 1, capo: 2, banjo5: 18, clef: 1, middle_c: 3 }
     )
@@ -152,12 +156,19 @@ class Tef2ExporterTest < ActiveSupport::TestCase
 
     result = Tef2::Exporter.export({ "version" => 2, "title" => "Fields", "source" => imported[:musicxml] }, version: "tef3")
     exported = Tef2::TableditV3Parser.parse(result[:bytes])
-    fields = %i[string fret dynamic stroke effect1 effect2 effect3 grace grace_note_fret grace_note_effect fingerings tie]
+    fields = %i[string fret dynamic stroke effect1 effect2 effect3 grace grace_note_fret grace_note_effect fingering_combo fingerings tie]
     assert_equal original[:notes].map { |note| note.slice(*fields) }, exported[:notes].map { |note| note.slice(*fields) }
     instrument = %i[midi_voice midi_bank capo banjo5 clef middle_c output]
     assert_equal original[:track_data].first.slice(*instrument), exported[:track_data].first.slice(*instrument)
     assert_equal({ midi_voice: 25, midi_bank: 1, capo: 2, banjo5: 18, clef: 1, middle_c: 3, output: 0x0710 }, exported[:track_data].first.slice(*instrument))
     assert_equal [ 5, 6, 4 ], original[:notes].first.values_at(:dynamic, :stroke, :effect2)
+    assert_equal [ [ 2, "I" ], [ "M" ], [ 4, "T" ] ], original[:notes].last(4).map { |note| note[:fingerings] }.values_at(0, 2, 3)
+    document = Nokogiri::XML(imported[:musicxml])
+    tab = document.xpath("//note[staff='2' and not(grace)]")
+    assert_equal [ 6, 7, 8, 9 ].map { |index| tab[index].at_xpath("./notations/arpeggiate") ? 1 : 0 }, [ 1, 0, 1, 1 ]
+    assert_equal "yes", tab[7].at_xpath("./notehead")["parentheses"], "a combination ghost note"
+    assert_includes tab[7].xpath(".//other-technical").map(&:text), "TEF muted"
+    assert_equal [ "TEF brush", "TEF fingering I" ], tab[6].xpath(".//other-technical").map(&:text) & [ "TEF brush", "TEF fingering I" ]
     refute original[:notes].first[:tie], "a dynamic above 3 is not a tie"
     refute_includes result[:warnings], "Some MusicXML techniques are not represented in the selected TEF export."
     assert_empty exported[:texts]

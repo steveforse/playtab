@@ -51,7 +51,7 @@ export function extractTechniques(source: string) {
         if (tag.localName === 'other-technical') {
           const unresolved = tag.textContent?.match(/(?:Unresolved TEF fingering annotation code|TEF fingering code)\s+(\d+)/i);
           const thumb = tag.textContent?.match(/TEF fingering\s+T(?:humb)?$/i);
-          const rightHand = tag.textContent?.match(/TEF fingering\s+([IMP])$/i);
+          const rightHand = tag.textContent?.match(/TEF fingering\s+([IMPAC])$/i);
           const pdfRightHand = tag.textContent?.match(/TEF right-hand fingering\s+([mpt])$/i);
           const pdfStrum = tag.textContent?.match(/TEF strum\s+(up|down)$/i);
           const rake = tag.textContent?.match(/TEF rake/i);

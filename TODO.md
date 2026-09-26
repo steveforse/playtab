@@ -126,6 +126,14 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Double-check the staccato rendering at `full_musicxml_builder.rb:517`, which reuses the hammer-on/pull-off pairing logic — confirm this isn't conflating two distinct effect codes before building on top of it.
   - Each effect needs: parse, MusicXML technique rendering, and TEF3 export — don't repeat the import/export asymmetry from item 12.
   - Reference: MuseScore's TablEdit importer reads byte 7's low five bits as right hand × 6 + left hand (left hand 1 = open, 2–5 = fingers 1–4; right hand 1 = thumb, then index, middle…). Playtab decodes only the single values 2–6. The private corpus uses nothing else.
+  - Status (2026-09-26), following MuseScore's TablEdit effect table (`note.cpp`):
+    - The primary effect (byte 3 low nibble) is 1–15: hammer-on, pull-off, slide, choke, brush, natural and artificial harmonic, muted, tapping, vibrato, tremolo, bend, bend-release, roll, dead note.
+    - The secondary effect (byte 5 low nibble) is 1–9: let ring, slap, rasgueado, ghost, tremolo bar up/down and dive/return, staccato, fade in, fade out.
+    - The combination effect (byte 5 high nibble) is hammer-on, pull-off, roll, brush, harmonics, let ring, ghost, variation. So `effect1`/`effect2`/`effect3` already separate primary, secondary and combination.
+    - Import now also draws brush, combination brush and rasgueado as a strum, muted as an x notehead, and combination ghost in parentheses. It stops drawing combination value 10 as a dead note (not in MuseScore's table). Brush and muted carry `TEF brush`/`TEF muted` so TEF3 export writes the primary effect back; the raw secondary and combination values already round-trip (item 12).
+    - Both hands' fingerings (right hand × 6 + left hand) now decode, render (`TEF fingering I/M/A/C`) and export.
+    - Staccato (secondary 7) has its own code path, separate from the legato pairing.
+  - Remaining, **blocked on sample files**: the per-effect numbers (roll speed, vibrato frequency/amplitude, tremolo subdivision, choke amount, staccato reduction) are not in the 8-byte note record, and MuseScore does not read them. The note record has only the three bend codes (choke 4, bend 12, bend-release 13). Needs TablEdit files that vary one parameter at a time.
 
 - [ ] **18. Finish second-voice-per-string support** — `feature/second-voice-support`
   - `voice` is already parsed (`parser.rb:247`) and rendered in MusicXML (`full_musicxml_builder.rb:419,459`), making this the most complete of the unfinished features — but `TableditWriter.note_record` has no voice field at all, and item 11's audit should confirm whether the editor UI supports it.
