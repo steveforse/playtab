@@ -564,7 +564,7 @@ module Tef2
     def self.write_note_notations(xml, note, pair, slide, tie, technique_number, tab:, annotations: {}, capo: 0)
       xml.notations do
         xml.tied(type: tie[:is_start] ? "start" : "stop", number: tie[:number]) if tie
-        if note[:effect1].to_i == 14 || note[:effect2].to_i >> 4 == 3 || note[:effect3].to_i == 3
+        if note[:effect1].to_i == 14 || note[:effect2].to_i >> 4 == 3 || note[:effect3].to_i == 3 || tef3_strum?(note)
           xml.arpeggiate(direction: "down")
         end
         if note[:effect1].to_i == 10
@@ -612,12 +612,22 @@ module Tef2
       end
     end
 
+    # TablEdit 3 effects follow MuseScore's TablEdit importer: a ghost note
+    # is secondary effect 4 or combination effect 9, and a muted note
+    # (primary 8) is drawn like a dead note (primary 15).
     def self.write_notehead(xml, note)
-      if note[:effect2].to_i & 0x0F == 4
+      modern = note[:modern_tabledit]
+      if note[:effect2].to_i & 0x0F == 4 || (modern && note[:effect3].to_i == 9)
         xml.notehead(parentheses: "yes") { xml.text "normal" }
-      elsif note[:effect1].to_i == 15 || note[:effect3].to_i == 10
+      elsif note[:effect1].to_i == 15 || (modern ? note[:effect1].to_i == 8 : note[:effect3].to_i == 10)
         xml.notehead { xml.text "x" }
       end
+    end
+
+    # A TablEdit 3 brush (primary 5 or combination 5) or rasgueado
+    # (secondary 3), drawn as a strum like a roll.
+    def self.tef3_strum?(note)
+      note[:modern_tabledit] && (note[:effect1].to_i == 5 || note[:effect3].to_i == 5 || note[:effect2].to_i == 3)
     end
 
     def self.write_effect_technical(xml, note, tab: false)
@@ -644,6 +654,10 @@ module Tef2
       low = effect2 & 0x0F
       high = (effect2 >> 4) & 0x0F
       metadata = []
+      # Primary effects that share a rendering with another, so export can
+      # tell them apart.
+      metadata << "TEF brush" if note[:modern_tabledit] && effect1 == 5
+      metadata << "TEF muted" if note[:modern_tabledit] && effect1 == 8
       metadata << "TEF let ring" if low == 1 || high == 8 || effect3 == 8
       metadata << "TEF slap" if low == 2
       metadata << "TEF fade in" if low == 8
@@ -711,8 +725,8 @@ module Tef2
       return if fingerings.empty?
 
       fingerings.each do |fingering|
-        if fingering == "T"
-          xml.send("other-technical", "TEF fingering T")
+        if fingering.is_a?(String)
+          xml.send("other-technical", "TEF fingering #{fingering}")
         else
           xml.fingering(enclosure: "circle") { xml.text fingering }
         end

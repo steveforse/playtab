@@ -310,16 +310,17 @@ module Tef2
       [ index, absolute_units - starts[index] ]
     end
 
-    # TablEdit's TEF3 files use the low values as the displayed fretting-hand
-    # fingers: 2=1, 3=2, 4=3, and 5=4. Value 6 is the thumb marker. This is
-    # the mapping confirmed by the original TefView rendering; TuxGuitar's
-    # older enum shifts the first four values by one.
+    RIGHT_HAND = [ nil, "T", "I", "M", "A", "C" ].freeze
+
+    # Byte 7's low five bits combine both hands as right hand * 6 + left
+    # hand, as MuseScore's TablEdit importer reads them. Left hand 2-5 are
+    # fingers 1-4 (the mapping confirmed by the original TefView rendering;
+    # 1 is an open-string 0, which Playtab does not show). Right hand 1-5
+    # are thumb, index, middle, ring and little finger, so 6 alone is the
+    # thumb marker.
     def self.modern_fingerings(combo)
-      case combo
-      when 2..5 then [ combo - 1 ]
-      when 6 then [ "T" ]
-      else []
-      end
+      left = combo % 6
+      [ (left - 1 if left >= 2), RIGHT_HAND[combo / 6] ].compact
     end
 
     # Moves each "tied from the previous note" flag to that previous note
