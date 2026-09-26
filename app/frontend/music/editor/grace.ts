@@ -5,6 +5,7 @@ import { linkedStaffNotes } from './records';
 import { rhythmLanes, type RhythmPosition } from './time';
 import { attachedDependencies, protectedNoteAttachment, repairAndDeleteNotes, type RemovalPosition } from './notes';
 import { TRANSITION_LABELS, addTransitionMarker, transitionMarkersOf, type GraceTransition } from './techniques';
+import { openTabTuning } from './tuning';
 
 export type GraceRemoval = { source: string; dependencies: string[]; groupRemoved: boolean };
 
@@ -209,7 +210,7 @@ export function applyMusicXmlGraceGroup(source: string, score: model.Score, posi
   const { document, part, measure, tabStaff, lanes, first, destination } = located;
   const current = readGraceEvents(located);
   if (current.readOnly.length) throw new Error(`This grace group is read-only: ${current.readOnly[0]}`);
-  const tuning = score.tracks[0].staves[0].tuning;
+  const tuning = openTabTuning(score);
   const linked = linkedStaffNotes(document);
   const destinationTab = lanes[0].groups[destination];
   const pairedTechnical = lanes.map(lane => lane.staff !== tabStaff

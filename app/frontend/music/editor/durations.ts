@@ -5,6 +5,7 @@ import { child, children, descendants, directMeasures, ensure, parseDocument, re
 import { sourceBeatGroups } from './records';
 import { addTime, eventTime, makeRest, rescaleDivisions, rhythmLanes, simpleRest, sourceDivisions, subtractTime, timingBoundary, type RhythmPosition, writeDuration } from './time';
 import { protectedNoteAttachment, replaceRestWithNote } from './notes';
+import { openTabTuning } from './tuning';
 
 export type MusicXmlDurationInfo = { denominator: DurationDenominator | null; dots: number; rest: boolean; reason?: string };
 
@@ -189,7 +190,7 @@ export function insertMusicXmlEvent(source: string, score: model.Score, options:
       if (!cursor) throw new Error('The source voice cannot be shifted safely.');
     }
   }
-  const midi = kind === 'note' ? score.tracks[0].staves[0].tuning[options.string! - 1] + options.fret! : null;
+  const midi = kind === 'note' ? openTabTuning(score)[options.string! - 1] + options.fret! : null;
   if (kind === 'note' && !Number.isInteger(midi)) throw new Error('The selected string has no valid source tuning.');
   const gcd = (a: bigint, b: bigint): bigint => b ? gcd(b, a % b) : a;
   const lcm = (a: bigint, b: bigint) => a / gcd(a, b) * b;

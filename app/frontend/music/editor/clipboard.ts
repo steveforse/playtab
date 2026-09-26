@@ -6,6 +6,7 @@ import { measureTimeline, setMeasureDivisions, sourceDivisions } from './time';
 import { attachedDependencies, protectedNoteAttachment } from './notes';
 import { effectiveAttributes, spanMarkerKey } from './measures';
 import { tabTuningDetails, type TuningMode } from './settings';
+import { openTabTuning } from './tuning';
 
 // An in-memory copy of whole measures. It carries its own timing and
 // tuning so it can be pasted into another open song during the session.
@@ -107,7 +108,7 @@ export function copyMusicXmlMeasures(source: string, score: model.Score, first: 
     title, tabStaff, staves: staffNumbers(originals),
     measures: copies.map(copy => new XMLSerializer().serializeToString(copy)),
     meters: originals.map((_, index) => `${score.masterBars[first + index].timeSignatureNumerator}/${score.masterBars[first + index].timeSignatureDenominator}`),
-    tuning: effectiveTabTuning(measures, first, tabStaff, [...(score.tracks?.[0]?.staves?.[0]?.tuning ?? [])]),
+    tuning: effectiveTabTuning(measures, first, tabStaff, openTabTuning(score)),
     excluded: [...excluded],
   };
 }
@@ -145,7 +146,7 @@ export function pasteMusicXmlMeasures(source: string, score: model.Score, clipbo
   if (measureIndex > 0 && split.length) {
     throw new Error(`Pasting before measure ${measureIndex + 1} would split ${split.join(' and ').replaceAll('crosses the passage edge', 'continues into that measure')}. Remove it first or paste elsewhere.`);
   }
-  const destinationTuning = effectiveTabTuning(measures, Math.max(0, measureIndex - 1), tabStaff, [...(score.tracks?.[0]?.staves?.[0]?.tuning ?? [])]);
+  const destinationTuning = effectiveTabTuning(measures, Math.max(0, measureIndex - 1), tabStaff, openTabTuning(score));
   const restoreAttributes = effectiveAttributes(measures, measureIndex);
   const pasted = clipboard.measures.map(xml => document.importNode(parseMeasure(xml), true) as Element);
   if (measureIndex === 0) {
@@ -247,7 +248,7 @@ export function replaceMusicXmlMeasures(source: string, score: model.Score, clip
     if (meter !== destination) throw new Error(`Copied measure ${index + 1} is in ${meter}, but measure ${first + index + 1} is in ${destination}. Replace needs matching meters.`);
   });
   rangeGuard(measures, first, last, 'Replacing these measures');
-  const destinationTuning = effectiveTabTuning(measures, first, tabStaff, [...(score.tracks?.[0]?.staves?.[0]?.tuning ?? [])]);
+  const destinationTuning = effectiveTabTuning(measures, first, tabStaff, openTabTuning(score));
   let clipDivisions: bigint | null = null;
   const replaced: Element[] = [];
   clipboard.measures.forEach((xml, index) => {

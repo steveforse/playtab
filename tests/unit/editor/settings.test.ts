@@ -27,7 +27,8 @@ describe('ED-19 score settings and local tempo', () => {
     .map(note => `${note.getElementsByTagName('step')[0].textContent}${note.getElementsByTagName('alter')[0]?.textContent === '1' ? '#' : ''}${note.getElementsByTagName('octave')[0].textContent}`);
 
   it('reads the current settings and changes only the title and opening tempo when asked', () => {
-    expect(inspectMusicXmlScoreSettings(rich, score())).toEqual({ ...base, mode: undefined, tuningRange: { first: 1, last: 1 } });
+    expect(inspectMusicXmlScoreSettings(rich, score())).toEqual({ ...base, mode: undefined, tuningRange: { first: 1, last: 1 },
+      capo: 0, fifthCapo: null, subtitle: '', composer: '', arranger: '', keyFifths: expect.any(Number), feel: 'straight' });
     expect(applyMusicXmlScoreSettings(rich, score(), base).source).toBe(new XMLSerializer().serializeToString(new DOMParser().parseFromString(rich, 'application/xml')));
     const titled = applyMusicXmlScoreSettings(rich, score(), { ...base, title: '  Wellerman practice ' }).source;
     expect(readMusicXml(titled, 'rich.musicxml').score.title.replaceAll('\u00a0', ' ')).toBe('Wellerman practice');
@@ -43,10 +44,68 @@ describe('ED-19 score settings and local tempo', () => {
     expect(readMusicXml(opened, 'tie.musicxml').score.tempo).toBe(72);
   });
 
+  it('writes credits, key, feel and a capo with a linked or separate 5th-string capo', () => {
+    const credited = applyMusicXmlScoreSettings(rich, score(), { ...base, subtitle: 'Sea shanty', composer: 'Traditional', arranger: ' Playtab ', keyFifths: 2, feel: 'swing' }).source;
+    const info = inspectMusicXmlScoreSettings(credited, score(credited));
+    expect(info).toMatchObject({ subtitle: 'Sea shanty', composer: 'Traditional', arranger: 'Playtab', keyFifths: 2, feel: 'swing' });
+    const imported = readMusicXml(credited, 'rich.musicxml').score;
+    expect(imported.subTitle.replaceAll('\u00a0', ' ')).toBe('Sea shanty');
+    expect(imported.artist).toBe('Traditional');
+    expect(imported.music).toBe('Playtab');
+    expect(imported.masterBars.every(bar => bar.tripletFeel === 2)).toBe(true);
+    expect(imported.masterBars[0].keySignature).toBe(2);
+    const cleared = applyMusicXmlScoreSettings(credited, score(credited), { ...base, subtitle: '', composer: '', arranger: '', feel: 'straight' }).source;
+    expect(inspectMusicXmlScoreSettings(cleared, score(cleared))).toMatchObject({ subtitle: '', composer: '', arranger: '', feel: 'straight' });
+    expect(cleared).not.toContain('<creator');
+    expect(cleared).not.toContain('<swing>');
+    const dotted = applyMusicXmlScoreSettings(rich, score(), { ...base, feel: 'dotted' }).source;
+    expect(inspectMusicXmlScoreSettings(dotted, score(dotted)).feel).toBe('dotted');
+
+    const capoed = applyMusicXmlScoreSettings(rich, score(), { ...base, capo: 2 }).source;
+    expect(capoed).toContain('<capo>2</capo>');
+    expect(capoed).not.toContain('playtab-fifth-string-capo');
+    expect(inspectMusicXmlScoreSettings(capoed, score(capoed))).toMatchObject({ capo: 2, fifthCapo: 7 });
+    const capoScore = readMusicXml(capoed, 'rich.musicxml').score;
+    const plain = score();
+    const first = (model: typeof plain) => model.tracks[0].staves[0].bars[0].voices.flatMap(voice => voice.beats).find(beat => beat.notes.length)!.notes[0];
+    expect(first(capoScore).realValue - first(plain).realValue).toBe(2);
+    expect(tabFrets(capoed)).toEqual(tabFrets(rich));
+    const spiked = applyMusicXmlScoreSettings(capoed, capoScore, { ...base, capo: 2, fifthCapo: 9 }).source;
+    expect(spiked).toContain('<miscellaneous-field name="playtab-fifth-string-capo">9</miscellaneous-field>');
+    const spikedScore = readMusicXml(spiked, 'rich.musicxml').score;
+    expect(spikedScore.tracks[0].staves[0].tuning[4] - capoScore.tracks[0].staves[0].tuning[4]).toBe(2);
+    expect(inspectMusicXmlScoreSettings(spiked, spikedScore)).toMatchObject({ capo: 2, fifthCapo: 9, tuning: [62, 59, 55, 50, 67] });
+    const unspiked = applyMusicXmlScoreSettings(spiked, spikedScore, { ...base, capo: 2, fifthCapo: null }).source;
+    expect(unspiked).toContain('>none</miscellaneous-field>');
+    expect(readMusicXml(unspiked, 'rich.musicxml').score.tracks[0].staves[0].tuning[4] - capoScore.tracks[0].staves[0].tuning[4]).toBe(-2);
+    // Moving the capo alone brings the spike back to capo + 5.
+    const moved = applyMusicXmlScoreSettings(unspiked, readMusicXml(unspiked, 'rich.musicxml').score, { ...base, capo: 4 }).source;
+    expect(inspectMusicXmlScoreSettings(moved, score(moved))).toMatchObject({ capo: 4, fifthCapo: 9 });
+    expect(moved).not.toContain('playtab-fifth-string-capo');
+    const removed = applyMusicXmlScoreSettings(moved, score(moved), { ...base, capo: 0 }).source;
+    expect(removed).not.toContain('<capo>');
+    expect(inspectMusicXmlScoreSettings(removed, score(removed))).toMatchObject({ capo: 0, fifthCapo: null });
+
+    // A text-only "Capo 3" from an import reads as the capo and becomes a real one on apply.
+    const legacy = rich.replace(/(<measure number="1"[^>]*>)/, '$1<direction placement="above"><direction-type><words>Capo 3</words></direction-type><staff>1</staff></direction>');
+    expect(inspectMusicXmlScoreSettings(legacy, score(legacy))).toMatchObject({ capo: 3, fifthCapo: 8 });
+    const converted = applyMusicXmlScoreSettings(legacy, score(legacy), { ...base, capo: 3 }).source;
+    expect(converted).toContain('<capo>3</capo>');
+    expect(converted).not.toContain('Capo 3');
+  });
+
+  it('rejects invalid capo, key and credit values', () => {
+    for (const [change, message] of [[{ capo: 13 }, 'Capo must be a fret from 0 to 12'], [{ capo: 1.5 }, 'Capo must be a fret'],
+      [{ fifthCapo: 5 }, '5th-string capo must be at a fret from 6 to 17'], [{ keyFifths: 8 }, 'Choose a key signature'],
+      [{ composer: 'x'.repeat(161) }, 'Composer must be at most 160 characters']] as const) {
+      expect(() => applyMusicXmlScoreSettings(rich, score(), { ...base, ...change } as typeof base)).toThrow(message);
+    }
+  });
+
   it('rejects invalid settings before any change', () => {
     for (const [change, message] of [[{ title: ' ' }, 'Title must be 1–160'], [{ title: 'x'.repeat(161) }, 'Title must be 1–160'],
-      [{ tempo: 29 }, 'from 30 to 240 BPM'], [{ tempo: 120.5 }, 'from 30 to 240 BPM'], [{ tuning: [62, 59, 55, 50] }, 'MIDI pitch from 36 to 96'],
-      [{ tuning: [62, 59, 55, 50, 97] }, 'MIDI pitch from 36 to 96'], [{ mode: 'strings' }, 'Keep frets or Keep pitches']] as const) {
+      [{ tempo: 29 }, 'from 30 to 240 BPM'], [{ tempo: 120.5 }, 'from 30 to 240 BPM'], [{ tuning: [62, 59, 55, 50] }, 'a note from C2 to C7'],
+      [{ tuning: [62, 59, 55, 50, 97] }, 'a note from C2 to C7'], [{ mode: 'strings' }, 'Keep frets or Keep pitches']] as const) {
       expect(() => applyMusicXmlScoreSettings(rich, score(), { ...base, ...change } as typeof base)).toThrow(message);
     }
   });

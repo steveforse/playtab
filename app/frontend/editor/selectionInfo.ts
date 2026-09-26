@@ -18,7 +18,9 @@ export function inspectSelection(selection: ScoreSelection | null, preview: Musi
   const selectedDetails = (() => {
     if (!selection) return null;
     const gcd = (left: number, right: number): number => right ? gcd(right, left % right) : left;
-    let numerator = 0; let denominator = 1; let pitch: number | null = null; const tuning = preview ? preview.score.tracks?.[0]?.staves?.[0]?.tuning ?? [] : score.tuning;
+    let numerator = 0; let denominator = 1; let pitch: number | null = null; const staff = preview?.score.tracks?.[0]?.staves?.[0];
+    // Sounding open strings: pitches below come from sounding note values.
+    const tuning = preview ? (staff?.tuning ?? []).map(value => value + (staff?.capo ?? 0)) : score.tuning;
     if (preview) {
       const beat = selectedBeats?.[selection.event - 1];
       if (!beat) return null;
