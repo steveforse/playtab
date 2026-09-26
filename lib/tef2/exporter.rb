@@ -36,6 +36,9 @@ module Tef2
       else raise Invalid, "Unsupported TEF export version."
       end
       warnings = model.warnings.dup
+      if version.to_s == TEF2 && model.reading_list.any?
+        warnings << "TEF2 export writes the measures in written order; repeats, endings and jumps are not represented."
+      end
       if version.to_s == TEF2 && model.notes.any? { |note| note[:annotation] && ![ 2, 4 ].include?(note[:annotation]) }
         warnings << "TEF2 can encode only the imported 1 and 3 fingering markers; other fingering and thumb markers remain unresolved metadata."
       end
@@ -45,7 +48,7 @@ module Tef2
     end
 
     class Model
-      attr_reader :title, :tempo, :tuning, :measures, :notes, :texts, :chords, :lyrics, :warnings, :instrument
+      attr_reader :title, :tempo, :tuning, :measures, :notes, :texts, :chords, :lyrics, :warnings, :instrument, :reading_list
 
       def self.from(document)
         unless document.is_a?(Hash)
@@ -144,6 +147,8 @@ module Tef2
             text = words.text.strip
             # A legacy "Capo N" direction is the capo itself, not a text.
             next if measure_index.zero? && capo.positive? && text.match?(/\ACapo \d+\z/i)
+            # D.C., D.S., To Coda and Fine are playback marks, not texts.
+            next if words.parent.parent.at_xpath("./sound[@dacapo or @dalsegno or @tocoda or @fine or @segno or @coda]")
             position = xml_ticks(words.parent.parent.at_xpath("./offset")&.text.to_i, divisions)
             string = metadata_string(words.parent.parent["data-playtab-string"])
             key = [ measure_index, position, text, string ]
@@ -232,6 +237,11 @@ module Tef2
         tempo ||= 120
         warnings.concat(loss_warnings(xml, target_staff, notes, measures))
         warnings << "Some grace notes are not represented: TablEdit keeps one grace note before a note on the same string." if lost_graces.positive?
+        reading_list = ReadingList.sequences(ReadingList.playback_order(reading_bars(measure_nodes)))
+        if reading_list.length > ReadingList::MAX_SEQUENCES
+          warnings << "The playing order needs more than #{ReadingList::MAX_SEQUENCES} reading-list ranges; the TEF plays in written order."
+          reading_list = []
+        end
         fifth_capo = xml.at_xpath("//miscellaneous-field[@name='playtab-fifth-string-capo']")&.text.to_i
         warnings << "The 5th-string capo is written at capo + 5; fret #{fifth_capo} is not represented." if fifth_capo.positive? && fifth_capo != capo + 5
 
@@ -245,8 +255,35 @@ module Tef2
           chords: chords,
           lyrics: xml.at_xpath("//miscellaneous-field[@name='playtab-lyrics']")&.text,
           warnings: warnings.uniq,
-          instrument: instrument
+          instrument: instrument,
+          reading_list: reading_list
         )
+      end
+
+      # Repeat signs, endings and jump marks per measure, in the shape
+      # ReadingList.playback_order reads.
+      def self.reading_bars(measure_nodes)
+        active = []
+        measure_nodes.map do |measure|
+          bar = ReadingList.blank_bar
+          measure.xpath("./barline").each do |barline|
+            repeat = barline.at_xpath("./repeat")
+            bar[:forward] ||= repeat&.[]("direction") == "forward"
+            bar[:backward] = [ repeat["times"].to_i, 2 ].max if repeat&.[]("direction") == "backward"
+            ending = barline.at_xpath("./ending")
+            active = ending["number"].to_s.split(/[,\s]+/).map(&:to_i).select(&:positive?) if ending && ending["type"] == "start"
+          end
+          bar[:endings] = active
+          active = [] if measure.at_xpath("./barline/ending[@type='stop' or @type='discontinue']")
+          sound = ->(name) { measure.at_xpath("./sound[@#{name}] | ./direction/sound[@#{name}]") != nil }
+          bar[:segno] = sound.("segno") || measure.at_xpath("./direction/direction-type/segno") != nil
+          bar[:coda] = sound.("coda") || measure.at_xpath("./direction/direction-type/coda") != nil
+          bar[:to_coda] = sound.("tocoda")
+          bar[:dacapo] = sound.("dacapo")
+          bar[:dalsegno] = sound.("dalsegno")
+          bar[:fine] = sound.("fine")
+          bar
+        end
       end
 
       # The score part's MIDI program and bank (one-based in MusicXML), the
@@ -278,7 +315,7 @@ module Tef2
         nil
       end
 
-      def initialize(title:, tempo:, tuning:, measures:, notes:, texts:, chords:, lyrics:, warnings:, instrument: {})
+      def initialize(title:, tempo:, tuning:, measures:, notes:, texts:, chords:, lyrics:, warnings:, instrument: {}, reading_list: [])
         @title = title
         @tempo = tempo
         @tuning = Array(tuning).map(&:to_i)
@@ -289,6 +326,7 @@ module Tef2
         @lyrics = lyrics.to_s.empty? ? nil : lyrics.to_s
         @warnings = warnings
         @instrument = DEFAULT_INSTRUMENT.merge(instrument)
+        @reading_list = reading_list
         validate!
       end
 
@@ -450,7 +488,6 @@ module Tef2
         unsupported_technical.concat(xml.xpath("//notations/technical/other-technical").reject { |node| node.text.strip.match?(CONSUMED_METADATA) })
         warnings << "Some MusicXML techniques are not represented in the selected TEF export." if unsupported_technical.any?
         warnings << "MusicXML contains rests or independent voices; TEF export keeps note positions but does not preserve those voice details." if xml.xpath("//rest | //voice[. != '1']").any?
-        warnings << "MusicXML contains measure repeats or alternate endings; those layout instructions are not represented in TEF export." if xml.xpath("//repeat | //ending").any?
         warnings << "Some note timings were rounded to TEF position units." if notes.any? { |note| (note[:position] % 4).positive? || (note[:duration] % 4).positive? }
         warnings << "The source contains changing time signatures." if measures.uniq.length > 1
         warnings
@@ -689,6 +726,7 @@ module Tef2
         texts_offset = model.texts.empty? ? 0 : text_block_offset + 3
         chords_offset = model.chords.empty? ? 0 : append_section(sections, chords_section(model.chords))
         content_offset = append_section(sections, content_section(model))
+        reading_list_offset = model.reading_list.empty? ? 0 : append_section(sections, reading_list_section(model.reading_list))
 
         Binary.u32(header, 0x3C, content_offset)
         Binary.u32(header, 0x40, title_offset)
@@ -698,6 +736,7 @@ module Tef2
         Binary.u32(header, 0x58, chords_offset)
         Binary.u32(header, 0x5C, measures_offset)
         Binary.u32(header, 0x60, instruments_offset)
+        Binary.u32(header, 0x80, reading_list_offset)
         (header + sections.flatten).pack("C*")
       end
 
@@ -734,6 +773,19 @@ module Tef2
         model.tuning.each_with_index { |pitch, index| record[20 + index] = 96 - pitch }
         record[32, 36] = Binary.text(model.title, 36)
         bytes + record
+      end
+
+      # One 32-byte record per range: first and last measure (1-based), then
+      # an empty name.
+      def self.reading_list_section(sequences)
+        bytes = [ 32, 0, sequences.length, 0 ]
+        sequences.each do |from, to|
+          record = Array.new(32, 0)
+          Binary.u16(record, 0, from)
+          Binary.u16(record, 2, to)
+          bytes.concat(record)
+        end
+        bytes
       end
 
       def self.texts_section(texts)

@@ -148,6 +148,26 @@ function configureImportedPlayback(track: model.Track) {
   }
 }
 
+// alphaTab reads a MusicXML dacapo or dalsegno sound as a plain D.C. or
+// D.S., which ignores To Coda and Fine. A score that has a To Coda or a Fine
+// means the al Coda or al Fine form.
+export function configureJumps(score: model.Score) {
+  const { Direction } = model;
+  const has = (direction: model.Direction) => score.masterBars.some(bar => bar.directions?.has(direction));
+  const suffix = has(Direction.JumpDaCoda) ? 'coda' : has(Direction.TargetFine) ? 'fine' : null;
+  if (!suffix) return;
+  const upgrades: [model.Direction, model.Direction][] = suffix === 'coda'
+    ? [[Direction.JumpDaCapo, Direction.JumpDaCapoAlCoda], [Direction.JumpDalSegno, Direction.JumpDalSegnoAlCoda]]
+    : [[Direction.JumpDaCapo, Direction.JumpDaCapoAlFine], [Direction.JumpDalSegno, Direction.JumpDalSegnoAlFine]];
+  for (const bar of score.masterBars) {
+    for (const [plain, target] of upgrades) {
+      if (!bar.directions?.has(plain)) continue;
+      bar.directions.delete(plain);
+      bar.directions.add(target);
+    }
+  }
+}
+
 function previewId() {
   if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID();
   return `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -181,6 +201,7 @@ export function readMusicXml(source: string, filename: string, sourceFormat: Mus
   // usable General MIDI instrument, while comparison banks may only contain
   // their banjo preset at program 105.
   configureImportedPlayback(track);
+  configureJumps(score);
   score.title = (score.title.trim() || filename.replace(/\.(musicxml|xml)$/i, '')).slice(0, 160);
   applyTechniques(score, tab, originalStaffIndex, techniques.markers);
   applyChordMetadata(tab, chordMetadata(source));

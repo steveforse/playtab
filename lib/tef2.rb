@@ -5,6 +5,7 @@ require_relative "tef2/timeline"
 require_relative "tef2/musicxml_builder"
 require_relative "tef2/full_parser"
 require_relative "tef2/repeat_map"
+require_relative "tef2/reading_list"
 require_relative "tef2/full_musicxml_builder"
 require_relative "tef2/tabledit_v3_parser"
 require_relative "tef2/exporter"
@@ -35,6 +36,9 @@ module Tef2
 
     repeat_records, repeat_warnings, decoded_repeats = RepeatMap.decode(parsed[:repeats], parsed[:measures])
     parsed[:endings] = (parsed[:endings] || []) + repeat_records
+    guides, reading_warnings = ReadingList.decode(parsed[:reading_list] || [], parsed[:measures])
+    parsed[:reading_guides] = guides
+    repeat_warnings += reading_warnings
 
     musicxml = FullMusicxmlBuilder.build(parsed)
     warnings = [

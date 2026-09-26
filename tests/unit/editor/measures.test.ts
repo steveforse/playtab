@@ -125,6 +125,16 @@ describe('ED-12 measure duplication', () => {
     expect(result.excluded).toContain('repeat marker');
   });
 
+  it('leaves segno and jump marks on the original measure', () => {
+    const marked = rich.replace(/<tie type="(?:start|stop)"\/>/g, '').replace(/<tied type="(?:start|stop)"\/>/g, '').replace('<measure number="1">', '<measure number="1"><direction><direction-type><segno/></direction-type><sound segno="segno"/></direction><sound dalsegno="segno"/>');
+    const result = duplicateMusicXmlMeasure(marked, readMusicXml(marked, 'rich.musicxml').score, 0);
+    const measures = Array.from(new DOMParser().parseFromString(result.source, 'application/xml').getElementsByTagName('measure'));
+    expect(measures[0].getElementsByTagName('segno')).toHaveLength(1);
+    expect(measures[1].getElementsByTagName('segno')).toHaveLength(0);
+    expect(measures[1].getElementsByTagName('sound')).toHaveLength(Array.from(measures[0].getElementsByTagName('sound')).length - 2);
+    expect(result.excluded).toContain('jump marker');
+  });
+
   it('excludes a cross-measure direction marker from the copy', () => {
     const withWedge = rich.replace('<measure number="2">', '<measure number="2"><direction><direction-type><wedge number="1" type="crescendo"/></direction-type></direction>');
     const original = readMusicXml(withWedge, 'rich.musicxml');

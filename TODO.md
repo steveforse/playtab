@@ -89,15 +89,19 @@ This is the ordered feature backlog for Playtab. Each item has a planned branch 
   - Private corpus check (104 TEF3 files, 28,778 notes): every note and instrument field round-trips except known equivalents. Hammer-on/pull-off take their direction from fret movement on import. An open 5th string written as the capo fret returns as 0; it looks and plays the same. Two same-fret legato markers were already dropped on import.
   - Dynamics have no documented TablEdit value order, so they carry no playback meaning yet.
 
-- [ ] **13. Restore TEF3 repeat support** — `feature/tef3-repeats`
+- [x] **13. Restore TEF3 repeat support** — `feature/tef3-repeats`
   - `lib/tef2/tabledit_v3_parser.rb` hardcodes `repeats: []` for the modern TEF3 layout even though the older `full_parser.rb` (TEF2) already decodes a repeat table — port/adapt that logic to the TEF3 content stream.
   - **Before implementing**, read TablEdit's own "Reading List" manual page (`reading_list.htm` / `glos_reading_guides.htm` in its help file) in full: TablEdit does not store simple start/end barline pairs. It stores an ordered list of up to 96 measure-range sequences (e.g. "1-16, 3-14, 17-18") and *derives* repeat signs, voltas, Da Capo/Da Segno/Segno markers, and named section labels from that list. Modeling this as flat barline pairs will misrepresent any file using Da Capo/Da Segno or named sequences.
   - Export repeat barlines in `TableditWriter` instead of relying on the existing loss-warning at `exporter.rb:358`.
   - Cover with a fixture containing simple and nested repeat sections, plus at least one using Da Capo/Da Segno.
+  - Done (2026-09-26). The reading list sits at header pointer 0x80: a u16 record size (32) and count, then per range a u16 first and last measure (1-based); the rest of each record is the range name, which TablEdit leaves as uninitialized memory. `Tef2::ReadingList` decodes it into repeats (with play counts), first/second endings (first ending up to 4 measures, in the editor's ending shape), and D.C./D.S. al Coda or al Fine with segno and coda. It works out alphaTab's playing order, and export writes the playing order back as a reading list. The frontend reads a D.C./D.S. as al Coda or al Fine when the score has a To Coda or Fine; alphaTab's MusicXML reader only makes plain jumps. Duplicating a measure leaves its jump marks behind.
+  - Private corpus: 36 of 104 TEF3 files have a reading list. All decode to TablEdit's playing order except Silver Bell, whose D.S. retakes repeats that alphaTab plays once; the import warns. Import then export reproduces the playing order for 103 of 104 files. Lists may re-split: "1-4, 1-4, 1-4, 5-8" can come back as "1-4, 1-4, 1-8".
+  - Nested repeats have no plain form; they fall back to a D.C./D.S. with a warning. None are in the corpus.
 
-- [ ] **14. Export alternate endings** — `feature/tef3-alternate-endings`
+- [x] **14. Export alternate endings** — `feature/tef3-alternate-endings`
   - Endings are already parsed (`parser.rb:268-279`) and rendered in MusicXML but never written back to `.tef` — add the write path in `TableditWriter` and remove the now-inapplicable loss warning.
   - Depends on or can be bundled with item 13 since both derive from the same Reading List structure, not independent barline pairs — see item 13's note.
+  - Done with item 13: no TEF3 file in the corpus has explicit ending records (0xB7). TablEdit keeps endings in the reading list, so TEF3 export writes them that way and no longer warns. TEF2 export still warns that repeats, endings and jumps are written in order.
 
 - [ ] **15. Support mid-score tempo and time signature changes** — `feature/tef3-tempo-timesig-changes`
   - Tempo changes are parsed (`parser.rb:280-287`) but `TableditWriter` only ever exports the single global header tempo — add mid-score tempo change export.

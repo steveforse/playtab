@@ -145,6 +145,13 @@ export function duplicateMusicXmlMeasure(source: string, score: model.Score, mea
     }
     if (!children(barline).length) copy.removeChild(barline);
   }
+  // Segno, coda, D.C., D.S., To Coda and Fine mark one place in the playing order.
+  const jumpAttributes = ['segno', 'coda', 'tocoda', 'dacapo', 'dalsegno', 'fine'];
+  for (const item of children(copy).filter(entry => (entry.localName === 'sound' || entry.localName === 'direction')
+    && descendants(entry, 'sound').concat(entry.localName === 'sound' ? [entry] : []).some(sound => jumpAttributes.some(name => sound.hasAttribute(name))))) {
+    excluded.add('jump marker');
+    copy.removeChild(item);
+  }
   const structuralDirectionNames = new Set(['wedge', 'dashes', 'pedal', 'octave-shift', 'bracket']);
   for (const direction of children(copy).filter(item => item.localName === 'direction')) {
     for (const directionType of children(direction).filter(item => item.localName === 'direction-type')) {

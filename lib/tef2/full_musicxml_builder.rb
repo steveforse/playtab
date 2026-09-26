@@ -44,6 +44,7 @@ module Tef2
       capo = (parsed[:track_data] || []).map { |track| track[:capo].to_i }.max.to_i
       lyrics_text = parsed[:lyrics_text].to_s
       instrument = (parsed[:track_data] || []).first || {}
+      guides = parsed[:reading_guides]
 
       builder = Nokogiri::XML::Builder.new(encoding: "UTF-8") do |xml|
         xml.send("score-partwise", version: "3.1") do
@@ -73,9 +74,9 @@ module Tef2
                 write_capo_direction(xml, capo) if m == 0 && capo.positive?
                 write_measure_time_signature(xml, measure_time_sig) if m.positive? && measure_signatures && measure_time_sig != measure_signatures[m - 1]
                 write_tempo_direction(xml, tempo) if m == 0 && tempo > 0
-                write_measure_barlines(xml, m, endings, location: "left")
+                guides ? write_reading_guides(xml, guides, m, location: "left") : write_measure_barlines(xml, m, endings, location: "left")
                 write_measure_notes(xml, m, notes, annotations, texts, chords, tempo_changes, strings, tuning, measure_time_sig, capo: capo)
-                write_measure_barlines(xml, m, endings, location: "right")
+                guides ? write_reading_guides(xml, guides, m, location: "right") : write_measure_barlines(xml, m, endings, location: "right")
               end
             end
           end
@@ -114,6 +115,52 @@ module Tef2
 
     def self.write_measure_time_signature(xml, time_sig)
       xml.attributes { write_time_signature(xml, time_sig) }
+    end
+
+    # Repeat signs, endings and jumps decoded from a TablEdit reading list
+    # (ReadingList.decode). Endings use the shape the editor authors: each
+    # numbered ending starts on its first measure's left barline and stops
+    # on its last measure's right barline.
+    def self.write_reading_guides(xml, bars, measure_index, location:)
+      bar = bars[measure_index]
+      previous = measure_index.positive? ? bars[measure_index - 1] : nil
+      following = bars[measure_index + 1]
+      if location == "left"
+        ending_start = bar[:endings].any? && previous&.dig(:endings) != bar[:endings]
+        if bar[:forward] || ending_start
+          xml.barline(location: "left") do
+            xml.ending(number: bar[:endings].join(","), type: "start") if ending_start
+            xml.repeat(direction: "forward") if bar[:forward]
+          end
+        end
+        write_jump_direction(xml, "segno") { xml.segno } if bar[:segno]
+        write_jump_direction(xml, "coda") { xml.coda } if bar[:coda]
+        return
+      end
+
+      # Jumps are measure-level sounds; alphaTab draws their D.C., D.S.,
+      # To Coda and Fine text itself (Playtab reads a D.C./D.S. as al Coda
+      # or al Fine when the score has a To Coda or Fine).
+      xml.sound(tocoda: "coda") if bar[:to_coda]
+      xml.sound(fine: "yes") if bar[:fine]
+      xml.sound(dacapo: "yes") if bar[:dacapo]
+      xml.sound(dalsegno: "segno") if bar[:dalsegno]
+      ending_stop = bar[:endings].any? && following&.dig(:endings) != bar[:endings]
+      return unless bar[:backward].positive? || ending_stop
+
+      xml.barline(location: "right") do
+        xml.send("bar-style", "light-heavy") if bar[:backward].positive?
+        xml.ending(number: bar[:endings].join(","), type: "stop") if ending_stop
+        xml.repeat(direction: "backward", times: bar[:backward]) if bar[:backward].positive?
+      end
+    end
+
+    # A segno or coda sign; its <sound> attribute names the jump target.
+    def self.write_jump_direction(xml, attribute)
+      xml.direction(placement: "above") do
+        xml.send("direction-type") { yield }
+        xml.sound(attribute => attribute)
+      end
     end
 
     def self.write_measure_barlines(xml, measure_index, endings, location:)
