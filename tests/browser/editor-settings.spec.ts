@@ -78,6 +78,12 @@ test('sets a capo, credits and swing feel from Score settings', async ({ page })
   await page.getByRole('button', { name: 'Score settings…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Score settings' });
   await expect(dialog.getByLabel('Tuning preset')).toHaveValue('Open G');
+  await dialog.getByLabel('Tuning preset').selectOption('Double D');
+  await expect(dialog.getByLabel('String 2 note').locator('option:checked')).toHaveText('C4');
+  await expect(dialog.getByLabel('Capo', { exact: true })).toHaveValue('2');
+  await expect(dialog.getByLabel('5th-string capo')).toHaveValue('7');
+  await dialog.getByLabel('Tuning preset').selectOption('Open G');
+  await expect(dialog.getByLabel('Capo', { exact: true })).toHaveValue('0');
   await dialog.getByLabel('Capo', { exact: true }).selectOption('2');
   await expect(dialog.getByLabel('5th-string capo')).toHaveValue('7');
   await dialog.getByLabel('5th-string capo').selectOption('9');

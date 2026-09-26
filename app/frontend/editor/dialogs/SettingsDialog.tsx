@@ -72,7 +72,8 @@ export function SettingsDialog({ target, onApply, onClose, returnFocus }: {
           </select></label>
         </fieldset>
         <fieldset className="settings-section settings-tuning"><legend>Tuning</legend>
-          <TuningPicker tuning={draft.tuning} onChange={tuning => update({ tuning })}>
+          <TuningPicker tuning={draft.tuning} capo={draft.capo}
+            onChange={(tuning, capo = draft.capo) => update(capo === draft.capo ? { tuning } : { tuning, capo, fifthCapo: defaultFifthCapo(capo) })}>
           <div className="settings-mode" role="radiogroup" aria-label="When tuning changes">
             <label><input type="radio" name="tuning-mode" checked={draft.mode === 'frets'} onChange={() => update({ mode: 'frets' })} />Keep frets (pitches change)</label>
             <label><input type="radio" name="tuning-mode" checked={draft.mode === 'pitches'} onChange={() => update({ mode: 'pitches' })} />Keep pitches (frets change)</label>
